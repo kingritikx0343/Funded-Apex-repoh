@@ -1,0 +1,894 @@
+@import "tailwindcss";
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme {
+  --font-display: 'Inter', 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --font-sans: 'Inter', 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: 'Inter', 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+
+@layer base {
+  :root {
+    --bg-primary: #020806;
+    --bg-secondary: #04100B;
+    --bg-card: #051610;
+    --grad-start: #00FFB3;
+    --grad-end: #0EA5E9;
+    --text-primary: #F8FAFC;
+    --text-secondary: #94D1B9;
+    --liquid-aqua: #00FFD1;
+    --liquid-green: #00FFA3;
+  }
+
+  html {
+    scroll-behavior: smooth;
+    -webkit-overflow-scrolling: touch;
+    background-color: #030A07;
+    font-family: var(--font-sans);
+    font-size: 16px;
+  }
+
+  @media (max-width: 640px) {
+    html {
+      font-size: 15.5px;
+    }
+  }
+
+  body {
+    font-family: var(--font-sans);
+    font-weight: 400;
+    letter-spacing: -0.008em;
+    line-height: 1.6;
+    background-color: #030A07;
+    /* Architectural Aqua-Green & Deep Emerald Liquid Atmospheric Canvas */
+    background-image:
+      radial-gradient(ellipse 90% 45% at 50% -5%, rgba(0, 255, 163, 0.20) 0%, rgba(6, 182, 212, 0.09) 48%, transparent 82%),
+      radial-gradient(ellipse 60% 40% at 88% 22%, rgba(6, 182, 212, 0.12) 0%, transparent 74%),
+      radial-gradient(ellipse 60% 44% at 12% 64%, rgba(16, 185, 129, 0.11) 0%, transparent 74%),
+      linear-gradient(180deg, #030B08 0%, #051610 50%, #030A07 100%);
+    color: #F8FAFC;
+    overflow-x: hidden;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+    overscroll-behavior-y: none;
+  }
+
+  h1, h2, h3, h4, .font-display {
+    font-family: var(--font-display);
+    font-weight: 700;
+    letter-spacing: -0.025em;
+    color: #FFFFFF;
+    text-shadow: none;
+  }
+
+  .tracking-tight {
+    letter-spacing: -0.025em !important;
+  }
+
+  .tracking-tighter {
+    letter-spacing: -0.035em !important;
+  }
+
+  button, a, select, input, textarea, [role="button"] {
+    font-family: var(--font-sans);
+    letter-spacing: -0.006em;
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
+    transition:
+      transform 150ms cubic-bezier(0.16, 1, 0.3, 1),
+      box-shadow 150ms cubic-bezier(0.16, 1, 0.3, 1),
+      background-color 140ms ease,
+      border-color 140ms ease,
+      color 140ms ease,
+      opacity 140ms ease;
+  }
+
+  button:active:not(:disabled), a:active {
+    transform: scale(0.985);
+  }
+
+  .font-mono, .tabular-nums {
+    font-family: var(--font-sans);
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+/* Zero-Lag 60fps Hardware-Accelerated Keyframes */
+@keyframes apexFadeUp {
+  0% {
+    opacity: 0;
+    transform: translate3d(0, 16px, 0);
+  }
+  100% {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+@keyframes apexScaleIn {
+  0% {
+    opacity: 0;
+    transform: translate3d(0, 10px, 0) scale(0.985);
+  }
+  100% {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+}
+
+@keyframes apexSlideInRight {
+  0% {
+    opacity: 0;
+    transform: translate3d(100%, 0, 0);
+  }
+  100% {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+@keyframes apexBackdropFade {
+  0% {
+    opacity: 0;
+  }
+  100% {
+    opacity: 1;
+  }
+}
+
+/* Continuous 60fps Marquee Keyframes for Live Payouts Section */
+@keyframes apexMarqueeScroll {
+  0% {
+    transform: translate3d(0, 0, 0);
+  }
+  100% {
+    transform: translate3d(-50%, 0, 0);
+  }
+}
+
+@keyframes apexMarqueeScrollReverse {
+  0% {
+    transform: translate3d(-50%, 0, 0);
+  }
+  100% {
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+.apex-marquee-track {
+  display: flex;
+  width: max-content;
+  animation: apexMarqueeScroll 44s linear infinite;
+  will-change: transform;
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+  transform: translate3d(0, 0, 0);
+}
+
+.apex-top-banner-marquee {
+  display: flex;
+  width: max-content;
+  will-change: transform;
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+  transform: translate3d(0, 0, 0);
+}
+
+.apex-marquee-track-fast {
+  display: flex;
+  width: max-content;
+  animation: apexMarqueeScroll 36s linear infinite;
+  will-change: transform;
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+  transform: translate3d(0, 0, 0);
+}
+
+.apex-page-enter {
+  animation: apexFadeUp 380ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.apex-fade-up {
+  animation: apexFadeUp 480ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.apex-scale-in {
+  animation: apexScaleIn 340ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.apex-drawer-enter {
+  animation: apexSlideInRight 300ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.apex-backdrop-enter {
+  animation: apexBackdropFade 180ms ease-out both;
+}
+
+.apex-delay-1 {
+  animation-delay: 50ms;
+}
+
+.apex-delay-2 {
+  animation-delay: 100ms;
+}
+
+.apex-delay-3 {
+  animation-delay: 150ms;
+}
+
+.apex-delay-4 {
+  animation-delay: 200ms;
+}
+
+/* ============================================================================
+   INSTITUTIONAL 3D LIQUID GLASSMORPHISM & FLUID SHAPE SYSTEM
+   Organic squircle curves, multi-stop refractive borders, specular rim light,
+   and deep translucent backdrop saturation across every surface.
+   ============================================================================ */
+
+/* Primary Liquid Glass Card with Dual Specular Rim & Fluid Squircle Shape (60fps Scroll Optimized) */
+.apex-glass-card {
+  position: relative;
+  background:
+    radial-gradient(135% 120% at 50% 0%, rgba(0, 255, 209, 0.18) 0%, rgba(14, 165, 233, 0.08) 45%, transparent 85%),
+    linear-gradient(160deg, rgba(10, 42, 32, 0.96) 0%, rgba(4, 18, 14, 0.98) 50%, rgba(2, 10, 8, 1) 100%);
+  border: 1px solid rgba(0, 255, 209, 0.35);
+  border-radius: 2.5rem; /* Liquid feel rounding */
+  box-shadow:
+    0 24px 60px -12px rgba(0, 0, 0, 0.92),
+    inset 0 1px 1.5px 0 rgba(255, 255, 255, 0.25);
+  transition:
+    border-color 240ms ease,
+    box-shadow 240ms ease,
+    transform 240ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.apex-glass-card::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 10%;
+  right: 10%;
+  height: 1.5px;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(255, 255, 255, 0.45) 25%,
+    rgba(0, 255, 163, 0.75) 50%,
+    rgba(6, 182, 212, 0.45) 75%,
+    transparent 100%
+  );
+  pointer-events: none;
+  border-radius: 9999px;
+}
+
+.apex-glass-card:hover {
+  border-color: rgba(0, 255, 163, 0.48);
+  box-shadow:
+    0 22px 48px -12px rgba(0, 0, 0, 0.86),
+    0 0 26px -6px rgba(0, 255, 163, 0.18),
+    inset 0 1px 1px 0 rgba(255, 255, 255, 0.26);
+}
+
+/* Subdued Liquid Glass Panel for Nested / Secondary Surfaces */
+.apex-glass-panel {
+  position: relative;
+  background:
+    radial-gradient(110% 110% at 50% 0%, rgba(0, 255, 209, 0.15) 0%, rgba(14, 165, 233, 0.05) 50%, transparent 80%),
+    linear-gradient(175deg, rgba(8, 38, 28, 0.97) 0%, rgba(4, 16, 12, 0.99) 100%);
+  border: 1px solid rgba(0, 255, 209, 0.3);
+  border-radius: 2.25rem;
+  box-shadow:
+    0 14px 36px -10px rgba(0, 0, 0, 0.82),
+    inset 0 1px 1px 0 rgba(255, 255, 255, 0.18);
+  transition:
+    border-color 200ms ease,
+    box-shadow 200ms ease;
+}
+
+.apex-glass-panel:hover {
+  border-color: rgba(0, 255, 163, 0.42);
+  box-shadow:
+    0 14px 32px -10px rgba(0, 255, 163, 0.14),
+    inset 0 1px 1px 0 rgba(255, 255, 255, 0.22);
+}
+
+/* Sculpted Liquid Glass KPI / Metric Tile */
+.apex-metric-tile {
+  position: relative;
+  background:
+    radial-gradient(120% 120% at 25% 0%, rgba(0, 255, 163, 0.18) 0%, rgba(6, 182, 212, 0.08) 55%, transparent 90%),
+    linear-gradient(160deg, rgba(13, 42, 32, 0.96) 0%, rgba(7, 24, 17, 0.98) 100%);
+  border: 1px solid rgba(0, 255, 163, 0.35);
+  border-radius: 1.85rem; /* Increased rounding */
+  box-shadow:
+    0 18px 36px -10px rgba(0, 0, 0, 0.82),
+    inset 0 1px 1.5px 0 rgba(255, 255, 255, 0.22);
+  overflow: hidden;
+  transition:
+    transform 200ms cubic-bezier(0.16, 1, 0.3, 1),
+    border-color 200ms ease,
+    box-shadow 200ms ease;
+}
+
+.apex-metric-tile:hover {
+  transform: translate3d(0, -2px, 0);
+  border-color: rgba(0, 255, 163, 0.52);
+  box-shadow:
+    0 20px 44px -10px rgba(0, 255, 163, 0.22),
+    inset 0 1.5px 1.5px 0 rgba(255, 255, 255, 0.30);
+}
+
+.apex-metric-tile::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 8%;
+  right: 8%;
+  height: 2px;
+  border-radius: 9999px;
+  background: linear-gradient(90deg, transparent 0%, #00FFA3 35%, #2DD4BF 65%, transparent 100%);
+  opacity: 0.9;
+}
+
+/* High-Impact Liquid Primary CTA Button */
+.apex-glow-btn {
+  background: linear-gradient(135deg, #00FFA3 0%, #10B981 50%, #06B6D4 100%);
+  color: #02120B;
+  font-family: var(--font-display);
+  font-weight: 800;
+  letter-spacing: 0.015em;
+  word-spacing: 0.04em;
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  box-shadow:
+    0 10px 28px -4px rgba(0, 255, 163, 0.44),
+    inset 0 1.5px 1px rgba(255, 255, 255, 0.65),
+    inset 0 -1.5px 1px rgba(2, 18, 11, 0.25);
+  will-change: transform;
+  backface-visibility: hidden;
+  transition:
+    transform 200ms cubic-bezier(0.16, 1, 0.3, 1),
+    box-shadow 200ms cubic-bezier(0.16, 1, 0.3, 1),
+    filter 200ms ease;
+}
+
+.apex-glow-btn:hover:not(:disabled) {
+  filter: brightness(1.07);
+  transform: translate3d(0, -2px, 0);
+  box-shadow:
+    0 14px 36px -4px rgba(0, 255, 163, 0.62),
+    inset 0 2px 1.5px rgba(255, 255, 255, 0.78);
+}
+
+/* Liquid Glass Secondary Button */
+.apex-secondary-btn {
+  background:
+    radial-gradient(100% 100% at 50% 0%, rgba(0, 255, 163, 0.14) 0%, transparent 80%),
+    linear-gradient(180deg, rgba(12, 38, 28, 0.94) 0%, rgba(5, 18, 13, 0.97) 100%);
+  border: 1px solid rgba(0, 255, 163, 0.34);
+  color: #FFFFFF;
+  font-family: var(--font-display);
+  font-weight: 700;
+  letter-spacing: 0.012em;
+  box-shadow:
+    0 8px 24px -6px rgba(0, 0, 0, 0.65),
+    inset 0 1px 1px rgba(255, 255, 255, 0.18);
+}
+
+.apex-secondary-btn:hover:not(:disabled) {
+  background:
+    radial-gradient(100% 100% at 50% 0%, rgba(0, 255, 163, 0.24) 0%, transparent 85%),
+    linear-gradient(180deg, rgba(16, 48, 35, 0.96) 0%, rgba(8, 26, 18, 0.98) 100%);
+  border-color: rgba(0, 255, 163, 0.62);
+  color: #00FFA3;
+  box-shadow:
+    0 12px 30px -6px rgba(0, 255, 163, 0.22),
+    inset 0 1px 1px rgba(255, 255, 255, 0.28);
+}
+
+/* Section Kicker Tag — Larger, Stylish Liquid Capsule */
+.apex-kicker {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.55rem;
+  padding: 0.45rem 1.1rem;
+  border-radius: 9999px;
+  background: linear-gradient(
+    90deg,
+    rgba(0, 255, 163, 0.16) 0%,
+    rgba(6, 182, 212, 0.12) 50%,
+    rgba(16, 185, 129, 0.16) 100%
+  );
+  border: 1px solid rgba(0, 255, 163, 0.38);
+  color: #00FFA3;
+  font-family: var(--font-display);
+  font-size: 0.82rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  box-shadow:
+    0 6px 20px -4px rgba(0, 255, 163, 0.20),
+    inset 0 1px 0 rgba(255, 255, 255, 0.26);
+}
+
+tbody tr {
+  transition: background-color 150ms ease;
+}
+
+/* Smooth Scroll-Triggered Font & Section Reveal Animation */
+@keyframes apexWordGlideIn {
+  0% {
+    opacity: 0;
+    transform: translate3d(0, 12px, 0);
+  }
+  100% {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+@keyframes apexTextGradientFlow {
+  0% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
+  100% {
+    background-position: 0% 50%;
+  }
+}
+
+@keyframes apexShake {
+  0%, 100% { transform: translateX(0); }
+  20% { transform: translateX(-6px); }
+  40% { transform: translateX(6px); }
+  60% { transform: translateX(-4px); }
+  80% { transform: translateX(4px); }
+}
+
+.apex-shake {
+  animation: apexShake 0.4s cubic-bezier(0.36, 0.07, 0.19, 0.97) both;
+}
+
+.apex-scroll-heading {
+  display: inline;
+  word-spacing: 0.05em;
+}
+
+.apex-kinetic-word {
+  display: inline-block;
+  margin-right: 0.28em;
+  animation: apexWordGlideIn 480ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.apex-kinetic-word:last-child {
+  margin-right: 0;
+}
+
+.apex-kinetic-shimmer {
+  background: linear-gradient(
+    90deg,
+    #86EFAC 0%,
+    #00FFA3 35%,
+    #2DD4BF 70%,
+    #A7F3D0 100%
+  );
+  background-size: 200% auto;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation:
+    apexWordGlideIn 480ms cubic-bezier(0.16, 1, 0.3, 1) both,
+    apexTextGradientFlow 6s ease-in-out infinite;
+}
+
+/* Butter-Smooth 60fps Scroll Reveal System */
+[data-scroll-reveal] {
+  opacity: 0;
+  transform: translate3d(0, 18px, 0);
+  transition:
+    opacity 480ms cubic-bezier(0.16, 1, 0.3, 1),
+    transform 480ms cubic-bezier(0.16, 1, 0.3, 1);
+  transition-delay: var(--reveal-delay, 0ms);
+}
+
+[data-scroll-reveal="left"] {
+  opacity: 0;
+  transform: translate3d(-18px, 12px, 0);
+}
+
+[data-scroll-reveal="right"] {
+  opacity: 0;
+  transform: translate3d(18px, 12px, 0);
+}
+
+[data-scroll-reveal="scale"] {
+  opacity: 0;
+  transform: translate3d(0, 14px, 0) scale(0.985);
+}
+
+[data-scroll-reveal].is-revealed {
+  opacity: 1;
+  transform: translate3d(0, 0, 0) scale(1);
+}
+
+@keyframes apexToastCountdown {
+  0% {
+    width: 100%;
+  }
+  100% {
+    width: 0%;
+  }
+}
+
+.apex-toast-countdown {
+  animation: apexToastCountdown 5000ms linear forwards;
+}
+
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: #030A07;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #0D231B;
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #00FFA3;
+}
+
+/* ==========================================================================
+   LIQUID SHAPES & FLUID GLASS DESIGN SYSTEM (DARK & LIGHT TERMINAL SURFACES)
+   ========================================================================== */
+
+.liquid-glass {
+  background: linear-gradient(
+    135deg,
+    rgba(255, 255, 255, 0.09) 0%,
+    rgba(255, 255, 255, 0.03) 40%,
+    rgba(0, 255, 163, 0.05) 100%
+  );
+  backdrop-filter: blur(22px) saturate(165%);
+  -webkit-backdrop-filter: blur(22px) saturate(165%);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 1.65rem;
+  box-shadow:
+    0 16px 40px -8px rgba(0, 0, 0, 0.72),
+    inset 0 1.5px 1px 0 rgba(255, 255, 255, 0.24),
+    inset 0 -1.5px 1px 0 rgba(0, 255, 163, 0.12);
+  transition: all 260ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.liquid-glass:hover {
+  border-color: rgba(0, 255, 163, 0.42);
+  box-shadow:
+    0 20px 48px -8px rgba(0, 255, 163, 0.24),
+    inset 0 1.5px 2px 0 rgba(255, 255, 255, 0.32),
+    inset 0 -1.5px 2px 0 rgba(0, 255, 163, 0.18);
+}
+
+/* Light-Mode Liquid Glass for White Trading Terminal Controls */
+.liquid-terminal-glass {
+  background: linear-gradient(
+    145deg,
+    rgba(255, 255, 255, 0.94) 0%,
+    rgba(248, 250, 252, 0.88) 55%,
+    rgba(236, 253, 245, 0.78) 100%
+  );
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  border: 1px solid rgba(15, 23, 42, 0.10);
+  border-radius: 1.35rem;
+  box-shadow:
+    0 10px 28px -8px rgba(15, 23, 42, 0.10),
+    inset 0 1.5px 1px 0 rgba(255, 255, 255, 0.95),
+    inset 0 -1px 1px 0 rgba(0, 181, 116, 0.10);
+}
+
+.liquid-card {
+  position: relative;
+  border-radius: 1.65rem;
+  background: radial-gradient(
+      120% 120% at 50% 0%,
+      rgba(0, 255, 163, 0.10) 0%,
+      rgba(8, 28, 20, 0.84) 50%,
+      rgba(3, 12, 8, 0.94) 100%
+    );
+  border: 1px solid rgba(0, 255, 163, 0.26);
+  backdrop-filter: blur(20px) saturate(160%);
+  -webkit-backdrop-filter: blur(20px) saturate(160%);
+  box-shadow:
+    0 18px 44px -10px rgba(0, 0, 0, 0.76),
+    inset 0 1.5px 1px rgba(255, 255, 255, 0.20),
+    inset 0 -1px 1px rgba(0, 255, 163, 0.10);
+  transition: transform 240ms cubic-bezier(0.16, 1, 0.3, 1), border-color 240ms ease, box-shadow 240ms ease;
+}
+
+.liquid-card:hover {
+  transform: translateY(-2px);
+  border-color: rgba(0, 255, 163, 0.48);
+  box-shadow:
+    0 22px 50px -10px rgba(0, 255, 163, 0.25),
+    inset 0 1.5px 1.5px rgba(255, 255, 255, 0.28);
+}
+
+.liquid-pill {
+  border-radius: 9999px;
+  background: linear-gradient(
+    90deg,
+    rgba(0, 255, 163, 0.16) 0%,
+    rgba(6, 182, 212, 0.12) 50%,
+    rgba(16, 185, 129, 0.16) 100%
+  );
+  border: 1px solid rgba(0, 255, 163, 0.36);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  box-shadow:
+    0 6px 18px rgba(0, 255, 163, 0.18),
+    inset 0 1px 0 rgba(255, 255, 255, 0.26);
+}
+
+.liquid-glow {
+  position: relative;
+}
+
+.liquid-glow::before {
+  content: '';
+  position: absolute;
+  inset: -12px;
+  border-radius: inherit;
+  background: radial-gradient(circle, rgba(0, 255, 163, 0.24) 0%, rgba(6, 182, 212, 0.10) 50%, transparent 70%);
+  filter: blur(14px);
+  z-index: -1;
+  pointer-events: none;
+  opacity: 0.8;
+  transition: opacity 300ms ease;
+}
+
+.liquid-glow:hover::before {
+  opacity: 1;
+}
+
+/* ==========================================================================
+   ANIMATED MOON & STAR LIGHT REFLECTION EFFECT (LIQUID WATER AESTHETIC)
+   ========================================================================== */
+
+@keyframes apexLunarFloat {
+  0%, 100% {
+    transform: translate3d(0, 0, 0);
+  }
+  50% {
+    transform: translate3d(0, -6px, 0);
+  }
+}
+
+@keyframes apexMoonPulse {
+  0%, 100% {
+    opacity: 0.78;
+    transform: scale(0.98);
+  }
+  50% {
+    opacity: 0.98;
+    transform: scale(1.04);
+  }
+}
+
+@keyframes apexMoonbeamSway {
+  0%, 100% {
+    opacity: 0.35;
+    transform: translate3d(-50%, 0, 0) rotate(0deg) scaleX(0.96);
+  }
+  50% {
+    opacity: 0.55;
+    transform: translate3d(-48%, 0, 0) rotate(1.5deg) scaleX(1.06);
+  }
+}
+
+@keyframes apexStarTwinkle {
+  0%, 100% {
+    opacity: 0.35;
+    transform: translate3d(0, 0, 0) scale(0.85);
+  }
+  50% {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1.35);
+  }
+}
+
+@keyframes apexStarGlintRotate {
+  0% {
+    transform: rotate(0deg) scale(0.7);
+    opacity: 0.35;
+  }
+  50% {
+    transform: rotate(45deg) scale(1.3);
+    opacity: 1;
+  }
+  100% {
+    transform: rotate(90deg) scale(0.7);
+    opacity: 0.35;
+  }
+}
+
+@keyframes apexShootingStarStreak {
+  0%, 86% {
+    opacity: 0;
+    transform: translate3d(-80px, -40px, 0) rotate(-28deg) scaleX(0.2);
+  }
+  88% {
+    opacity: 0.9;
+    background: linear-gradient(90deg, rgba(255, 255, 255, 0) 0%, rgba(255, 255, 255, 1) 75%, rgba(0, 255, 163, 1) 100%);
+  }
+  92% {
+    opacity: 0;
+    transform: translate3d(320px, 160px, 0) rotate(-28deg) scaleX(2.2);
+  }
+  100% {
+    opacity: 0;
+    transform: translate3d(340px, 170px, 0) rotate(-28deg) scaleX(0.1);
+  }
+}
+
+@keyframes apexWaterCausticsFlow {
+  0% {
+    transform: translate3d(0, 0, 0) scale(1);
+    opacity: 0.45;
+  }
+  50% {
+    transform: translate3d(-1.5%, 1%, 0) scale(1.03);
+    opacity: 0.65;
+  }
+  100% {
+    transform: translate3d(0, 0, 0) scale(1);
+    opacity: 0.45;
+  }
+}
+
+@keyframes apexWaterCurrentsFlow {
+  0% {
+    transform: translate3d(0, 0, 0);
+  }
+  50% {
+    transform: translate3d(2%, -1.5%, 0);
+  }
+  100% {
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+@keyframes apexMoonRippleFast {
+  0%, 100% {
+    transform: translate3d(-10px, 0, 0) scaleX(0.92);
+    opacity: 0.45;
+  }
+  50% {
+    transform: translate3d(10px, 0, 0) scaleX(1.14);
+    opacity: 0.9;
+  }
+}
+
+@keyframes apexMoonRippleSlow {
+  0%, 100% {
+    transform: translate3d(12px, 0, 0) scaleX(1.12);
+    opacity: 0.85;
+  }
+  50% {
+    transform: translate3d(-12px, 0, 0) scaleX(0.9);
+    opacity: 0.45;
+  }
+}
+
+@keyframes apexStarlightWaterShimmer {
+  0%, 100% {
+    transform: translate3d(-6px, 0, 0) scaleX(1.6) scaleY(0.7);
+    opacity: 0.25;
+  }
+  50% {
+    transform: translate3d(6px, 0, 0) scaleX(2.2) scaleY(0.85);
+    opacity: 0.85;
+  }
+}
+
+.apex-lunar-container {
+  animation: apexLunarFloat 14s ease-in-out infinite;
+  will-change: transform;
+}
+
+.apex-moon-halo {
+  animation: apexMoonPulse 8s ease-in-out infinite;
+  will-change: transform, opacity;
+}
+
+.apex-moon-glow {
+  animation: apexMoonPulse 6s ease-in-out infinite 1s;
+  will-change: transform, opacity;
+}
+
+.apex-moon-orb {
+  animation: apexMoonPulse 10s ease-in-out infinite 2s;
+  will-change: transform, opacity;
+}
+
+.apex-moonlight-beam {
+  animation: apexMoonbeamSway 12s ease-in-out infinite;
+  will-change: transform, opacity;
+}
+
+.apex-star-twinkle {
+  animation-name: apexStarTwinkle;
+  animation-iteration-count: infinite;
+  animation-timing-function: ease-in-out;
+  will-change: transform, opacity;
+}
+
+.apex-star-glint {
+  animation: apexStarGlintRotate 6s linear infinite;
+  will-change: transform, opacity;
+}
+
+.apex-shooting-star {
+  animation: apexShootingStarStreak 22s cubic-bezier(0.25, 1, 0.5, 1) infinite;
+  will-change: transform, opacity;
+}
+
+.apex-liquid-water-caustics {
+  background:
+    radial-gradient(ellipse 60% 40% at 30% 60%, rgba(0, 255, 163, 0.08) 0%, transparent 60%),
+    radial-gradient(ellipse 70% 45% at 75% 75%, rgba(6, 182, 212, 0.09) 0%, transparent 65%),
+    radial-gradient(ellipse 55% 35% at 50% 85%, rgba(16, 185, 129, 0.07) 0%, transparent 60%);
+  background-size: 200% 200%;
+  animation: apexWaterCausticsFlow 18s ease-in-out infinite;
+  will-change: transform, opacity;
+}
+
+.apex-liquid-water-currents {
+  background:
+    radial-gradient(ellipse 80% 50% at 65% 55%, rgba(56, 189, 248, 0.06) 0%, transparent 70%),
+    radial-gradient(ellipse 70% 60% at 20% 80%, rgba(0, 255, 163, 0.07) 0%, transparent 70%);
+  animation: apexWaterCurrentsFlow 24s ease-in-out infinite;
+  will-change: transform;
+}
+
+.apex-moon-ripple-fast {
+  animation: apexMoonRippleFast 4.5s ease-in-out infinite;
+  will-change: transform, opacity;
+}
+
+.apex-moon-ripple-slow {
+  animation: apexMoonRippleSlow 6.2s ease-in-out infinite;
+  will-change: transform, opacity;
+}
+
+.apex-starlight-water-reflection {
+  animation-name: apexStarlightWaterShimmer;
+  animation-iteration-count: infinite;
+  animation-timing-function: ease-in-out;
+  will-change: transform, opacity;
+}
+@keyframes apexLiquidFlow {
+  0% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
+
+.apex-liquid-bg {
+  background: linear-gradient(
+    135deg,
+    rgba(0, 255, 163, 0.05),
+    rgba(6, 182, 212, 0.05),
+    rgba(16, 185, 129, 0.05)
+  );
+  background-size: 400% 400%;
+  animation: apexLiquidFlow 15s ease infinite;
+}
+

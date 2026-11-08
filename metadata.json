@@ -1,0 +1,6 @@
+{
+  "name": "FUNDED APEX",
+  "description": "Premium proprietary trading simulation platform featuring One-Step, Two-Step, and Instant Funding evaluations, real-time risk analytics, and a custom TradingView-powered order execution terminal.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
