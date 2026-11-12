@@ -22,13 +22,14 @@ export const SmoothScrollManager: React.FC = () => {
         entries.forEach((entry) => {
           if (entry.isIntersecting) {
             entry.target.classList.add('is-revealed');
+            observer.unobserve(entry.target);
           }
         });
       },
       {
         root: null,
-        rootMargin: '0px 0px -20px 0px',
-        threshold: 0.05,
+        rootMargin: '160px 0px 160px 0px',
+        threshold: 0.01,
       }
     );
 
@@ -38,14 +39,16 @@ export const SmoothScrollManager: React.FC = () => {
       );
       elements.forEach((el) => {
         const rect = el.getBoundingClientRect();
-        if (rect.top < window.innerHeight + 50 && rect.bottom > -20) {
+        if (rect.top < window.innerHeight + 180 && rect.bottom > -120) {
           el.classList.add('is-revealed');
+        } else {
+          observer.observe(el);
         }
-        observer.observe(el);
       });
     };
 
-    const timer = setTimeout(refreshElements, 40);
+    refreshElements();
+    const timer = setTimeout(refreshElements, 25);
 
     return () => {
       clearTimeout(timer);

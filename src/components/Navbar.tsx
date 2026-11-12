@@ -2,8 +2,6 @@ import React, { useState } from 'react';
 import { PageRoute, usePlatform } from '../context/PlatformContext';
 import { FundedApexLogo } from './FundedApexLogo';
 import {
-  Menu,
-  X,
   Terminal,
   Shield,
   LogOut,
@@ -14,8 +12,7 @@ import {
 
 /**
  * Institutional Aqua-Green & Abyssal Obsidian Navbar for FUNDED APEX
- * - Features the rounded floating dropdown card matching the uploaded reference (`IMG_20261112_083916_df653839.jpg`)
- *   adapted to the Aqua-Green water-glass color theme with silky-smooth spring open/close animation:
+ * - Features the sculpted 3-line menu across all viewports with stylish luxury typography:
  *   MODELS (expandable chevron) | FREE TRADING COMPETITION | REWARD | AFFILIATE PROGRAM | FAQS | [ CLIENT AREA ]
  */
 export const Navbar: React.FC = () => {
@@ -49,16 +46,6 @@ export const Navbar: React.FC = () => {
   if (route === 'dashboard' || route === 'admin') {
     return null;
   }
-
-  const desktopNavItems: { label: string; target: PageRoute; sectionId?: string }[] = [
-    { label: 'Models', target: 'challenges', sectionId: 'challenges-matrix' },
-    { label: 'Account Sizes', target: 'account-sizes', sectionId: 'account-sizes-section' },
-    { label: 'Trading Rules', target: 'trading-rules', sectionId: 'trading-rules-section' },
-    { label: 'Free Trading Competition', target: 'leaderboard' },
-    { label: 'Reward', target: 'free-spin' },
-    { label: 'Affiliate Program', target: 'referral' },
-    { label: 'FAQs', target: 'faq' },
-  ];
 
   const modelSubItems: { label: string; badge: string; target: PageRoute; sectionId?: string }[] = [
     { label: '2-Step Classic Evaluation', badge: '8% / 5% Target', target: 'challenges', sectionId: 'challenges-matrix' },
@@ -148,96 +135,53 @@ export const Navbar: React.FC = () => {
             <FundedApexLogo size="md" showText={true} />
           </button>
 
-          {/* Center: Primary Desktop Navigation Links */}
-          <nav
-            aria-label="Primary Navigation"
-            className="hidden xl:flex items-center gap-1 text-[13px] font-semibold"
-          >
-            {desktopNavItems.map((item) => {
-              const isActive = route === item.target;
-              return (
-                <button
-                  key={item.label}
-                  type="button"
-                  onClick={() => handleNav(item.target, item.sectionId)}
-                  className={`px-3 py-1.5 rounded-full transition-all cursor-pointer ${
-                    isActive
-                      ? 'text-[#00E5B0] bg-[#08161C] border border-[#00E5B0]/30 font-bold'
-                      : 'text-[#F4FBFA] hover:text-[#00E5B0] hover:bg-[#08161C]/60'
-                  }`}
-                >
-                  {item.label}
-                </button>
-              );
-            })}
-
-            {isAdmin && (
-              <button
-                type="button"
-                onClick={() => handleNav('admin')}
-                className="px-3 py-1.5 rounded-full text-[#00E5B0] hover:bg-[#08161C] font-bold transition-all cursor-pointer inline-flex items-center gap-1.5"
-              >
-                <Shield className="w-3.5 h-3.5" />
-                <span>Admin</span>
-              </button>
-            )}
-          </nav>
-
-          {/* Right: Terminal + Compact Client Area + Smooth Rounded Hamburger Toggle */}
-          <div className="flex items-center gap-2">
+          {/* Right: Clean Client Area + Get Funded + 3-Line Menu Toggle */}
+          <div className="flex items-center gap-2 sm:gap-2.5">
             <button
               type="button"
-              onClick={() => handleNav('terminal')}
-              className="hidden md:inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-[#071419] hover:bg-[#0C2129] border border-[#00E5B0]/25 text-[12px] font-semibold text-[#A3BDB8] hover:text-[#00E5B0] transition-all cursor-pointer"
+              onClick={() => handleNav(user ? 'dashboard' : 'login')}
+              className="hidden sm:inline-flex items-center gap-2 px-4 py-2 rounded-full bg-[#081C23] hover:bg-[#0D2832] border border-[#00E5B0]/40 hover:border-[#38F8D2] text-[12.5px] font-sans font-semibold text-[#F4FBFA] hover:text-[#38F8D2] transition-colors cursor-pointer"
             >
-              <Terminal className="w-3.5 h-3.5 text-[#00E5B0]" />
-              <span>Terminal</span>
+              <span className="w-2 h-2 rounded-full bg-[#00E5B0]" />
+              <UserCheck className="w-3.5 h-3.5 text-[#00E5B0]" />
+              <span>Client Area</span>
             </button>
-
-            {user ? (
-              <button
-                type="button"
-                onClick={() => handleNav('dashboard')}
-                className="hidden sm:inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-[#071419] hover:bg-[#0C2129] border border-[#00E5B0]/30 text-[12px] font-bold text-white hover:text-[#00E5B0] transition-all cursor-pointer"
-              >
-                <UserCheck className="w-3.5 h-3.5 text-[#00E5B0]" />
-                <span>Client Area</span>
-              </button>
-            ) : (
-              <button
-                type="button"
-                onClick={() => handleNav('login')}
-                className="hidden sm:inline-flex items-center px-3 py-1.5 rounded-full bg-[#071419]/80 border border-[#00E5B0]/25 text-[12px] font-semibold text-white hover:text-[#00E5B0] hover:border-[#00E5B0]/50 transition-all cursor-pointer"
-              >
-                Client Area
-              </button>
-            )}
 
             <button
               type="button"
               onClick={() => handleNav('challenges', 'challenges-matrix')}
-              className="px-3.5 py-2 sm:px-4 sm:py-2 rounded-full apex-glow-btn text-[12px] sm:text-[13px] leading-none cursor-pointer"
+              className="px-3.5 py-2 sm:px-4.5 sm:py-2 rounded-full apex-glow-btn text-[12.5px] sm:text-[13px] font-sans font-bold leading-none cursor-pointer"
             >
               Get Funded
             </button>
 
+            {/* Clean 3-Line Menu Button */}
             <button
               type="button"
               data-testid="mobile-menu-toggle"
               aria-expanded={mobileMenuOpen}
               aria-label={mobileMenuOpen ? 'Close navigation menu' : 'Open navigation menu'}
               onClick={() => setMobileMenuOpen((prev) => !prev)}
-              className="xl:hidden w-9 h-9 rounded-full bg-[#071419] border border-[#00E5B0]/28 text-white hover:border-[#00E5B0]/60 hover:text-[#00E5B0] flex items-center justify-center transition-all duration-200 cursor-pointer shrink-0"
+              className={`group relative h-10 px-3.5 rounded-full bg-[#081C23] border ${
+                mobileMenuOpen
+                  ? 'border-[#38F8D2]'
+                  : 'border-[#00E5B0]/35 hover:border-[#38F8D2]'
+              } text-white flex items-center justify-center transition-colors duration-150 cursor-pointer shrink-0`}
             >
-              <div className="relative w-4 h-4 flex items-center justify-center">
-                <Menu
-                  className={`w-4 h-4 absolute transition-all duration-250 ${
-                    mobileMenuOpen ? 'opacity-0 rotate-90 scale-75' : 'opacity-100 rotate-0 scale-100'
+              <div className="relative w-5 h-3.5 flex flex-col justify-between items-center">
+                <span
+                  className={`w-5 h-[2px] rounded-full bg-white transition-transform duration-200 ease-out ${
+                    mobileMenuOpen ? 'translate-y-[6px] rotate-45' : ''
                   }`}
                 />
-                <X
-                  className={`w-4 h-4 absolute transition-all duration-250 ${
-                    mobileMenuOpen ? 'opacity-100 rotate-0 scale-100' : 'opacity-0 -rotate-90 scale-75'
+                <span
+                  className={`w-5 h-[2px] rounded-full bg-[#00E5B0] transition-opacity duration-150 ease-out ${
+                    mobileMenuOpen ? 'opacity-0' : 'opacity-100'
+                  }`}
+                />
+                <span
+                  className={`w-5 h-[2px] rounded-full bg-white transition-transform duration-200 ease-out ${
+                    mobileMenuOpen ? '-translate-y-[6px] -rotate-45' : ''
                   }`}
                 />
               </div>
@@ -246,37 +190,37 @@ export const Navbar: React.FC = () => {
         </div>
       </div>
 
-      {/* Smoothly Animated Rounded Floating Card Menu */}
+      {/* Simple, Clean, Fast 3-Line Navigation Drawer */}
       <div
         data-testid="three-line-drawer"
         aria-hidden={!mobileMenuOpen}
-        className={`xl:hidden overflow-hidden transition-all duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] ${
+        className={`overflow-hidden transition-all duration-200 ease-out ${
           mobileMenuOpen
-            ? 'max-h-[760px] opacity-100 translate-y-0 pointer-events-auto pb-4'
-            : 'max-h-0 opacity-0 -translate-y-2 pointer-events-none pb-0'
+            ? 'max-h-[680px] opacity-100 translate-y-0 pointer-events-auto pb-4'
+            : 'max-h-0 opacity-0 -translate-y-1.5 pointer-events-none pb-0'
         }`}
       >
         <div className="max-w-md mx-auto px-2.5 sm:px-4 pt-2">
-          <div className="rounded-[28px] bg-[#071318]/96 backdrop-blur-2xl border border-[#00E5B0]/28 px-5 sm:px-6 py-5 shadow-[0_28px_72px_rgba(0,0,0,0.92),inset_0_1px_0_rgba(56,248,210,0.16)]">
-            <nav className="flex flex-col space-y-3.5" aria-label="Mobile Navigation">
-              {/* 1. MODELS (Clicking MODELS directly opens Challenges; clicking chevron toggles sub-items) */}
+          <div className="rounded-[24px] bg-[#061318] border border-[#00E5B0]/30 px-5 py-4 shadow-[0_24px_60px_rgba(0,0,0,0.92)]">
+            <nav className="flex flex-col space-y-1" aria-label="Primary 3-Line Navigation">
+              {/* 1. MODELS */}
               <div>
-                <div className="w-full flex items-center justify-between py-1">
+                <div className="w-full flex items-center justify-between py-2 px-3 rounded-[12px] hover:bg-[#0B2028] transition-colors">
                   <button
                     type="button"
                     onClick={() => handleNav('challenges', 'challenges-matrix')}
-                    className="flex-1 text-left text-[15px] sm:text-[16px] font-display font-bold tracking-[0.02em] text-[#F4FBFA] hover:text-[#00E5B0] transition-colors cursor-pointer"
+                    className="flex-1 text-left text-[15px] font-sans font-semibold text-white hover:text-[#00E5B0] transition-colors cursor-pointer"
                   >
-                    MODELS
+                    Models
                   </button>
                   <button
                     type="button"
                     aria-label="Toggle Models list"
                     onClick={() => setModelsExpanded((prev) => !prev)}
-                    className="p-1 rounded-full hover:bg-[#0D222B] text-[#00E5B0] transition-colors cursor-pointer"
+                    className="p-1 rounded-full text-[#00E5B0] hover:bg-[#0F2A35] transition-colors cursor-pointer"
                   >
                     <ChevronDown
-                      className={`w-4 h-4 text-[#00E5B0] transition-transform duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] ${
+                      className={`w-4 h-4 text-[#00E5B0] transition-transform duration-200 ease-out ${
                         modelsExpanded ? 'rotate-180' : 'rotate-0'
                       }`}
                     />
@@ -284,25 +228,25 @@ export const Navbar: React.FC = () => {
                 </div>
 
                 <div
-                  className={`grid transition-all duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] ${
+                  className={`grid transition-all duration-200 ease-out ${
                     modelsExpanded
-                      ? 'grid-rows-[1fr] opacity-100 mt-2'
+                      ? 'grid-rows-[1fr] opacity-100 mt-1'
                       : 'grid-rows-[0fr] opacity-0 mt-0'
                   }`}
                 >
                   <div className="overflow-hidden">
-                    <div className="pl-3 pr-1 py-1.5 space-y-1 border-l-2 border-[#00E5B0]/30">
+                    <div className="pl-3 pr-1 py-1 space-y-1 border-l border-[#00E5B0]/30 ml-3">
                       {modelSubItems.map((sub) => (
                         <button
                           key={sub.label}
                           type="button"
                           onClick={() => handleNav(sub.target, sub.sectionId)}
-                          className="w-full px-3 py-1.5 rounded-[12px] hover:bg-[#0D222B] text-left flex items-center justify-between gap-2 transition-colors cursor-pointer group"
+                          className="w-full px-3 py-1.5 rounded-[10px] hover:bg-[#0B2028] text-left flex items-center justify-between gap-2 transition-colors cursor-pointer group"
                         >
-                          <span className="text-[13px] font-semibold text-[#D6EBE7] group-hover:text-[#00E5B0]">
+                          <span className="text-[13px] font-sans font-medium text-[#D6EBE7] group-hover:text-[#00E5B0]">
                             {sub.label}
                           </span>
-                          <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded-full bg-[#091A21] border border-[#00E5B0]/25 text-[#38F8D2]">
+                          <span className="text-[10px] font-sans font-semibold px-2 py-0.5 rounded-full bg-[#081920] border border-[#00E5B0]/25 text-[#38F8D2]">
                             {sub.badge}
                           </span>
                         </button>
@@ -316,28 +260,28 @@ export const Navbar: React.FC = () => {
               <button
                 type="button"
                 onClick={() => handleNav('leaderboard')}
-                className={`w-full text-left text-[15px] sm:text-[16px] font-display font-bold tracking-[0.02em] transition-colors cursor-pointer py-1 ${
+                className={`w-full px-3 py-2 rounded-[12px] text-left text-[15px] font-sans font-semibold transition-colors cursor-pointer ${
                   route === 'leaderboard'
-                    ? 'text-[#00E5B0]'
-                    : 'text-[#F4FBFA] hover:text-[#00E5B0]'
+                    ? 'bg-[#0B2028] text-[#00E5B0]'
+                    : 'text-white hover:bg-[#0B2028] hover:text-[#00E5B0]'
                 }`}
               >
-                FREE TRADING COMPETITION
+                Free Trading Competition
               </button>
 
               {/* 3. REWARD */}
               <button
                 type="button"
                 onClick={() => handleNav('free-spin')}
-                className={`w-full text-left text-[15px] sm:text-[16px] font-display font-bold tracking-[0.02em] transition-colors cursor-pointer py-1 flex items-center justify-between ${
+                className={`w-full px-3 py-2 rounded-[12px] text-left text-[15px] font-sans font-semibold flex items-center justify-between transition-colors cursor-pointer ${
                   route === 'free-spin'
-                    ? 'text-[#00E5B0]'
-                    : 'text-[#F4FBFA] hover:text-[#00E5B0]'
+                    ? 'bg-[#0B2028] text-[#00E5B0]'
+                    : 'text-white hover:bg-[#0B2028] hover:text-[#00E5B0]'
                 }`}
               >
-                <span>REWARD</span>
-                <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded-full bg-[#091A21] border border-[#00E5B0]/30 text-[#00E5B0]">
-                  COMING SOON
+                <span>Reward</span>
+                <span className="text-[10px] font-sans font-semibold px-2 py-0.5 rounded-full bg-[#081920] border border-[#00E5B0]/30 text-[#00E5B0]">
+                  Coming Soon
                 </span>
               </button>
 
@@ -345,26 +289,26 @@ export const Navbar: React.FC = () => {
               <button
                 type="button"
                 onClick={() => handleNav('referral')}
-                className={`w-full text-left text-[15px] sm:text-[16px] font-display font-bold tracking-[0.02em] transition-colors cursor-pointer py-1 ${
+                className={`w-full px-3 py-2 rounded-[12px] text-left text-[15px] font-sans font-semibold transition-colors cursor-pointer ${
                   route === 'referral'
-                    ? 'text-[#00E5B0]'
-                    : 'text-[#F4FBFA] hover:text-[#00E5B0]'
+                    ? 'bg-[#0B2028] text-[#00E5B0]'
+                    : 'text-white hover:bg-[#0B2028] hover:text-[#00E5B0]'
                 }`}
               >
-                AFFILIATE PROGRAM
+                Affiliate Program
               </button>
 
               {/* 5. FAQS */}
               <button
                 type="button"
                 onClick={() => handleNav('faq')}
-                className={`w-full text-left text-[15px] sm:text-[16px] font-display font-bold tracking-[0.02em] transition-colors cursor-pointer py-1 ${
+                className={`w-full px-3 py-2 rounded-[12px] text-left text-[15px] font-sans font-semibold transition-colors cursor-pointer ${
                   route === 'faq'
-                    ? 'text-[#00E5B0]'
-                    : 'text-[#F4FBFA] hover:text-[#00E5B0]'
+                    ? 'bg-[#0B2028] text-[#00E5B0]'
+                    : 'text-white hover:bg-[#0B2028] hover:text-[#00E5B0]'
                 }`}
               >
-                FAQS
+                FAQs
               </button>
 
               {/* Optional Admin Link if logged in as Admin */}
@@ -372,33 +316,30 @@ export const Navbar: React.FC = () => {
                 <button
                   type="button"
                   onClick={() => handleNav('admin')}
-                  className="w-full text-left text-[15px] font-display font-bold tracking-[0.02em] text-[#00E5B0] hover:text-[#38F8D2] flex items-center gap-2 py-1 cursor-pointer"
+                  className="w-full px-3 py-2 rounded-[12px] text-left text-[15px] font-sans font-semibold text-[#00E5B0] hover:bg-[#0B2028] flex items-center gap-2 cursor-pointer"
                 >
                   <Shield className="w-4 h-4" />
-                  <span>ADMIN PANEL</span>
+                  <span>Admin Panel</span>
                 </button>
               )}
             </nav>
 
-            {/* Compact Sleek Pill Button: CLIENT AREA */}
-            <div className="mt-5 pt-3 border-t border-[#00E5B0]/15 flex items-center justify-between gap-2.5">
+            {/* Bottom Actions: Client Area & Terminal */}
+            <div className="mt-3.5 pt-3 border-t border-[#00E5B0]/15 flex items-center justify-between gap-2.5">
               <button
                 type="button"
                 onClick={() => handleNav(user ? 'dashboard' : 'login')}
-                className="p-[2px] rounded-full bg-gradient-to-r from-[#2AFADF] via-[#00E5B0] to-[#00B894] shadow-[0_8px_20px_-4px_rgba(0,229,176,0.4)] hover:brightness-105 active:scale-[0.985] transition-all cursor-pointer"
+                className="flex-1 py-2.5 px-4 rounded-full apex-glow-btn text-[13px] font-sans font-bold flex items-center justify-center gap-1.5 cursor-pointer"
               >
-                <div className="py-2 px-5 rounded-full border border-[#03120F]/35 bg-gradient-to-r from-[#18E2B8] via-[#00D4A2] to-[#00B08B] flex items-center justify-center">
-                  <span className="font-display font-extrabold text-[12px] tracking-[0.04em] text-[#031612] uppercase whitespace-nowrap">
-                    CLIENT AREA
-                  </span>
-                </div>
+                <UserCheck className="w-4 h-4" />
+                <span>Client Area</span>
               </button>
 
-              <div className="flex items-center gap-2 text-xs font-semibold text-[#A3BDB8]">
+              <div className="flex items-center gap-2 text-xs font-sans font-semibold text-[#A3BDB8]">
                 <button
                   type="button"
                   onClick={() => handleNav('terminal')}
-                  className="py-1.5 px-3 rounded-full bg-[#091920] border border-[#00E5B0]/20 hover:border-[#00E5B0]/50 text-[#38F8D2] inline-flex items-center gap-1.5 cursor-pointer"
+                  className="py-2 px-3.5 rounded-full bg-[#091E26] border border-[#00E5B0]/30 hover:border-[#38F8D2] text-[#38F8D2] inline-flex items-center gap-1.5 cursor-pointer"
                 >
                   <Terminal className="w-3.5 h-3.5" />
                   <span>Terminal</span>
@@ -412,7 +353,7 @@ export const Navbar: React.FC = () => {
                       logout();
                       navigate('login');
                     }}
-                    className="py-1.5 px-3 rounded-full bg-[#091920] border border-red-500/30 text-red-400 hover:bg-red-500/10 inline-flex items-center gap-1.5 cursor-pointer"
+                    className="py-2 px-3 rounded-full bg-[#091920] border border-red-500/35 text-red-400 hover:bg-red-500/15 inline-flex items-center gap-1.5 cursor-pointer"
                   >
                     <LogOut className="w-3.5 h-3.5" />
                     <span>Logout</span>
@@ -421,7 +362,7 @@ export const Navbar: React.FC = () => {
                   <button
                     type="button"
                     onClick={() => handleNav('register')}
-                    className="py-1.5 px-3 rounded-full bg-[#091920] border border-white/10 hover:border-[#00E5B0]/40 text-white hover:text-[#00E5B0] cursor-pointer whitespace-nowrap"
+                    className="py-2 px-3.5 rounded-full bg-[#091E26] border border-[#00E5B0]/25 hover:border-[#38F8D2] text-white hover:text-[#38F8D2] cursor-pointer whitespace-nowrap"
                   >
                     Sign Up
                   </button>

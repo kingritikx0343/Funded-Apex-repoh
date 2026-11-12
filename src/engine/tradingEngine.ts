@@ -605,10 +605,25 @@ export function validateOrderRequest(
     };
   }
 
-  if (account.status !== 'active') {
+  if (account.status === 'failed' || account.status === 'suspended') {
     return {
       valid: false,
-      error: `Account #${account.accountNumber} is ${account.status.toUpperCase()} and cannot place new orders.`,
+      error: `Account #${account.accountNumber} is BREACHED (${account.breachReason || 'Drawdown Limit Violated'}) and cannot place new orders.`,
+      executionPrice: 0,
+      requiredMargin: 0,
+      estimatedCommission: 0,
+      estimatedRiskUsd: 0,
+      estimatedRiskPct: 0,
+    };
+  }
+
+  const activeRules = resolveChallengeRulesForAccount(account);
+  const maxFloor = Math.round(account.startingBalance * (1 - activeRules.maxDrawdownPct / 100) * 100) / 100;
+  const dailyFloor = Math.round(account.startingBalance * (1 - activeRules.dailyDrawdownPct / 100) * 100) / 100;
+  if (account.equity <= maxFloor || account.equity <= dailyFloor) {
+    return {
+      valid: false,
+      error: `Account #${account.accountNumber} has reached its Daily/Max Drawdown breach threshold ($${Math.max(maxFloor, dailyFloor).toLocaleString()}). Trading is locked.`,
       executionPrice: 0,
       requiredMargin: 0,
       estimatedCommission: 0,
@@ -1074,7 +1089,7 @@ export function evaluateAccountRiskMetrics(
       ? Math.max(0, Math.round((account.startingBalance - equity) * 100) / 100)
       : 0;
 
-  // Daily Drawdown checks both loss below startingBalance AND intraday loss from dailyStartingEquity
+  // Daily Drawdown checks both loss below startingBalance AND intraday loss from dailyStartingEquity when account is in drawdown
   const intradayDropFromDailyStart =
     currentDailyStart > equity
       ? Math.max(0, Math.round((currentDailyStart - equity) * 100) / 100)
@@ -1082,8 +1097,6 @@ export function evaluateAccountRiskMetrics(
   const dailyDropUsd =
     equity < account.startingBalance
       ? Math.max(overallDropUsd, intradayDropFromDailyStart)
-      : intradayDropFromDailyStart >= dailyLossLimitUsd
-      ? intradayDropFromDailyStart
       : 0;
 
   const currentDrawdownUsd = overallDropUsd;
@@ -1100,7 +1113,7 @@ export function evaluateAccountRiskMetrics(
   );
 
   const dailyBreachLevelUsd =
-    Math.round((account.startingBalance - dailyLossLimitUsd) * 100) / 100;
+    Math.round((Math.max(account.startingBalance, currentDailyStart) - dailyLossLimitUsd) * 100) / 100;
   const maxBreachFloorUsd =
     Math.round((account.startingBalance - maxLossLimitUsd) * 100) / 100;
   const profitTargetLevelUsd =
@@ -1129,10 +1142,10 @@ export function evaluateAccountRiskMetrics(
 
   if (account.status === 'active' || account.status === 'passed' || account.status === 'completed') {
     // Strictly enforce Max Drawdown and Daily Drawdown rules on live floating equity & balance
-    if (overallDropUsd >= maxLossLimitUsd) {
+    if (overallDropUsd >= maxLossLimitUsd || equity <= maxBreachFloorUsd) {
       nextStatus = 'failed';
       breachReason = `Maximum Drawdown Limit Breached (${rules.maxDrawdownPct}% | Loss: -$${overallDropUsd.toFixed(2)} | Max Limit: -$${maxLossLimitUsd.toFixed(2)})`;
-    } else if (dailyDropUsd >= dailyLossLimitUsd) {
+    } else if (dailyDropUsd >= dailyLossLimitUsd || equity <= dailyBreachLevelUsd) {
       nextStatus = 'failed';
       breachReason = `Daily Drawdown Limit Breached (${rules.dailyDrawdownPct}% | Daily Loss: -$${dailyDropUsd.toFixed(2)} | Daily Limit: -$${dailyLossLimitUsd.toFixed(2)})`;
     } else if (

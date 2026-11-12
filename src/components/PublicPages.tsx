@@ -131,6 +131,7 @@ export const PublicPages: React.FC = () => {
   const {
     route,
     navigate,
+    quotes,
     challenges,
     verifiedPayouts,
     leaderboard,
@@ -412,6 +413,7 @@ export const PublicPages: React.FC = () => {
       try {
         await sendPasswordReset(targetResetEmail);
         setAuthInfo(`Password reset link & recovery code sent to ${targetResetEmail}.`);
+        setShowForgotBox(false);
       } catch (err: any) {
         setAuthError(err?.message || 'Unable to send reset link');
       }
@@ -506,14 +508,20 @@ export const PublicPages: React.FC = () => {
                 {isLogin && (
                   <button
                     type="button"
+                    data-testid="forgot-password-toggle-btn"
                     onClick={() => {
-                      setShowForgotBox(true);
-                      if (authEmail && !forgotEmail) setForgotEmail(authEmail);
-                      setTimeout(() => forgotInputRef.current?.focus(), 60);
+                      setShowForgotBox((prev) => {
+                        const next = !prev;
+                        if (next) {
+                          if (authEmail && !forgotEmail) setForgotEmail(authEmail);
+                          setTimeout(() => forgotInputRef.current?.focus(), 60);
+                        }
+                        return next;
+                      });
                     }}
                     className="text-xs text-[#00E5B0] hover:underline cursor-pointer"
                   >
-                    Forgot password?
+                    {showForgotBox ? 'Hide reset box' : 'Forgot password?'}
                   </button>
                 )}
               </div>
@@ -594,33 +602,28 @@ export const PublicPages: React.FC = () => {
             </button>
           </form>
 
-          {/* Bottom Forgot Password Email Recovery Option on Login Page */}
-          {isLogin && (
+          {/* Forgot Password Email Recovery Box — ONLY shown after user clicks "Forgot password?" */}
+          {isLogin && showForgotBox && (
             <div className="pt-3 border-t border-white/10 space-y-2.5">
               <div className="flex items-center justify-between">
                 <span className="text-xs font-semibold text-[#A3BDB8] flex items-center gap-1.5">
                   <Mail className="w-3.5 h-3.5 text-[#00E5B0]" />
-                  <span>Forgot Password? Recover via Email</span>
+                  <span>Reset Password via Registered Email</span>
                 </span>
-                {!showForgotBox && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setShowForgotBox(true);
-                      if (authEmail && !forgotEmail) setForgotEmail(authEmail);
-                      setTimeout(() => forgotInputRef.current?.focus(), 60);
-                    }}
-                    className="text-[11px] font-bold text-[#00E5B0] hover:underline cursor-pointer"
-                  >
-                    Enter Email
-                  </button>
-                )}
+                <button
+                  type="button"
+                  onClick={() => setShowForgotBox(false)}
+                  className="text-[11px] font-medium text-[#A3BDB8] hover:text-white cursor-pointer"
+                >
+                  Cancel
+                </button>
               </div>
 
               <form onSubmit={handleForgot} className="flex items-center gap-2">
                 <input
                   ref={forgotInputRef}
                   type="email"
+                  required
                   data-testid="forgot-password-email-input"
                   value={forgotEmail}
                   onChange={(e) => setForgotEmail(e.target.value)}
@@ -630,9 +633,9 @@ export const PublicPages: React.FC = () => {
                 <button
                   type="submit"
                   data-testid="forgot-password-submit-btn"
-                  className="px-3.5 py-2 rounded-[9px] bg-[#0D1E24] hover:bg-[#00E5B0] text-[#00E5B0] hover:text-[#020A0D] border border-[#00E5B0]/35 font-display font-bold text-xs whitespace-nowrap transition-all cursor-pointer"
+                  className="px-3.5 py-2 rounded-[9px] bg-[#0D1E24] hover:bg-[#00E5B0] text-[#00E5B0] hover:text-[#020A0D] border border-[#00E5B0]/35 font-sans font-bold text-xs whitespace-nowrap transition-colors cursor-pointer"
                 >
-                  Reset Password
+                  Send Reset Link
                 </button>
               </form>
             </div>
@@ -644,7 +647,10 @@ export const PublicPages: React.FC = () => {
                 New to FUNDED APEX?{' '}
                 <button
                   type="button"
-                  onClick={() => navigate('register')}
+                  onClick={() => {
+                    setShowForgotBox(false);
+                    navigate('register');
+                  }}
                   className="text-[#00E676] font-semibold hover:underline cursor-pointer"
                 >
                   Create an account
@@ -655,7 +661,10 @@ export const PublicPages: React.FC = () => {
                 Already registered?{' '}
                 <button
                   type="button"
-                  onClick={() => navigate('login')}
+                  onClick={() => {
+                    setShowForgotBox(false);
+                    navigate('login');
+                  }}
                   className="text-[#00E676] font-semibold hover:underline cursor-pointer"
                 >
                   Sign in here
@@ -1948,146 +1957,6 @@ export const PublicPages: React.FC = () => {
                 <div className="font-mono text-2xl font-extrabold text-[#00E5B0]">{r.metric}</div>
                 <h3 className="text-base font-display font-bold text-[#FFFFFF]">{r.title}</h3>
                 <p className="text-xs sm:text-sm text-[#A3BDB8] leading-relaxed">{r.desc}</p>
-              </div>
-            ))}
-          </div>
-        </div>
-      </section>
-
-      {/* ====================================================================
-          SECTION 8: TRADING PLATFORM FEATURES (IN-HOUSE TERMINAL PREVIEW)
-          ==================================================================== */}
-      <section className="apex-reveal-init bg-[#030504]/55 backdrop-blur-[2px] py-10 sm:py-14 px-4 sm:px-8 border-b border-[#00E5B0]/15">
-        <div className="max-w-[1380px] mx-auto grid grid-cols-1 lg:grid-cols-12 gap-8 items-center">
-          <div className="lg:col-span-6 space-y-6">
-            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-[8px] bg-[#090D0A] border border-[#00E5B0]/25 text-[11px] font-mono font-semibold uppercase tracking-[0.14em] text-[#00E5B0]">
-              <span>08 · TRADING PLATFORM FEATURES</span>
-            </div>
-            <h2 className="text-3xl sm:text-4xl font-display font-bold text-[#FFFFFF] tracking-tight">
-              Proprietary In-House Trading Terminal
-            </h2>
-            <p className="text-sm sm:text-base text-[#A3BDB8] leading-relaxed">
-              Experience institutional execution directly inside your browser. Monitor live Forex and Gold (XAUUSD) price feeds, place Market and Pending orders with Stop Loss and Take Profit, and track real-time margin and drawdown compliance.
-            </p>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5 text-xs">
-              {[
-                'Multi-timeframe Japanese candlestick charting',
-                'Dedicated Forex Majors & XAUUSD Gold watchlists',
-                '1-Click Market, Limit, and Stop order ticket',
-                'Real-time Equity, Free Margin & Drawdown HUD',
-              ].map((feat) => (
-                <div
-                  key={feat}
-                  className="p-3.5 rounded-[12px] bg-[#050E13] border border-[#00E5B0]/20 flex items-center gap-2.5 text-[#FFFFFF]"
-                >
-                  <CheckCircle2 className="w-4 h-4 text-[#00E5B0] shrink-0" />
-                  <span>{feat}</span>
-                </div>
-              ))}
-            </div>
-            <div className="pt-2">
-              <button
-                type="button"
-                onClick={() => navigate('terminal')}
-                className="px-6 py-3.5 rounded-[14px] bg-[#00E5B0] hover:bg-[#2AFADF] text-[#03120F] font-display font-bold text-xs sm:text-sm cursor-pointer transition-all shadow-[0_8px_24px_rgba(0,229,176,0.3)] hover:-translate-y-0.5"
-              >
-                Launch Live Trading Terminal →
-              </button>
-            </div>
-          </div>
-
-          <div className="lg:col-span-6 rounded-[22px] bg-[#071318]/95 backdrop-blur-md border border-[#00E5B0]/30 p-5 sm:p-6 space-y-4 shadow-[0_28px_80px_rgba(0,0,0,0.95)] apex-reveal-init" style={{ '--reveal-delay': '120ms' } as React.CSSProperties}>
-            <div className="flex items-center justify-between border-b border-[#00E5B0]/15 pb-3">
-              <div className="flex items-center gap-2">
-                <span className="w-2.5 h-2.5 rounded-full bg-[#00E5B0] animate-pulse" />
-                <span className="font-mono text-xs font-bold text-white">
-                  FUNDED APEX TERMINAL · XAUUSD / EURUSD
-                </span>
-              </div>
-              <span className="px-2.5 py-0.5 rounded-[8px] bg-[#050E13] border border-[#00E5B0]/30 text-[10px] font-mono text-[#00E5B0]">
-                SIMULATED INSTITUTIONAL FEED
-              </span>
-            </div>
-            <div className="grid grid-cols-3 gap-3">
-              <div className="p-3.5 rounded-[14px] bg-[#050E13] border border-[#00E5B0]/18">
-                <div className="text-[10px] font-mono text-[#728F8A]">XAUUSD · GOLD</div>
-                <div className="text-base font-mono font-bold text-[#00E5B0] mt-1">2,742.80</div>
-              </div>
-              <div className="p-3.5 rounded-[14px] bg-[#050E13] border border-[#00E5B0]/18">
-                <div className="text-[10px] font-mono text-[#728F8A]">EURUSD · FOREX</div>
-                <div className="text-base font-mono font-bold text-white mt-1">1.08465</div>
-              </div>
-              <div className="p-3.5 rounded-[14px] bg-[#050E13] border border-[#00E5B0]/18">
-                <div className="text-[10px] font-mono text-[#728F8A]">NAS100 · INDEX</div>
-                <div className="text-base font-mono font-bold text-[#00E5B0] mt-1">20,418.5</div>
-              </div>
-            </div>
-            <div className="p-4 rounded-[14px] bg-[#050E13] border border-[#00E5B0]/20 flex items-center justify-between">
-              <div>
-                <div className="text-xs font-semibold text-white">Direct Chart Order Execution</div>
-                <div className="text-[11px] text-[#728F8A]">
-                  Instant Market Buy / Sell with automated Stop Loss &amp; Take Profit validation
-                </div>
-              </div>
-              <span className="font-mono text-xs font-bold text-[#00E5B0]">0.01 – 50 Lots</span>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      {/* ====================================================================
-          SECTION 9: PAYOUT INFORMATION & VERIFIED SETTLEMENTS
-          ==================================================================== */}
-      {/* ====================================================================
-          SECTION 9: PAYOUT INFORMATION & VERIFIED SETTLEMENTS
-          ==================================================================== */}
-      <section className="apex-reveal-init bg-transparent py-10 sm:py-14 px-4 sm:px-8 border-b border-[#00E5B0]/15">
-        <div className="max-w-[1380px] mx-auto space-y-6 sm:space-y-8">
-          <div className="flex flex-col md:flex-row md:items-end justify-between gap-4">
-            <div className="space-y-3 max-w-2xl">
-              <div className="inline-flex items-center gap-2 px-3 py-1 rounded-[8px] bg-[#090D0A] border border-[#00E5B0]/25 text-[11px] font-mono font-semibold uppercase tracking-[0.14em] text-[#00E5B0]">
-                <span>09 · PAYOUT INFORMATION</span>
-              </div>
-              <h2 className="text-3xl sm:text-4xl font-display font-bold text-[#FFFFFF] tracking-tight">
-                Bi-Weekly Settlements &amp; Verified Payouts
-              </h2>
-              <p className="text-sm sm:text-base text-[#A3BDB8]">
-                Request profit withdrawals every 14 days via USDT (BEP-20 / TRC-20) or Bank Transfer with up to 95% profit split.
-              </p>
-            </div>
-            <button
-              type="button"
-              onClick={() => navigate('payouts')}
-              className="px-5 py-2.5 rounded-[12px] bg-[#071318] hover:bg-[#0D1E26] border border-[#00E5B0]/30 text-xs font-semibold text-[#00E5B0] cursor-pointer self-start md:self-auto transition-colors"
-            >
-              View Full Payout Registry →
-            </button>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
-            {verifiedPayouts.slice(0, 3).map((pay, pidx) => (
-              <div
-                key={pay.id}
-                style={{ '--reveal-delay': `${pidx * 85}ms` } as React.CSSProperties}
-                className="apex-reveal-init rounded-[18px] bg-[#090D0A]/90 hover:bg-[#0D181E] backdrop-blur-md border border-[#00E5B0]/20 hover:border-[#00E5B0]/50 p-6 flex items-center justify-between gap-4 transition-all duration-300 shadow-[0_16px_40px_rgba(0,0,0,0.7)] hover:-translate-y-1.5"
-              >
-                <div className="space-y-1">
-                  <div className="font-display font-bold text-[#FFFFFF] text-base">
-                    {pay.traderName}
-                  </div>
-                  <div className="text-xs text-[#A3BDB8]">
-                    ${(pay.accountSize / 1000).toFixed(0)}K {pay.programType}
-                  </div>
-                  <div className="text-[11px] font-mono text-[#728F8A]">{pay.paymentDate}</div>
-                </div>
-                <div className="text-right">
-                  <div className="font-mono text-xl font-extrabold text-[#00E5B0]">
-                    +${pay.amountUsd.toLocaleString()}
-                  </div>
-                  <span className="inline-block mt-1 px-2.5 py-0.5 rounded-[8px] bg-[#050E13] border border-[#00E5B0]/30 text-[10px] font-mono font-bold text-[#00E5B0]">
-                    {pay.currency} · VERIFIED
-                  </span>
-                </div>
               </div>
             ))}
           </div>

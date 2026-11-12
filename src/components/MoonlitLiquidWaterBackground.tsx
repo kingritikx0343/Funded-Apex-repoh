@@ -34,7 +34,7 @@ export const MoonlitLiquidWaterBackground: React.FC = memo(() => {
     try {
       renderer = new THREE.WebGLRenderer({
         alpha: true,
-        antialias: !isSoftwareGl,
+        antialias: false,
         powerPreference: 'high-performance',
       });
     } catch {
@@ -42,9 +42,8 @@ export const MoonlitLiquidWaterBackground: React.FC = memo(() => {
     }
 
     renderer.outputColorSpace = THREE.SRGBColorSpace;
-    renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = 1.1;
-    renderer.setPixelRatio(isSoftwareGl ? 1 : Math.min(window.devicePixelRatio || 1, 1.25));
+    renderer.toneMapping = THREE.NoToneMapping;
+    renderer.setPixelRatio(isSoftwareGl ? 0.6 : 0.85);
     renderer.setSize(window.innerWidth, window.innerHeight);
     renderer.setClearColor(0x000000, 0);
 
@@ -287,22 +286,27 @@ export const MoonlitLiquidWaterBackground: React.FC = memo(() => {
     window.addEventListener('scroll', handleScroll, { passive: true });
     window.addEventListener('mousemove', handleMouseMove, { passive: true });
 
-    // Dedicated 60FPS requestAnimationFrame render loop for silky, instantaneous response
+    // Dedicated afterDraw render loop so WebGL never queues frames ahead of scroll or pointer input
+    let timerId: number | ReturnType<typeof setTimeout> = 0;
+    const frameDelayMs = isSoftwareGl ? 80 : 16;
+
     const tick = () => {
       if (disposed) return;
       if (document.hidden) {
-        frameId = requestAnimationFrame(tick);
+        timerId = window.setTimeout(() => {
+          if (!disposed) frameId = requestAnimationFrame(tick);
+        }, 250);
         return;
       }
 
-      // Fast, instantaneous, buttery-smooth 60/120fps interpolation ("aur fast ho thoda")
-      smoothScrollY += (targetScrollY - smoothScrollY) * 0.16;
-      smoothMouseX += (targetMouseX - smoothMouseX) * 0.10;
-      smoothMouseY += (targetMouseY - smoothMouseY) * 0.10;
+      // Fast, instantaneous, buttery-smooth 60/120fps interpolation
+      smoothScrollY += (targetScrollY - smoothScrollY) * 0.26;
+      smoothMouseX += (targetMouseX - smoothMouseX) * 0.16;
+      smoothMouseY += (targetMouseY - smoothMouseY) * 0.16;
 
       const elapsed = clock.getElapsedTime();
-      waveMat.uniforms.uTime.value = elapsed * 1.2 + smoothScrollY * 0.0022;
-      particleMat.uniforms.uTime.value = elapsed;
+      waveMat.uniforms.uTime.value = elapsed * 1.45 + smoothScrollY * 0.0026;
+      particleMat.uniforms.uTime.value = elapsed * 1.25;
 
       // Camera responds smoothly to both scroll and gentle mouse sway
       camera.position.x = smoothMouseX * 0.65;
@@ -319,35 +323,37 @@ export const MoonlitLiquidWaterBackground: React.FC = memo(() => {
       // 3D Shapes react dynamically to scroll via requestAnimationFrame with silky 60FPS physics
       for (let i = 0; i < shapeNodes.length; i++) {
         const node = shapeNodes[i];
-        const t = elapsed * node.floatSpeed + node.phase;
+        const t = elapsed * (node.floatSpeed * 1.25) + node.phase;
 
-        // Gentle parallax vertical shift: keeps shapes in viewport as user scrolls smoothly
         const scrollDisplacementY = -smoothScrollY * 0.0024 * (1 + i * 0.35) - smoothMouseY * 0.35;
-        // Smooth horizontal sway when scrolling
-        const scrollSwayX = (i === 0 ? 1 : -1) * Math.sin(smoothScrollY * 0.002 + node.phase) * 1.2 + smoothMouseX * 0.65;
+        const scrollSwayX = (i === 0 ? 1 : -1) * Math.sin(smoothScrollY * 0.0022 + node.phase) * 1.2 + smoothMouseX * 0.65;
 
-        node.group.position.x = node.basePos.x + Math.cos(t * 0.7) * node.orbitRadius + scrollSwayX;
+        node.group.position.x = node.basePos.x + Math.cos(t * 0.75) * node.orbitRadius + scrollSwayX;
         node.group.position.y = node.basePos.y + Math.sin(t) * node.floatAmp + scrollDisplacementY;
-        node.group.position.z = node.basePos.z + Math.sin(t * 0.5) * (node.orbitRadius * 0.6);
+        node.group.position.z = node.basePos.z + Math.sin(t * 0.55) * (node.orbitRadius * 0.6);
 
-        // Responsive rotation & physical tilt on scroll
-        const scrollRotY = smoothScrollY * 0.0028;
-        const scrollRotX = scrollVelocity * 0.0007;
-        const scrollTiltZ = (i === 0 ? -1 : 1) * Math.sin(smoothScrollY * 0.0016) * 0.28 - scrollVelocity * 0.0005;
+        const scrollRotY = smoothScrollY * 0.0032;
+        const scrollRotX = scrollVelocity * 0.00075;
+        const scrollTiltZ = (i === 0 ? -1 : 1) * Math.sin(smoothScrollY * 0.0018) * 0.28 - scrollVelocity * 0.0005;
 
         node.group.rotation.z = scrollTiltZ;
         node.group.rotation.x = scrollRotX;
 
-        node.outer.rotation.x = elapsed * node.rotSpeed.x + smoothScrollY * 0.002;
-        node.outer.rotation.y = elapsed * node.rotSpeed.y + scrollRotY;
-        node.inner.rotation.x = -elapsed * node.rotSpeed.y * 1.2 - smoothScrollY * 0.0024;
-        node.inner.rotation.z = elapsed * node.rotSpeed.z * 1.3 + scrollRotY * 0.5;
-        node.ring.rotation.z = elapsed * 0.35 + node.phase + scrollRotY * 1.2;
-        node.ring.rotation.x = Math.PI * 0.35 + Math.sin(elapsed * 0.6 + smoothScrollY * 0.001) * 0.18;
+        node.outer.rotation.x = elapsed * node.rotSpeed.x * 1.25 + smoothScrollY * 0.0024;
+        node.outer.rotation.y = elapsed * node.rotSpeed.y * 1.25 + scrollRotY;
+        node.inner.rotation.x = -elapsed * node.rotSpeed.y * 1.4 - smoothScrollY * 0.0028;
+        node.inner.rotation.z = elapsed * node.rotSpeed.z * 1.45 + scrollRotY * 0.55;
+        node.ring.rotation.z = elapsed * 0.45 + node.phase + scrollRotY * 1.25;
+        node.ring.rotation.x = Math.PI * 0.35 + Math.sin(elapsed * 0.75 + smoothScrollY * 0.0012) * 0.18;
       }
 
       renderer.render(scene, camera);
-      frameId = requestAnimationFrame(tick);
+
+      timerId = window.setTimeout(() => {
+        if (!disposed) {
+          frameId = requestAnimationFrame(tick);
+        }
+      }, frameDelayMs);
     };
 
     frameId = requestAnimationFrame(tick);
@@ -366,7 +372,7 @@ export const MoonlitLiquidWaterBackground: React.FC = memo(() => {
     return () => {
       disposed = true;
       cancelAnimationFrame(frameId);
-      clearTimeout(frameId);
+      clearTimeout(timerId);
       window.removeEventListener('resize', handleResize);
       window.removeEventListener('scroll', handleScroll);
       window.removeEventListener('mousemove', handleMouseMove);
@@ -394,15 +400,6 @@ export const MoonlitLiquidWaterBackground: React.FC = memo(() => {
         backfaceVisibility: 'hidden',
       }}
     >
-      {/* Ambient Aqua-Water Caustic Glow Layer */}
-      <div
-        className="absolute -inset-[10%] apex-water-caustic-layer"
-        style={{
-          background:
-            'radial-gradient(ellipse 52% 38% at 50% 18%, rgba(0, 229, 176, 0.13) 0%, rgba(0, 184, 148, 0.05) 48%, transparent 75%), radial-gradient(ellipse 46% 36% at 22% 72%, rgba(56, 248, 210, 0.08) 0%, transparent 70%)',
-        }}
-      />
-
       {/* Restored Three.js 3D Animated Shapes & Liquid Wave Canvas */}
       <div ref={mountRef} className="absolute inset-0 w-full h-full" />
     </div>

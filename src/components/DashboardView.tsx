@@ -335,16 +335,15 @@ export const DashboardView: React.FC = () => {
         />
       )}
 
-      {/* SIDEBAR DRAWER (MATCHING VIDEO 2 WITH MAIN, FINANCE, ACCOUNT SECTIONS) */}
-      {/* SIDEBAR DRAWER (COMPACT 1-SCREEN ARCHITECTURAL DESIGN WITH TELEGRAM & LOGOUT) */}
+      {/* SIDEBAR DRAWER (1-SCREEN COMPACT FIT WITHOUT PROFILE BLOCK) */}
       <aside
-        className={`fixed lg:sticky lg:top-0 inset-y-0 left-0 z-50 w-64 h-screen max-h-screen shrink-0 bg-[#030504]/95 backdrop-blur-xl border-r border-[#00E676]/15 p-3.5 flex flex-col justify-between overflow-y-auto custom-scrollbar transition-transform duration-200 ease-out select-none ${
+        className={`fixed lg:sticky lg:top-0 inset-y-0 left-0 z-50 w-64 h-[100dvh] max-h-[100dvh] shrink-0 bg-gradient-to-b from-[#061318]/98 via-[#040D11]/98 to-[#03090C]/98 backdrop-blur-xl border-r border-[#00E5B0]/25 px-3.5 py-3 flex flex-col justify-between overflow-hidden transition-transform duration-200 ease-out select-none shadow-[16px_0_48px_rgba(0,0,0,0.85)] ${
           isDrawerOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'
         }`}
       >
-        <div className="space-y-3.5">
+        <div className="space-y-2.5 min-h-0">
           {/* Logo Header */}
-          <div className="flex items-center justify-between border-b border-white/10 pb-2.5">
+          <div className="flex items-center justify-between border-b border-[#00E5B0]/15 pb-2">
             <button
               type="button"
               onClick={() => navigate('home')}
@@ -356,26 +355,13 @@ export const DashboardView: React.FC = () => {
               type="button"
               aria-label="Close menu drawer"
               onClick={() => setIsDrawerOpen(false)}
-              className="lg:hidden p-1 rounded-[7px] bg-[#090D0A] text-[#A7B1AA] hover:text-white cursor-pointer"
+              className="lg:hidden p-1.5 rounded-full bg-[#09181F] border border-[#00E5B0]/25 text-[#A3BDB8] hover:text-white cursor-pointer"
             >
               <X className="w-4 h-4" />
             </button>
           </div>
 
-          {/* User Badge */}
-          <div className="flex items-center gap-2.5 p-2 rounded-[9px] bg-[#090D0A] border border-[#00E676]/20">
-            <div className="w-7 h-7 rounded-full bg-[#00E676]/20 border border-[#00E676] flex items-center justify-center font-display font-extrabold text-[11px] text-[#00E676] shrink-0">
-              {user.fullName.slice(0, 2).toUpperCase()}
-            </div>
-            <div className="min-w-0 flex-1">
-              <div className="text-xs font-bold text-white truncate leading-tight">{user.fullName}</div>
-              <div className="text-[9px] font-mono text-[#00E676] uppercase leading-tight">
-                {user.role === 'admin' || user.role === 'super_admin' ? 'Super Admin' : 'Trader'}
-              </div>
-            </div>
-          </div>
-
-          <nav className="space-y-2.5" aria-label="Dashboard Sidebar Navigation">
+          <nav className="space-y-2" aria-label="Dashboard Sidebar Navigation">
             {isAdmin && (
               <button
                 type="button"
@@ -384,11 +370,11 @@ export const DashboardView: React.FC = () => {
                   setIsDrawerOpen(false);
                   navigate('admin');
                 }}
-                className="w-full px-3 py-1.5 rounded-[8px] text-xs font-display font-bold flex items-center justify-between gap-2 bg-[#0D130F] border border-[#00E676]/45 text-[#00E676] hover:bg-[#00E676] hover:text-black transition-all cursor-pointer"
+                className="w-full px-2.5 py-1.5 rounded-[10px] text-[12px] font-sans font-bold flex items-center justify-between gap-2 bg-[#0B2229] border border-[#00E5B0]/45 text-[#38F8D2] hover:bg-[#00E5B0] hover:text-[#03120F] transition-colors cursor-pointer"
               >
                 <span className="flex items-center gap-2">
                   <Shield className="w-3.5 h-3.5" />
-                  <span>Admin Panel</span>
+                  <span>ADMIN PANEL</span>
                 </span>
                 <ArrowUpRight className="w-3 h-3" />
               </button>
@@ -396,7 +382,7 @@ export const DashboardView: React.FC = () => {
 
             {/* SECTION: MAIN */}
             <div className="space-y-0.5">
-              <div className="px-2.5 text-[9px] font-mono font-bold uppercase tracking-[0.14em] text-[#77837B]">
+              <div className="px-2.5 text-[9px] font-mono font-bold uppercase tracking-[0.16em] text-[#6E948D]">
                 MAIN
               </div>
               <button
@@ -405,13 +391,13 @@ export const DashboardView: React.FC = () => {
                   setActiveTab('overview');
                   setIsDrawerOpen(false);
                 }}
-                className={`w-full px-2.5 py-1.5 rounded-[7px] text-xs font-medium flex items-center gap-2.5 transition-all cursor-pointer ${
+                className={`w-full px-2.5 py-1.5 rounded-[10px] text-[12px] font-medium flex items-center gap-2.5 transition-all cursor-pointer ${
                   activeTab === 'overview'
-                    ? 'bg-[#090D0A] border border-[#00E676]/35 text-[#00E676] font-semibold'
-                    : 'text-[#A7B1AA] hover:bg-[#090D0A]/60 hover:text-white'
+                    ? 'bg-[#0A2027] border border-[#00E5B0]/40 text-[#38F8D2] font-bold shadow-[inset_0_1px_0_rgba(56,248,210,0.15)]'
+                    : 'text-[#A3BDB8] hover:bg-[#08181E] hover:text-white'
                 }`}
               >
-                <Grid className="w-3.5 h-3.5" />
+                <Grid className="w-3.5 h-3.5 text-[#00E5B0]" />
                 <span>Dashboard</span>
               </button>
 
@@ -421,13 +407,13 @@ export const DashboardView: React.FC = () => {
                   setActiveTab('challenges');
                   setIsDrawerOpen(false);
                 }}
-                className={`w-full px-2.5 py-1.5 rounded-[7px] text-xs font-medium flex items-center gap-2.5 transition-all cursor-pointer ${
+                className={`w-full px-2.5 py-1.5 rounded-[10px] text-[12px] font-medium flex items-center gap-2.5 transition-all cursor-pointer ${
                   activeTab === 'challenges'
-                    ? 'bg-[#090D0A] border border-[#00E676]/35 text-[#00E676] font-semibold'
-                    : 'text-[#A7B1AA] hover:bg-[#090D0A]/60 hover:text-white'
+                    ? 'bg-[#0A2027] border border-[#00E5B0]/40 text-[#38F8D2] font-bold shadow-[inset_0_1px_0_rgba(56,248,210,0.15)]'
+                    : 'text-[#A3BDB8] hover:bg-[#08181E] hover:text-white'
                 }`}
               >
-                <Trophy className="w-3.5 h-3.5" />
+                <Trophy className="w-3.5 h-3.5 text-[#00E5B0]" />
                 <span>Accounts</span>
               </button>
 
@@ -437,16 +423,16 @@ export const DashboardView: React.FC = () => {
                   setActiveTab('challenges');
                   setIsDrawerOpen(false);
                 }}
-                className="w-full px-2.5 py-1.5 rounded-[7px] text-xs font-medium flex items-center gap-2.5 text-[#A7B1AA] hover:bg-[#090D0A]/60 hover:text-white transition-all cursor-pointer"
+                className="w-full px-2.5 py-1.5 rounded-[10px] text-[12px] font-medium flex items-center gap-2.5 text-[#A3BDB8] hover:bg-[#08181E] hover:text-white transition-all cursor-pointer"
               >
-                <Gift className="w-3.5 h-3.5 text-[#00E676]" />
+                <Gift className="w-3.5 h-3.5 text-[#00E5B0]" />
                 <span>New Challenge</span>
               </button>
             </div>
 
             {/* SECTION: FINANCE */}
             <div className="space-y-0.5">
-              <div className="px-2.5 text-[9px] font-mono font-bold uppercase tracking-[0.14em] text-[#77837B]">
+              <div className="px-2.5 text-[9px] font-mono font-bold uppercase tracking-[0.16em] text-[#6E948D]">
                 FINANCE
               </div>
               <button
@@ -455,13 +441,13 @@ export const DashboardView: React.FC = () => {
                   setActiveTab('history');
                   setIsDrawerOpen(false);
                 }}
-                className={`w-full px-2.5 py-1.5 rounded-[7px] text-xs font-medium flex items-center gap-2.5 transition-all cursor-pointer ${
+                className={`w-full px-2.5 py-1.5 rounded-[10px] text-[12px] font-medium flex items-center gap-2.5 transition-all cursor-pointer ${
                   activeTab === 'history'
-                    ? 'bg-[#090D0A] border border-[#00E676]/35 text-[#00E676] font-semibold'
-                    : 'text-[#A7B1AA] hover:bg-[#090D0A]/60 hover:text-white'
+                    ? 'bg-[#0A2027] border border-[#00E5B0]/40 text-[#38F8D2] font-bold shadow-[inset_0_1px_0_rgba(56,248,210,0.15)]'
+                    : 'text-[#A3BDB8] hover:bg-[#08181E] hover:text-white'
                 }`}
               >
-                <History className="w-3.5 h-3.5" />
+                <History className="w-3.5 h-3.5 text-[#00E5B0]" />
                 <span>Transaction History</span>
               </button>
 
@@ -471,20 +457,20 @@ export const DashboardView: React.FC = () => {
                   setActiveTab('payouts');
                   setIsDrawerOpen(false);
                 }}
-                className={`w-full px-2.5 py-1.5 rounded-[7px] text-xs font-medium flex items-center gap-2.5 transition-all cursor-pointer ${
+                className={`w-full px-2.5 py-1.5 rounded-[10px] text-[12px] font-medium flex items-center gap-2.5 transition-all cursor-pointer ${
                   activeTab === 'payouts'
-                    ? 'bg-[#090D0A] border border-[#00E676]/35 text-[#00E676] font-semibold'
-                    : 'text-[#A7B1AA] hover:bg-[#090D0A]/60 hover:text-white'
+                    ? 'bg-[#0A2027] border border-[#00E5B0]/40 text-[#38F8D2] font-bold shadow-[inset_0_1px_0_rgba(56,248,210,0.15)]'
+                    : 'text-[#A3BDB8] hover:bg-[#08181E] hover:text-white'
                 }`}
               >
-                <Wallet className="w-3.5 h-3.5" />
+                <Wallet className="w-3.5 h-3.5 text-[#00E5B0]" />
                 <span>Payout</span>
               </button>
             </div>
 
-            {/* SECTION: ACCOUNT */}
+            {/* SECTION: ACCOUNT (Compact 1-Screen Fit without Profile) */}
             <div className="space-y-0.5">
-              <div className="px-2.5 text-[9px] font-mono font-bold uppercase tracking-[0.14em] text-[#77837B]">
+              <div className="px-2.5 text-[9px] font-mono font-bold uppercase tracking-[0.16em] text-[#6E948D]">
                 ACCOUNT
               </div>
               <button
@@ -493,14 +479,14 @@ export const DashboardView: React.FC = () => {
                   setShowNotificationsPopover(true);
                   setIsDrawerOpen(false);
                 }}
-                className="w-full px-2.5 py-1.5 rounded-[7px] text-xs font-medium flex items-center justify-between text-[#A7B1AA] hover:bg-[#090D0A]/60 hover:text-white transition-all cursor-pointer"
+                className="w-full px-2.5 py-1.5 rounded-[10px] text-[12px] font-medium flex items-center justify-between text-[#A3BDB8] hover:bg-[#08181E] hover:text-white transition-all cursor-pointer"
               >
                 <span className="flex items-center gap-2.5">
-                  <Bell className="w-3.5 h-3.5" />
+                  <Bell className="w-3.5 h-3.5 text-[#00E5B0]" />
                   <span>Notifications</span>
                 </span>
                 {notifications.length > 0 && (
-                  <span className="px-1.5 py-0.2 rounded-full bg-[#00E676] text-black text-[9px] font-bold font-mono">
+                  <span className="px-1.5 py-0.2 rounded-full bg-[#00E5B0] text-[#03120F] text-[9px] font-bold font-mono">
                     {notifications.length}
                   </span>
                 )}
@@ -512,13 +498,13 @@ export const DashboardView: React.FC = () => {
                   setActiveTab('kyc');
                   setIsDrawerOpen(false);
                 }}
-                className={`w-full px-2.5 py-1.5 rounded-[7px] text-xs font-medium flex items-center gap-2.5 transition-all cursor-pointer ${
+                className={`w-full px-2.5 py-1.5 rounded-[10px] text-[12px] font-medium flex items-center gap-2.5 transition-all cursor-pointer ${
                   activeTab === 'kyc'
-                    ? 'bg-[#090D0A] border border-[#00E676]/35 text-[#00E676] font-semibold'
-                    : 'text-[#A7B1AA] hover:bg-[#090D0A]/60 hover:text-white'
+                    ? 'bg-[#0A2027] border border-[#00E5B0]/40 text-[#38F8D2] font-bold shadow-[inset_0_1px_0_rgba(56,248,210,0.15)]'
+                    : 'text-[#A3BDB8] hover:bg-[#08181E] hover:text-white'
                 }`}
               >
-                <UserCheck className="w-3.5 h-3.5" />
+                <UserCheck className="w-3.5 h-3.5 text-[#00E5B0]" />
                 <span>KYC &amp; Support</span>
               </button>
 
@@ -528,13 +514,13 @@ export const DashboardView: React.FC = () => {
                   setActiveTab('certificates');
                   setIsDrawerOpen(false);
                 }}
-                className={`w-full px-2.5 py-1.5 rounded-[7px] text-xs font-medium flex items-center gap-2.5 transition-all cursor-pointer ${
+                className={`w-full px-2.5 py-1.5 rounded-[10px] text-[12px] font-medium flex items-center gap-2.5 transition-all cursor-pointer ${
                   activeTab === 'certificates'
-                    ? 'bg-[#090D0A] border border-[#00E676]/35 text-[#00E676] font-semibold'
-                    : 'text-[#A7B1AA] hover:bg-[#090D0A]/60 hover:text-white'
+                    ? 'bg-[#0A2027] border border-[#00E5B0]/40 text-[#38F8D2] font-bold shadow-[inset_0_1px_0_rgba(56,248,210,0.15)]'
+                    : 'text-[#A3BDB8] hover:bg-[#08181E] hover:text-white'
                 }`}
               >
-                <Award className="w-3.5 h-3.5" />
+                <Award className="w-3.5 h-3.5 text-[#00E5B0]" />
                 <span>Certificates</span>
               </button>
 
@@ -544,37 +530,21 @@ export const DashboardView: React.FC = () => {
                   setIsDrawerOpen(false);
                   navigate('trading-rules');
                 }}
-                className="w-full px-2.5 py-1.5 rounded-[7px] text-xs font-medium flex items-center gap-2.5 text-[#A7B1AA] hover:bg-[#090D0A]/60 hover:text-white transition-all cursor-pointer"
+                className="w-full px-2.5 py-1.5 rounded-[10px] text-[12px] font-medium flex items-center gap-2.5 text-[#A3BDB8] hover:bg-[#08181E] hover:text-white transition-all cursor-pointer"
               >
-                <Shield className="w-3.5 h-3.5" />
+                <Shield className="w-3.5 h-3.5 text-[#00E5B0]" />
                 <span>Rules</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => {
-                  setActiveTab('settings');
-                  setIsDrawerOpen(false);
-                }}
-                className={`w-full px-2.5 py-1.5 rounded-[7px] text-xs font-medium flex items-center gap-2.5 transition-all cursor-pointer ${
-                  activeTab === 'settings'
-                    ? 'bg-[#090D0A] border border-[#00E676]/35 text-[#00E676] font-semibold'
-                    : 'text-[#A7B1AA] hover:bg-[#090D0A]/60 hover:text-white'
-                }`}
-              >
-                <Settings className="w-3.5 h-3.5" />
-                <span>Settings</span>
               </button>
             </div>
           </nav>
         </div>
 
-        {/* Sidebar Bottom Actions (1-SCREEN FIT: TELEGRAM VIP + LIVE TERMINAL + LOGOUT) */}
-        <div className="pt-2.5 border-t border-white/10 space-y-1.5">
+        {/* Sidebar Bottom Actions (1-SCREEN FIT: LIVE TERMINAL + TELEGRAM VIP + LOGOUT) */}
+        <div className="pt-2 border-t border-[#00E5B0]/15 space-y-1.5 shrink-0">
           <button
             type="button"
             onClick={() => navigate('terminal')}
-            className="w-full py-2 px-3 rounded-[8px] apex-glow-btn text-xs flex items-center justify-center gap-2 cursor-pointer"
+            className="w-full py-2 px-3 rounded-[10px] apex-glow-btn text-xs flex items-center justify-center gap-2 cursor-pointer"
           >
             <Terminal className="w-3.5 h-3.5" />
             <span>Launch Live Terminal</span>
@@ -585,7 +555,7 @@ export const DashboardView: React.FC = () => {
             target="_blank"
             rel="noopener noreferrer"
             data-testid="sidebar-telegram-btn"
-            className="w-full py-1.5 px-3 rounded-[8px] bg-[#0088cc]/15 hover:bg-[#0088cc]/25 border border-[#0088cc]/35 text-[#38bdf8] text-xs font-semibold flex items-center justify-center gap-2 transition-all cursor-pointer"
+            className="w-full py-1.5 px-3 rounded-[10px] bg-[#0088cc]/15 hover:bg-[#0088cc]/25 border border-[#0088cc]/35 text-[#38bdf8] text-xs font-semibold flex items-center justify-center gap-2 transition-all cursor-pointer"
           >
             <Send className="w-3.5 h-3.5" />
             <span>Join Telegram VIP</span>
@@ -599,7 +569,7 @@ export const DashboardView: React.FC = () => {
               logout();
               navigate('login');
             }}
-            className="w-full py-1.5 px-3 rounded-[8px] bg-[#090D0A] hover:bg-red-950/40 border border-white/10 hover:border-red-500/40 text-[#A7B1AA] hover:text-red-300 text-xs font-medium flex items-center justify-center gap-2 transition-all cursor-pointer"
+            className="w-full py-1.5 px-3 rounded-[10px] bg-[#071419] hover:bg-red-950/40 border border-white/10 hover:border-red-500/40 text-[#A3BDB8] hover:text-red-300 text-xs font-medium flex items-center justify-center gap-2 transition-all cursor-pointer"
           >
             <LogOut className="w-3.5 h-3.5" />
             <span>Log out</span>
@@ -609,21 +579,28 @@ export const DashboardView: React.FC = () => {
 
       {/* MAIN CONTENT AREA */}
       <div className="flex-1 min-w-0 flex flex-col">
-        {/* TOP NAVIGATION BAR (ROUNDED CAPSULE HEADER: HAMBURGER + TITLE "Dashboard" + USER BADGE) */}
-        <header className="sticky top-2 z-40 mx-3 sm:mx-6 mt-2 rounded-full bg-[#051015]/92 backdrop-blur-xl border border-[#00E5B0]/25 px-4 sm:px-6 h-[64px] flex items-center justify-between gap-3 shadow-[0_14px_38px_rgba(0,0,0,0.78),inset_0_1px_0_rgba(56,248,210,0.14)]">
+        {/* TOP NAVIGATION BAR (UPGRADED LUXURY CLIENT AREA HEADER WITH SCULPTED 3-LINE BUTTON) */}
+        <header className="sticky top-2 z-40 mx-3 sm:mx-6 mt-2 rounded-full bg-gradient-to-r from-[#06151B]/95 via-[#081C24]/95 to-[#06151B]/95 backdrop-blur-xl border border-[#00E5B0]/35 px-4 sm:px-6 h-[64px] flex items-center justify-between gap-3 shadow-[0_18px_44px_rgba(0,0,0,0.84),0_0_28px_rgba(0,229,176,0.12),inset_0_1px_0_rgba(56,248,210,0.2)]">
           <div className="flex items-center gap-3 min-w-0">
             <button
               type="button"
               aria-label="Open side menu drawer"
               onClick={() => setIsDrawerOpen(true)}
-              className="p-2 rounded-full bg-[#090D0A] border border-[#00E676]/30 text-[#00E676] cursor-pointer"
+              className="group h-10 px-3 rounded-full bg-gradient-to-b from-[#0B2229] to-[#061318] border border-[#00E5B0]/40 hover:border-[#38F8D2] flex items-center justify-center cursor-pointer shadow-[0_4px_14px_rgba(0,229,176,0.2)] transition-all"
             >
-              <Menu className="w-5 h-5" />
+              <div className="w-4.5 h-3 flex flex-col justify-between items-start">
+                <span className="w-4.5 h-[2px] rounded-full bg-gradient-to-r from-[#38F8D2] to-white group-hover:w-3.5 transition-all" />
+                <span className="w-3.5 h-[2px] rounded-full bg-[#00E5B0] shadow-[0_0_6px_#00E5B0] group-hover:w-4.5 transition-all" />
+                <span className="w-4 h-[2px] rounded-full bg-gradient-to-r from-white to-[#38F8D2] group-hover:w-4.5 transition-all" />
+              </div>
             </button>
 
-            <h1 className="text-base sm:text-lg font-display font-bold text-white truncate">
-              Dashboard
-            </h1>
+            <div className="flex items-center gap-2.5 min-w-0">
+              <span className="hidden sm:inline-flex w-2 h-2 rounded-full bg-[#00E5B0]" />
+              <h1 className="text-base sm:text-lg font-sans font-bold text-white truncate">
+                Client Area
+              </h1>
+            </div>
           </div>
 
           <div className="flex items-center gap-2.5 shrink-0">
@@ -875,6 +852,36 @@ export const DashboardView: React.FC = () => {
                   Manage your trading challenges, accounts, and payouts.
                 </p>
               </div>
+
+              {/* REAL-TIME AUTOMATED BREACH SYSTEM ALERT BANNER */}
+              {activeAccount && (activeAccount.status === 'failed' || riskMetrics?.nextStatus === 'failed') && (
+                <div
+                  data-testid="dashboard-breach-alert-banner"
+                  className="rounded-[18px] bg-gradient-to-r from-red-950/85 via-[#1C080B]/95 to-red-950/75 border border-red-500/50 p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4 shadow-[0_18px_48px_rgba(239,68,68,0.22)]"
+                >
+                  <div className="space-y-1">
+                    <div className="inline-flex items-center gap-2 px-2.5 py-0.5 rounded-full bg-red-500/20 border border-red-500/45 text-[10px] font-mono font-extrabold uppercase tracking-wider text-red-300">
+                      <span className="w-2 h-2 rounded-full bg-red-400 animate-ping" />
+                      <span>AUTOMATED RISK ENGINE • ACCOUNT BREACHED</span>
+                    </div>
+                    <h2 className="text-base sm:text-lg font-display font-extrabold text-white">
+                      Account #{activeAccount.accountNumber} Disqualified — Drawdown Rule Violated
+                    </h2>
+                    <p className="text-xs sm:text-sm text-red-200/90 leading-relaxed">
+                      {activeAccount.breachReason ||
+                        riskMetrics?.breachReason ||
+                        'Maximum or Daily Drawdown threshold exceeded. All open positions were automatically liquidated and terminal execution credentials revoked.'}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setActiveTab('challenges')}
+                    className="px-4 py-2.5 rounded-[12px] bg-red-500 hover:bg-red-400 text-black font-display font-extrabold text-xs shrink-0 cursor-pointer transition-all"
+                  >
+                    Start New Challenge →
+                  </button>
+                </div>
+              )}
 
               {/* 4 CARDS AS SHOWN IN VIDEO 2 (USING EXACT SANS FINTECH NUMBERS) */}
               <div className="grid grid-cols-2 lg:grid-cols-4 gap-3.5 sm:gap-4">

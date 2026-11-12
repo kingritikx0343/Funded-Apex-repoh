@@ -92,7 +92,7 @@ interface DraggingSlTpState {
   price: number;
 }
 
-export const ApexLiveCandlestickChart: React.FC<ApexLiveCandlestickChartProps> = ({
+export const ApexLiveCandlestickChart: React.FC<ApexLiveCandlestickChartProps> = React.memo(({
   symbol,
   timeframeLabel,
   timeframeSeconds,
@@ -2392,4 +2392,6 @@ export const ApexLiveCandlestickChart: React.FC<ApexLiveCandlestickChartProps> =
       })}
     </div>
   );
-};
+});
+
+ApexLiveCandlestickChart.displayName = 'ApexLiveCandlestickChart';

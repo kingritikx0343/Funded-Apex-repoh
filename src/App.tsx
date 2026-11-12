@@ -200,7 +200,6 @@ const AppRouter: React.FC = () => {
       <AnimatedToastPopup />
 
       <div
-        key={route}
         className={
           isTerminal
             ? 'flex-1 w-full h-full relative z-10 flex flex-col'

@@ -1,6 +1,7 @@
 import React, { useEffect, useRef } from 'react';
 import * as THREE from 'three';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
+import heroCandlestickImg from '../assets/images/hero_candlestick_3d_1793875616783.jpg';
 
 /**
  * FUNDED APEX — Custom 3D Hero Architectural Sculpture
@@ -306,7 +307,7 @@ export const HeroArchitectural3D: React.FC = () => {
     <div className="relative w-full h-[380px] sm:h-[440px] lg:h-[500px] rounded-2xl bg-[#030504] border border-[#00E676]/22 shadow-[0_30px_90px_rgba(0,0,0,0.98),0_0_40px_rgba(0,230,118,0.08)] overflow-hidden select-none">
       {/* Subtle Architectural Backdrop Image + Pure Black Vignette */}
       <img
-        src="/hero_candlestick_3d.jpg"
+        src={heroCandlestickImg}
         alt=""
         aria-hidden="true"
         className="absolute inset-0 w-full h-full object-cover opacity-20 mix-blend-luminosity pointer-events-none"

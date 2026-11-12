@@ -324,6 +324,7 @@ export interface PlatformContextValue {
   quotes: Record<SymbolCode, MarketQuote>;
   liveFeedStatus: LiveFeedStatus;
   refreshLiveQuotes: () => Promise<void>;
+  refreshVaultData: () => Promise<void>;
   challenges: ChallengeTemplate[];
   accounts: TradingAccountRecord[];
   allAccounts: TradingAccountRecord[];
@@ -1154,103 +1155,143 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
   // Persistent Server Disk Vault Sync (Protects all user profiles, passwords, accounts, orders & purchases across Web updates)
   const vaultLoadedRef = useRef(false);
-  useEffect(() => {
-    let active = true;
-    fetch('/api/vault/sync')
-      .then((res) => (res.ok ? res.json() : null))
-      .then((data) => {
-        if (!active || !data?.vault) {
-          vaultLoadedRef.current = true;
-          return;
-        }
-        const v = data.vault;
-        if (Array.isArray(v.users) && v.users.length > 0) {
-          setAllUsers((prev) => {
-            const byKey = new Map<string, UserProfileData>();
-            v.users.forEach((u: UserProfileData) => {
-              if (u?.email) byKey.set(u.email.toLowerCase(), u);
-            });
-            prev.forEach((u) => {
-              if (u?.email) {
-                const key = u.email.toLowerCase();
-                const vaultUser = byKey.get(key);
-                byKey.set(key, {
-                  ...vaultUser,
-                  ...u,
-                  passwordHash: u.passwordHash || vaultUser?.passwordHash,
-                });
-              }
-            });
-            return Array.from(byKey.values());
-          });
-        }
-        if (Array.isArray(v.accounts) && v.accounts.length > 0) {
-          setAccounts((prev) => {
-            const byId = new Map<string, TradingAccountRecord>();
-            v.accounts.forEach((a: TradingAccountRecord) => {
-              if (a?.id) byId.set(a.id, a);
-            });
-            prev.forEach((a) => {
-              if (a?.id) {
-                const vaultAcc = byId.get(a.id);
-                byId.set(a.id, {
-                  ...vaultAcc,
-                  ...a,
-                  terminalPassword: a.terminalPassword || vaultAcc?.terminalPassword || '',
-                  terminalUserId: a.terminalUserId || vaultAcc?.terminalUserId || '',
-                });
-              }
-            });
-            return Array.from(byId.values());
-          });
-        }
-        if (Array.isArray(v.orders) && v.orders.length > 0) {
-          setOrders((prev) => {
-            const byId = new Map<string, TradeOrderRecord>();
-            v.orders.forEach((o: TradeOrderRecord) => {
-              if (o?.id) byId.set(o.id, o);
-            });
-            prev.forEach((o) => {
-              if (o?.id) byId.set(o.id, { ...byId.get(o.id), ...o });
-            });
-            return Array.from(byId.values());
-          });
-        }
-        if (Array.isArray(v.purchaseRequests) && v.purchaseRequests.length > 0) {
-          setPurchaseRequests((prev) => {
-            const byId = new Map<string, AccountPurchaseRequest>();
-            v.purchaseRequests.forEach((r: AccountPurchaseRequest) => {
-              if (r?.id) byId.set(r.id, r);
-            });
-            prev.forEach((r) => {
-              if (r?.id) byId.set(r.id, { ...byId.get(r.id), ...r });
-            });
-            return Array.from(byId.values());
-          });
-        }
-        if (Array.isArray(v.emailNotifications) && v.emailNotifications.length > 0) {
-          setEmailNotifications((prev) => {
-            const byId = new Map<string, FundedApexEmailPayload>();
-            v.emailNotifications.forEach((m: FundedApexEmailPayload) => {
-              if (m?.id) byId.set(m.id, m);
-            });
-            prev.forEach((m) => {
-              if (m?.id) byId.set(m.id, { ...byId.get(m.id), ...m });
-            });
-            return Array.from(byId.values()).sort((a, b) =>
-              (b.sentAt || '').localeCompare(a.sentAt || '')
-            );
-          });
-        }
+
+  const refreshVaultData = useCallback(async () => {
+    try {
+      const res = await fetch('/api/vault/sync');
+      if (!res.ok) {
         vaultLoadedRef.current = true;
-      })
-      .catch(() => {
+        return;
+      }
+      const data = await res.json();
+      if (!data?.vault) {
         vaultLoadedRef.current = true;
-      });
-    return () => {
-      active = false;
-    };
+        return;
+      }
+      const v = data.vault;
+      if (Array.isArray(v.users) && v.users.length > 0) {
+        setAllUsers((prev) => {
+          const byKey = new Map<string, UserProfileData>();
+          v.users.forEach((u: UserProfileData) => {
+            if (u?.email) byKey.set(u.email.toLowerCase(), u);
+          });
+          prev.forEach((u) => {
+            if (u?.email) {
+              const key = u.email.toLowerCase();
+              const vaultUser = byKey.get(key);
+              byKey.set(key, {
+                ...vaultUser,
+                ...u,
+                passwordHash: u.passwordHash || vaultUser?.passwordHash,
+              });
+            }
+          });
+          const next = Array.from(byKey.values());
+          if (next.length === prev.length && JSON.stringify(next) === JSON.stringify(prev)) {
+            return prev;
+          }
+          return next;
+        });
+      }
+      if (Array.isArray(v.accounts) && v.accounts.length > 0) {
+        setAccounts((prev) => {
+          const byId = new Map<string, TradingAccountRecord>();
+          v.accounts.forEach((a: TradingAccountRecord) => {
+            if (a?.id) byId.set(a.id, a);
+          });
+          prev.forEach((a) => {
+            if (a?.id) {
+              const vaultAcc = byId.get(a.id);
+              byId.set(a.id, {
+                ...vaultAcc,
+                ...a,
+                terminalPassword: a.terminalPassword || vaultAcc?.terminalPassword || '',
+                terminalUserId: a.terminalUserId || vaultAcc?.terminalUserId || '',
+              });
+            }
+          });
+          const next = Array.from(byId.values());
+          if (next.length === prev.length && JSON.stringify(next) === JSON.stringify(prev)) {
+            return prev;
+          }
+          return next;
+        });
+      }
+      if (Array.isArray(v.orders) && v.orders.length > 0) {
+        setOrders((prev) => {
+          const byId = new Map<string, TradeOrderRecord>();
+          v.orders.forEach((o: TradeOrderRecord) => {
+            if (o?.id) byId.set(o.id, o);
+          });
+          prev.forEach((o) => {
+            if (o?.id) byId.set(o.id, { ...byId.get(o.id), ...o });
+          });
+          const next = Array.from(byId.values());
+          if (next.length === prev.length && JSON.stringify(next) === JSON.stringify(prev)) {
+            return prev;
+          }
+          return next;
+        });
+      }
+      if (Array.isArray(v.purchaseRequests) && v.purchaseRequests.length > 0) {
+        setPurchaseRequests((prev) => {
+          const byId = new Map<string, AccountPurchaseRequest>();
+          prev.forEach((r) => {
+            if (r?.id) byId.set(r.id, r);
+          });
+          v.purchaseRequests.forEach((r: AccountPurchaseRequest) => {
+            if (r?.id) {
+              const existing = byId.get(r.id);
+              byId.set(r.id, existing ? { ...existing, ...r } : r);
+            }
+          });
+          const next = Array.from(byId.values()).sort((a, b) =>
+            (b.createdAt || '').localeCompare(a.createdAt || '')
+          );
+          if (next.length === prev.length && JSON.stringify(next) === JSON.stringify(prev)) {
+            return prev;
+          }
+          return next;
+        });
+      }
+      if (Array.isArray(v.emailNotifications) && v.emailNotifications.length > 0) {
+        setEmailNotifications((prev) => {
+          const byId = new Map<string, FundedApexEmailPayload>();
+          v.emailNotifications.forEach((m: FundedApexEmailPayload) => {
+            if (m?.id) byId.set(m.id, m);
+          });
+          prev.forEach((m) => {
+            if (m?.id) byId.set(m.id, { ...byId.get(m.id), ...m });
+          });
+          const next = Array.from(byId.values()).sort((a, b) =>
+            (b.sentAt || '').localeCompare(a.sentAt || '')
+          );
+          if (next.length === prev.length && JSON.stringify(next) === JSON.stringify(prev)) {
+            return prev;
+          }
+          return next;
+        });
+      }
+      vaultLoadedRef.current = true;
+    } catch {
+      vaultLoadedRef.current = true;
+    }
   }, []);
+
+  useEffect(() => {
+    void refreshVaultData();
+    const interval = setInterval(() => {
+      void refreshVaultData();
+    }, 8000);
+    const onFocus = () => {
+      void refreshVaultData();
+    };
+    window.addEventListener('focus', onFocus);
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener('focus', onFocus);
+    };
+  }, [refreshVaultData]);
 
   useEffect(() => {
     if (!vaultLoadedRef.current) return;
@@ -1709,9 +1750,11 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         spotAnchors[tickUpdate.symbol] = tickUpdate.bid;
         pendingWsUpdates[tickUpdate.symbol] = tickUpdate;
 
-        // Throttle state flushes for 60fps smooth UI: 320ms on terminal, 3000ms on website pages
-        const minFlushInterval = routeRef.current === 'terminal' ? 320 : 3000;
-        if (nowTs - lastWsFlushTs < minFlushInterval) {
+        // Only trigger React state flushes on the live trading terminal so website pages scroll at 120fps with zero background re-renders
+        if (routeRef.current !== 'terminal') {
+          return;
+        }
+        if (nowTs - lastWsFlushTs < 320) {
           return;
         }
         lastWsFlushTs = nowTs;
@@ -1739,7 +1782,7 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         });
       },
       (connected, source) => {
-        if (!active) return;
+        if (!active || routeRef.current !== 'terminal') return;
         setLiveFeedStatus((prev) => ({
           ...prev,
           connected,
@@ -1750,8 +1793,9 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     );
 
     const restSyncTimer = setInterval(() => {
+      if (routeRef.current !== 'terminal') return;
       fetchInitialLiveQuotes(generateInitialQuotes()).then(({ quotes: freshQuotes, source }) => {
-        if (!active) return;
+        if (!active || routeRef.current !== 'terminal') return;
         if (Object.keys(freshQuotes).length > 0) {
           const nowTs = Date.now();
           setQuotes((prev) => {
@@ -2151,6 +2195,8 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
               )
             : null;
           if (breachedAcc) {
+            void setDoc(doc(db, 'accounts', breachedAcc.id), breachedAcc, { merge: true }).catch(() => {});
+            void setDoc(doc(db, 'trading_accounts', breachedAcc.id), breachedAcc, { merge: true }).catch(() => {});
             const breachMail = buildChallengeStatusUpdateEmailPayload({
               recipientEmail: owner?.email || breachedAcc.userEmail || user?.email || 'trader@fundedapex.com',
               recipientName: owner?.fullName || user?.fullName || 'FUNDED APEX Trader',
@@ -2174,6 +2220,17 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
               body: JSON.stringify(breachMail),
             }).catch(() => {});
           }
+          if (typeof window !== 'undefined') {
+            window.dispatchEvent(
+              new CustomEvent('apex-terminal-banner', {
+                detail: {
+                  title: `ACCOUNT #${b.accountNumber} BREACHED`,
+                  subtitle: `${b.reason} · Open positions liquidated & terminal locked`,
+                  tone: 'red',
+                },
+              })
+            );
+          }
           pushNotification(
             `Account #${b.accountNumber} Breached — Email Sent`,
             `${b.reason}. All open positions were closed, Terminal Password removed, and breach notification emailed.`,
@@ -2185,6 +2242,64 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       }
     }
   }, [quotes, orders, accounts, payouts, allUsers, user, pushNotification]);
+
+  // Continuous Real-Time Drawdown Breach Guard (enforces Daily & Max Drawdown even when all orders are closed)
+  useEffect(() => {
+    if (accounts.length === 0) return;
+    const violatedAccounts = accounts.filter((acc) => {
+      if (acc.status === 'failed' || acc.status === 'suspended') return false;
+      const openForAcc = orders.filter((o) => o.accountId === acc.id && o.status === 'OPEN');
+      const metrics = evaluateAccountRiskMetrics(acc, openForAcc);
+      return metrics.nextStatus === 'failed';
+    });
+    if (violatedAccounts.length === 0) return;
+
+    const breachedIds = new Set(violatedAccounts.map((a) => a.id));
+    setAccounts((prev) =>
+      prev.map((acc) => {
+        if (!breachedIds.has(acc.id)) return acc;
+        const openForAcc = orders.filter((o) => o.accountId === acc.id && o.status === 'OPEN');
+        const metrics = evaluateAccountRiskMetrics(acc, openForAcc);
+        const settledBal = Math.round((acc.balance + metrics.floatingPnl) * 100) / 100;
+        const updatedAcc: TradingAccountRecord = {
+          ...acc,
+          balance: settledBal,
+          equity: settledBal,
+          usedMargin: 0,
+          freeMargin: settledBal,
+          status: 'failed',
+          terminalPassword: '',
+          breachReason: metrics.breachReason || 'Maximum or Daily Drawdown Limit Breached',
+          updatedAt: new Date().toISOString(),
+        };
+        void setDoc(doc(db, 'accounts', updatedAcc.id), updatedAcc, { merge: true }).catch(() => {});
+        void setDoc(doc(db, 'trading_accounts', updatedAcc.id), updatedAcc, { merge: true }).catch(() => {});
+        return updatedAcc;
+      })
+    );
+    setOrders((prev) =>
+      prev.map((o) => {
+        if (!breachedIds.has(o.accountId)) return o;
+        if (o.status === 'OPEN') {
+          return { ...o, exitPrice: o.currentPrice, status: 'CLOSED', closeTime: new Date().toISOString() };
+        }
+        if (o.status === 'PENDING') {
+          return { ...o, status: 'CANCELLED', closeTime: new Date().toISOString() };
+        }
+        return o;
+      })
+    );
+    setIsTerminalUnlocked(false);
+    violatedAccounts.forEach((acc) => {
+      const openForAcc = orders.filter((o) => o.accountId === acc.id && o.status === 'OPEN');
+      const metrics = evaluateAccountRiskMetrics(acc, openForAcc);
+      pushNotification(
+        `Account #${acc.accountNumber} Breached`,
+        `${metrics.breachReason || 'Drawdown limit violated'}. Account disqualified & positions liquidated.`,
+        'error'
+      );
+    });
+  }, [accounts, orders, pushNotification]);
 
   // Guard protected routes so they only open when a client is logged in
   useEffect(() => {
@@ -2242,9 +2357,20 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   const safeFirestoreWrite = useCallback(
     async (collectionName: string, docId: string, payload: object) => {
       try {
-        if (!auth.currentUser) return;
-        const ok = await hasWorkingAuthToken();
-        if (!ok) return;
+        const guestAllowedCollections = [
+          'purchaseRequests',
+          'purchase_requests',
+          'orders',
+          'mail_notifications',
+          'emailNotifications',
+          'users',
+        ];
+        const isGuestPermitted = guestAllowedCollections.includes(collectionName);
+        if (!auth.currentUser && !isGuestPermitted) return;
+        if (auth.currentUser) {
+          const ok = await hasWorkingAuthToken();
+          if (!ok && !isGuestPermitted) return;
+        }
         const sanitized: Record<string, unknown> = {};
         for (const [k, v] of Object.entries(payload as Record<string, unknown>)) {
           if (v !== undefined) {
@@ -2252,8 +2378,8 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
           }
         }
         await setDoc(doc(db, collectionName, docId), sanitized, { merge: true });
-      } catch {
-        // Non-blocking local-first persistence fallback
+      } catch (err) {
+        console.warn(`Firestore write notice [${collectionName}/${docId}]:`, err);
       }
     },
     []
@@ -2963,9 +3089,50 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         createdAt: new Date().toISOString(),
       };
 
-      setPurchaseRequests((prev) => [newRequest, ...prev]);
+      setPurchaseRequests((prev) => [newRequest, ...prev.filter((r) => r.id !== newRequest.id)]);
 
+      // Dual write to Firestore so both camelCase and snake_case schemas are populated
+      void safeFirestoreWrite('purchaseRequests', newRequest.id, newRequest);
       void safeFirestoreWrite('purchase_requests', newRequest.id, newRequest);
+
+      // Instant server vault dispatch so orders are immediately captured across devices
+      fetch('/api/vault/purchase-request', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newRequest),
+      }).catch(() => {});
+
+      fetch('/api/vault/save', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          purchaseRequest: newRequest,
+          purchaseRequests: [newRequest],
+        }),
+      }).catch(() => {});
+
+      // Dispatch alert email to Admin operations desk
+      const adminOrderEmail = buildCustomManualEmailPayload({
+        recipientEmail: 'admin@fundedapex.com',
+        recipientName: 'FUNDED APEX Admin Desk',
+        subject: `[NEW ORDER] #${orderNum} - ${effectiveName} (${template.title})`,
+        headline: `New Purchase Received: #${orderNum}`,
+        subheadline: `${template.title} · $${params.finalAmountUsd.toFixed(2)} USD`,
+        badgeText: 'PENDING CONFIRMATION',
+        badgeColorHex: '#FBBF24',
+        bodyTextOrHtml: `Trader ${effectiveName} (${effectiveEmail}) submitted an order for ${template.title}.\n\nOrder ID: ${orderNum}\nPayment Method: ${params.paymentMethod}\nTransaction Ref / TxID: ${params.transactionRef}\nFinal Amount: $${params.finalAmountUsd.toFixed(2)} USD\n\nPlease verify in the Admin Panel Orders & Approvals tab to activate credentials.`,
+        ctaLabel: 'View in Admin Panel →',
+        ctaUrl: 'https://fundedapex.com/?page=admin',
+        ctaColorHex: '#00FFA3',
+        highlightItems: [
+          { label: 'ORDER NUMBER', value: orderNum },
+          { label: 'TRADER NAME', value: effectiveName },
+          { label: 'TRADER EMAIL', value: effectiveEmail },
+          { label: 'AMOUNT PAID', value: `$${params.finalAmountUsd.toFixed(2)} USD` },
+          { label: 'TXID / REF', value: params.transactionRef },
+        ],
+      });
+      dispatchFundedApexEmail(adminOrderEmail);
 
       recordAdminLog(
         'PURCHASE_CONFIRMATION_REQUESTED',
@@ -2983,7 +3150,7 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
       return newRequest;
     },
-    [user, challenges, safeFirestoreWrite, recordAdminLog, pushNotification]
+    [user, challenges, allUsers, safeFirestoreWrite, dispatchFundedApexEmail, recordAdminLog, pushNotification]
   );
 
   const completeStripeCheckoutPayment = useCallback(
@@ -3086,6 +3253,10 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString(),
         };
+        const createdPreviewAcc = account;
+        setAccounts((prev) =>
+          prev.some((a) => a.id === createdPreviewAcc.id) ? prev : [createdPreviewAcc, ...prev]
+        );
       }
       if (!account) {
         openStripeCheckout('two-step-5000');
@@ -4695,6 +4866,7 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       };
 
       setAccounts((prev) => [newAcc, ...prev]);
+      void safeFirestoreWrite('accounts', newAcc.id, newAcc);
       void safeFirestoreWrite('trading_accounts', newAcc.id, newAcc);
       if (effectiveOwnerUid === user.uid || cleanReqEmail === user.email.toLowerCase()) {
         setActiveAccountId(newAcc.id);
@@ -4713,18 +4885,28 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         triggeredBy: 'account_allocation',
       });
 
+      const approvedReq: AccountPurchaseRequest = {
+        ...req,
+        status: 'approved',
+        allocatedAccountNumber: acctNum,
+        reviewedAt: new Date().toISOString(),
+      };
+
       setPurchaseRequests((prev) =>
-        prev.map((r) =>
-          r.id === requestId
-            ? {
-                ...r,
-                status: 'approved',
-                allocatedAccountNumber: acctNum,
-                reviewedAt: new Date().toISOString(),
-              }
-            : r
-        )
+        prev.map((r) => (r.id === requestId ? approvedReq : r))
       );
+
+      void safeFirestoreWrite('purchaseRequests', approvedReq.id, approvedReq);
+      void safeFirestoreWrite('purchase_requests', approvedReq.id, approvedReq);
+
+      fetch('/api/vault/save', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          accounts: [newAcc],
+          purchaseRequests: [approvedReq],
+        }),
+      }).catch(() => {});
 
       recordAdminLog(
         'APPROVE_ACCOUNT_PURCHASE',
@@ -4740,7 +4922,7 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
       return { ok: true, account: newAcc };
     },
-    [user, purchaseRequests, challenges, dispatchTerminalCredentialsEmail, recordAdminLog, pushNotification]
+    [user, purchaseRequests, challenges, safeFirestoreWrite, dispatchTerminalCredentialsEmail, recordAdminLog, pushNotification]
   );
 
   const adminRejectPurchaseRequest = useCallback(
@@ -4751,13 +4933,26 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       const req = purchaseRequests.find((r) => r.id === requestId);
       if (!req) return { ok: false, error: 'Purchase request not found.' };
 
+      const rejectedReq: AccountPurchaseRequest = {
+        ...req,
+        status: 'rejected',
+        reviewedAt: new Date().toISOString(),
+      };
+
       setPurchaseRequests((prev) =>
-        prev.map((r) =>
-          r.id === requestId
-            ? { ...r, status: 'rejected', reviewedAt: new Date().toISOString() }
-            : r
-        )
+        prev.map((r) => (r.id === requestId ? rejectedReq : r))
       );
+
+      void safeFirestoreWrite('purchaseRequests', rejectedReq.id, rejectedReq);
+      void safeFirestoreWrite('purchase_requests', rejectedReq.id, rejectedReq);
+
+      fetch('/api/vault/save', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          purchaseRequests: [rejectedReq],
+        }),
+      }).catch(() => {});
 
       recordAdminLog(
         'REJECT_ACCOUNT_PURCHASE',
@@ -4771,7 +4966,7 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       );
       return { ok: true };
     },
-    [user, purchaseRequests, recordAdminLog, pushNotification]
+    [user, purchaseRequests, safeFirestoreWrite, recordAdminLog, pushNotification]
   );
 
   const uploadAccountCertificateImage = useCallback(
@@ -4850,6 +5045,7 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         quotes,
         liveFeedStatus,
         refreshLiveQuotes,
+        refreshVaultData,
         challenges,
         accounts: userAccounts,
         allAccounts: accounts,

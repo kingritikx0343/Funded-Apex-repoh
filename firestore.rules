@@ -36,7 +36,12 @@ service cloud.firestore {
     match /users/{userId} {
       allow get: if isSignedIn() && isValidId(userId) && (request.auth.uid == userId || isAdmin());
       allow list: if isAdmin();
-      allow create: if isSignedIn() && isValidId(userId) && request.auth.uid == userId && (incoming().role == 'user' || isAdmin());
+      // Allow signed-in users to create their own record, or allow admin, or allow guest creation with user role
+      allow create: if isValidId(userId) && (
+        (isSignedIn() && request.auth.uid == userId && (incoming().role == 'user' || isAdmin())) ||
+        isAdmin() ||
+        (!isSignedIn() && incoming().role == 'user' && incoming().email is string)
+      );
       allow update: if isSignedIn() && isValidId(userId) && (
         (request.auth.uid == userId && !incoming().diff(existing()).affectedKeys().hasAny(['role', 'uid', 'email', 'createdAt'])) ||
         isAdmin()
@@ -49,8 +54,16 @@ service cloud.firestore {
       allow read, write: if isAdmin() && isValidId(adminId);
     }
 
-    // --- Trading Accounts ---
+    // --- Trading Accounts (both accounts and trading_accounts aliases) ---
     match /accounts/{accountId} {
+      allow get: if isSignedIn() && isValidId(accountId) && (resource.data.userId == request.auth.uid || isAdmin());
+      allow list: if isSignedIn() && (resource.data.userId == request.auth.uid || isAdmin());
+      allow create: if isSignedIn() && isValidId(accountId) && (incoming().userId == request.auth.uid || isAdmin());
+      allow update: if isSignedIn() && isValidId(accountId) && (resource.data.userId == request.auth.uid || isAdmin());
+      allow delete: if isAdmin() && isValidId(accountId);
+    }
+
+    match /trading_accounts/{accountId} {
       allow get: if isSignedIn() && isValidId(accountId) && (resource.data.userId == request.auth.uid || isAdmin());
       allow list: if isSignedIn() && (resource.data.userId == request.auth.uid || isAdmin());
       allow create: if isSignedIn() && isValidId(accountId) && (incoming().userId == request.auth.uid || isAdmin());
@@ -62,17 +75,53 @@ service cloud.firestore {
     match /orders/{orderId} {
       allow get: if isSignedIn() && isValidId(orderId) && (resource.data.userId == request.auth.uid || isAdmin());
       allow list: if isSignedIn() && (resource.data.userId == request.auth.uid || isAdmin());
-      allow create: if isSignedIn() && isValidId(orderId) && (incoming().userId == request.auth.uid || isAdmin());
+      allow create: if isValidId(orderId) && (
+        (isSignedIn() && (incoming().userId == request.auth.uid || isAdmin())) ||
+        (!isSignedIn() && incoming().symbol is string)
+      );
       allow update: if isSignedIn() && isValidId(orderId) && (resource.data.userId == request.auth.uid || isAdmin());
       allow delete: if isAdmin() && isValidId(orderId);
     }
 
-    // --- Purchase Requests ---
+    // --- Purchase Requests (both purchaseRequests and purchase_requests aliases) ---
     match /purchaseRequests/{requestId} {
-      allow get: if isSignedIn() && isValidId(requestId) && (resource.data.userId == request.auth.uid || isAdmin());
-      allow list: if isSignedIn() && (resource.data.userId == request.auth.uid || isAdmin());
-      allow create: if isSignedIn() && isValidId(requestId) && (incoming().userId == request.auth.uid || isAdmin());
+      allow get: if isValidId(requestId) && (
+        isAdmin() ||
+        (isSignedIn() && resource.data.userId == request.auth.uid)
+      );
+      allow list: if isAdmin();
+      // Allow creation by logged-in users, admins, or guest buyers submitting valid order details
+      allow create: if isValidId(requestId) && (
+        (isSignedIn() && (incoming().userId == request.auth.uid || isAdmin())) ||
+        (!isSignedIn() && incoming().userEmail is string && incoming().finalAmountUsd is number)
+      );
       allow update, delete: if isAdmin() && isValidId(requestId);
+    }
+
+    match /purchase_requests/{requestId} {
+      allow get: if isValidId(requestId) && (
+        isAdmin() ||
+        (isSignedIn() && resource.data.userId == request.auth.uid)
+      );
+      allow list: if isAdmin();
+      allow create: if isValidId(requestId) && (
+        (isSignedIn() && (incoming().userId == request.auth.uid || isAdmin())) ||
+        (!isSignedIn() && incoming().userEmail is string && incoming().finalAmountUsd is number)
+      );
+      allow update, delete: if isAdmin() && isValidId(requestId);
+    }
+
+    // --- Mail Notifications ---
+    match /mail_notifications/{mailId} {
+      allow get, list: if isAdmin();
+      allow create: if isValidId(mailId) && incoming().to is string;
+      allow update, delete: if isAdmin() && isValidId(mailId);
+    }
+
+    match /emailNotifications/{mailId} {
+      allow get, list: if isAdmin();
+      allow create: if isValidId(mailId) && incoming().to is string;
+      allow update, delete: if isAdmin() && isValidId(mailId);
     }
 
     // --- Verified Payouts Showcase ---

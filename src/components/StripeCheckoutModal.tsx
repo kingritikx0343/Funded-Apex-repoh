@@ -968,6 +968,59 @@ export const StripeCheckoutModal: React.FC = () => {
                 />
               </div>
 
+              {/* PAYMENT SCREENSHOT PROOF UPLOADER */}
+              <div className="space-y-1.5 text-xs">
+                <div className="flex items-center justify-between">
+                  <label className="block text-[#A7B1AA] font-mono">
+                    Payment Screenshot / Receipt (Recommended)
+                  </label>
+                  {screenshotUrl && (
+                    <button
+                      type="button"
+                      onClick={() => setScreenshotUrl('')}
+                      className="text-[11px] text-red-400 hover:underline cursor-pointer"
+                    >
+                      Remove
+                    </button>
+                  )}
+                </div>
+                <label className="flex items-center justify-center gap-2 p-3 rounded-[12px] bg-[#08151B] border border-dashed border-[#00E5B0]/30 hover:border-[#00E5B0] text-[#A3BDB8] hover:text-white cursor-pointer transition-colors">
+                  <Upload className="w-4 h-4 text-[#00E5B0]" />
+                  <span className="font-mono text-xs">
+                    {screenshotUrl ? '✓ Screenshot attached (Click to change)' : 'Upload payment screenshot'}
+                  </span>
+                  <input
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      if (!file) return;
+                      const reader = new FileReader();
+                      reader.onload = (ev) => {
+                        const res = ev.target?.result;
+                        if (typeof res === 'string') {
+                          setScreenshotUrl(res);
+                        }
+                      };
+                      reader.readAsDataURL(file);
+                    }}
+                  />
+                </label>
+                {screenshotUrl && (
+                  <div className="flex items-center gap-2 pt-1">
+                    <img
+                      src={screenshotUrl}
+                      alt="Proof Preview"
+                      className="w-12 h-12 object-cover rounded-lg border border-[#00E5B0]/40"
+                    />
+                    <span className="text-[11px] font-mono text-[#00E5B0]">
+                      Screenshot attached and will be sent directly to Admin
+                    </span>
+                  </div>
+                )}
+              </div>
+
               {statusMessage && (
                 <div className="p-3.5 rounded-[12px] bg-[#00E5B0]/10 border border-[#00E5B0]/30 text-xs text-[#00E5B0] flex items-center gap-2">
                   <CheckCircle2 className="w-4 h-4 shrink-0 text-[#00E5B0]" />

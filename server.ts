@@ -69,13 +69,19 @@ async function startServer() {
         return Array.from(map.values());
       };
 
+      // Normalize incoming purchase requests (support array, single item, and snake_case alias)
+      let incomingPurchaseRequests = incoming.purchaseRequests || incoming.purchase_requests || [];
+      if (incoming.purchaseRequest && typeof incoming.purchaseRequest === 'object') {
+        incomingPurchaseRequests = [incoming.purchaseRequest, ...(Array.isArray(incomingPurchaseRequests) ? incomingPurchaseRequests : [])];
+      }
+
       const merged = {
         ...existing,
         ...incoming,
         users: mergeById(existing.users, incoming.users, 'uid'),
-        accounts: mergeById(existing.accounts, incoming.accounts, 'id'),
+        accounts: mergeById(existing.accounts, incoming.accounts || incoming.trading_accounts, 'id'),
         orders: mergeById(existing.orders, incoming.orders, 'id'),
-        purchaseRequests: mergeById(existing.purchaseRequests, incoming.purchaseRequests, 'id'),
+        purchaseRequests: mergeById(existing.purchaseRequests, incomingPurchaseRequests, 'id'),
         coupons: mergeById(existing.coupons, incoming.coupons, 'id'),
         adminCoupons: mergeById(existing.adminCoupons, incoming.adminCoupons, 'id'),
         payouts: mergeById(existing.payouts, incoming.payouts, 'id'),
@@ -104,6 +110,36 @@ async function startServer() {
   app.post('/api/vault/sync', (req, res) => {
     const merged = writeServerVault(req.body || {});
     res.status(200).json({ ok: true, vault: merged });
+  });
+
+  // Dedicated instant save endpoint for atomic updates
+  app.post('/api/vault/save', (req, res) => {
+    const merged = writeServerVault(req.body || {});
+    res.status(200).json({ ok: true, vault: merged });
+  });
+
+  // Dedicated instant order purchase request receiver
+  app.post('/api/vault/purchase-request', (req, res) => {
+    const payload = req.body;
+    if (!payload || (!payload.id && !payload.orderNumber)) {
+      res.status(400).json({ ok: false, error: 'Invalid purchase request payload.' });
+      return;
+    }
+    const merged = writeServerVault({ purchaseRequest: payload });
+    res.status(200).json({
+      ok: true,
+      message: 'Purchase request received and secured in institutional vault.',
+      purchaseRequests: merged.purchaseRequests,
+    });
+  });
+
+  // Dedicated query endpoint for Admin Panel to fetch all purchase requests
+  app.get('/api/vault/purchase-requests', (_req, res) => {
+    const data = readServerVault();
+    res.status(200).json({
+      ok: true,
+      purchaseRequests: Array.isArray(data.purchaseRequests) ? data.purchaseRequests : [],
+    });
   });
 
   // Branded FUNDED APEX Email Notification Dispatch & Inbox Endpoints

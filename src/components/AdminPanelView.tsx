@@ -25,6 +25,7 @@ import {
   Lock,
   Mail,
   Plus,
+  RefreshCw,
   Send,
   Settings,
   ShieldCheck,
@@ -84,9 +85,11 @@ export const AdminPanelView: React.FC = () => {
     adminBroadcastPromotionalEmail,
     adminSendEmailNotification,
     adminSendManualEmail,
+    refreshVaultData,
   } = usePlatform();
 
   const [tab, setTab] = useState<AdminTab>('confirmations');
+  const [isRefreshingOrders, setIsRefreshingOrders] = useState<boolean>(false);
 
   // Manual Account Allocation State
   const [allocUserId, setAllocUserId] = useState<string>('');
@@ -1144,9 +1147,28 @@ export const AdminPanelView: React.FC = () => {
                   activate their trading account.
                 </p>
               </div>
-              <span className="text-xs font-mono px-3 py-1 rounded-full bg-emerald-500/15 border border-emerald-500/30 text-[#00FFA3] font-bold">
-                {purchaseRequests.length} Total Orders
-              </span>
+              <div className="flex flex-wrap items-center gap-2">
+                <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-[11px] font-mono font-bold text-[#00FFA3]">
+                  <span className="w-2 h-2 rounded-full bg-[#00FFA3] animate-pulse" />
+                  <span>Live Sync</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    setIsRefreshingOrders(true);
+                    await refreshVaultData();
+                    setTimeout(() => setIsRefreshingOrders(false), 500);
+                  }}
+                  disabled={isRefreshingOrders}
+                  className="px-3 py-1 rounded-full bg-[#030A07] hover:bg-emerald-500/20 border border-emerald-500/30 text-xs font-mono font-bold text-white hover:text-[#00FFA3] flex items-center gap-1.5 cursor-pointer transition-colors"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${isRefreshingOrders ? 'animate-spin text-[#00FFA3]' : ''}`} />
+                  <span>{isRefreshingOrders ? 'Syncing...' : 'Sync Now'}</span>
+                </button>
+                <span className="text-xs font-mono px-3 py-1 rounded-full bg-emerald-500/15 border border-emerald-500/30 text-[#00FFA3] font-bold">
+                  {purchaseRequests.length} Total Orders
+                </span>
+              </div>
             </div>
 
             {purchaseRequests.length === 0 ? (

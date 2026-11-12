@@ -187,6 +187,14 @@
       "schema": "PurchaseRequest",
       "description": "Evaluation plan purchase requests"
     },
+    "/purchase_requests/{requestId}": {
+      "schema": "PurchaseRequest",
+      "description": "Evaluation plan purchase requests (snake_case alias)"
+    },
+    "/mail_notifications/{mailId}": {
+      "schema": "object",
+      "description": "System email notification logs"
+    },
     "/payouts/{payoutId}": {
       "schema": "Payout",
       "description": "Public trader payouts showcase"
