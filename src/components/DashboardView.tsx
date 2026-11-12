@@ -3,34 +3,33 @@ import { usePlatform } from '../context/PlatformContext';
 import {
   evaluateAccountRiskMetrics,
   evaluateAccountPayoutEligibility,
+  resolveChallengeRulesForAccount,
+  ChallengeType,
 } from '../engine/tradingEngine';
-import { COUNTRIES } from '../data/platformData';
+import { COUNTRIES, ACCOUNT_SIZES } from '../data/platformData';
+import { FundedApexLogo } from './FundedApexLogo';
 import {
   ArrowUpRight,
   Award,
   BarChart3,
   Bell,
-  Calendar,
   CheckCircle2,
   ChevronDown,
+  ChevronRight,
   Clock,
   Copy,
-  DollarSign,
   Download,
-  ExternalLink,
-  FileCheck,
+  Gift,
   Grid,
-  LayoutDashboard,
+  History,
+  HelpCircle,
   LogOut,
   Menu,
-  Plus,
   Send,
   Settings,
   Share2,
   Shield,
-  Target,
   Terminal,
-  TrendingUp,
   Trophy,
   Upload,
   UserCheck,
@@ -42,13 +41,14 @@ import { TradePerformanceVisualizer } from './TradePerformanceVisualizer';
 
 export type DashboardTabType =
   | 'overview'
-  | 'dashboard'
   | 'challenges'
-  | 'kyc'
-  | 'certificates'
+  | 'history'
+  | 'dashboard'
   | 'payouts'
-  | 'settings'
-  | 'affiliate';
+  | 'certificates'
+  | 'affiliate'
+  | 'kyc'
+  | 'settings';
 
 export const DashboardView: React.FC = () => {
   const {
@@ -60,16 +60,14 @@ export const DashboardView: React.FC = () => {
     orders,
     challenges,
     notifications,
-    userPurchaseRequests,
-    emailNotifications,
     payouts,
     verifiedPayouts,
     paymentSettings,
+    userCoupons,
     logout,
     openStripeCheckout,
     updateUserProfile,
     changeUserPassword,
-    resendVerificationEmail,
     requestAccountPayout,
     pushNotification,
   } = usePlatform();
@@ -77,7 +75,7 @@ export const DashboardView: React.FC = () => {
   const [activeTab, setActiveTab] = useState<DashboardTabType>('overview');
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const [isProfileMenuOpen, setIsProfileMenuOpen] = useState(false);
-  const [selectedNewChallengeId, setSelectedNewChallengeId] = useState<string>('two-step-5000');
+  const [showNotificationsPopover, setShowNotificationsPopover] = useState(false);
 
   // Profile form state
   const [profileName, setProfileName] = useState(user?.fullName || '');
@@ -85,15 +83,17 @@ export const DashboardView: React.FC = () => {
   const [newPassword, setNewPassword] = useState('');
   const [passwordStatus, setPasswordStatus] = useState('');
 
-  // KYC form state
+  // KYC & Support form state
   const [kycDocType, setKycDocType] = useState('Passport');
   const [kycDocNumber, setKycDocNumber] = useState('');
   const [kycFrontImage, setKycFrontImage] = useState<string | null>(null);
   const [kycBackImage, setKycBackImage] = useState<string | null>(null);
   const [kycSubmitting, setKycSubmitting] = useState(false);
   const [kycSubmittedSuccess, setKycSubmittedSuccess] = useState(false);
+  const [supportSubject, setSupportSubject] = useState('');
+  const [supportMessage, setSupportMessage] = useState('');
 
-  // Payout Request form state attached to Challenge & P&L
+  // Payout Request form state
   const [selectedPayoutAccountId, setSelectedPayoutAccountId] = useState<string>('');
   const [payoutAmount, setPayoutAmount] = useState<number>(100);
   const [payoutMethod, setPayoutMethod] = useState<'USDT_BEP20' | 'USDT_TRC20' | 'WIRE' | 'USDC'>('USDT_BEP20');
@@ -109,6 +109,18 @@ export const DashboardView: React.FC = () => {
     traderName: string;
   } | null>(null);
 
+  // Challenges tab filter states to display all 24 challenges
+  const [dashChTypeFilter, setDashChTypeFilter] = useState<ChallengeType | 'all'>('all');
+  const [dashChSizeFilter, setDashChSizeFilter] = useState<number | 'all'>('all');
+
+  const dashboardFilteredChallenges = useMemo(() => {
+    return challenges.filter((c) => {
+      const matchType = dashChTypeFilter === 'all' || c.type === dashChTypeFilter;
+      const matchSize = dashChSizeFilter === 'all' || c.accountSize === dashChSizeFilter;
+      return matchType && matchSize;
+    });
+  }, [challenges, dashChTypeFilter, dashChSizeFilter]);
+
   const userOrders = useMemo(
     () => (user ? orders.filter((o) => o.userId === user.uid) : []),
     [orders, user]
@@ -123,9 +135,29 @@ export const DashboardView: React.FC = () => {
   );
 
   const closedOrders = useMemo(
-    () => userOrders.filter((o) => o.status === 'CLOSED'),
-    [userOrders]
+    () =>
+      activeAccount
+        ? userOrders.filter((o) => o.accountId === activeAccount.id && o.status === 'CLOSED')
+        : userOrders.filter((o) => o.status === 'CLOSED'),
+    [userOrders, activeAccount]
   );
+
+  const reconciledActiveAccount = useMemo(() => {
+    if (!activeAccount) return null;
+    const rules = resolveChallengeRulesForAccount(activeAccount);
+    const realizedNet = closedOrders.reduce((s, o) => s + (o.netPnl || 0), 0);
+    const withdrawnGross = payouts
+      .filter((p) => p.accountId === activeAccount.id)
+      .reduce((s, p) => s + p.amountUsd / ((rules.profitSplitPct || 80) / 100), 0);
+    const syncedBalance =
+      closedOrders.length > 0
+        ? Math.round((activeAccount.startingBalance + realizedNet - withdrawnGross) * 100) / 100
+        : Math.round(activeAccount.balance * 100) / 100;
+    return {
+      ...activeAccount,
+      balance: syncedBalance,
+    };
+  }, [activeAccount, closedOrders, payouts]);
 
   const totalProfit = useMemo(
     () =>
@@ -143,49 +175,24 @@ export const DashboardView: React.FC = () => {
     [closedOrders]
   );
 
+  const dailyProfit = useMemo(() => {
+    const todayStr = new Date().toISOString().split('T')[0];
+    const todaysOrders = closedOrders.filter((o) => (o.closeTime || o.openTime || '').startsWith(todayStr));
+    return Math.round(todaysOrders.reduce((s, o) => s + (o.netPnl || 0), 0) * 100) / 100;
+  }, [closedOrders]);
+
   const winRatePct = useMemo(() => {
-    if (closedOrders.length === 0) return 68.5;
+    if (closedOrders.length === 0) return 0;
     const wins = closedOrders.filter((o) => o.netPnl > 0).length;
     return Math.round((wins / closedOrders.length) * 1000) / 10;
   }, [closedOrders]);
 
   const riskMetrics = useMemo(() => {
-    if (!activeAccount) return null;
-    return evaluateAccountRiskMetrics(activeAccount, activeAccOrders);
-  }, [activeAccount, activeAccOrders]);
+    if (!reconciledActiveAccount) return null;
+    return evaluateAccountRiskMetrics(reconciledActiveAccount, activeAccOrders);
+  }, [reconciledActiveAccount, activeAccOrders]);
 
   const activeAccountsCount = accounts.filter((a) => a.status === 'active').length;
-  const completedChallengesCount = accounts.filter(
-    (a) => a.status === 'passed' || a.status === 'completed'
-  ).length;
-
-  // Build equity curve points from closed orders or baseline
-  const equityPoints = useMemo(() => {
-    const start = activeAccount ? activeAccount.startingBalance : 0;
-    const pts = [start];
-    let running = start;
-    const accClosed = activeAccount
-      ? closedOrders.filter((o) => o.accountId === activeAccount.id).slice().reverse()
-      : [];
-    accClosed.forEach((o) => {
-      running = Math.round((running + o.netPnl) * 100) / 100;
-      pts.push(running);
-    });
-    if (activeAccount && pts[pts.length - 1] !== activeAccount.equity) {
-      pts.push(activeAccount.equity);
-    }
-    if (pts.length < 6) {
-      return [
-        start,
-        start,
-        start,
-        start,
-        activeAccount ? activeAccount.balance : start,
-        activeAccount ? activeAccount.equity : start,
-      ];
-    }
-    return pts;
-  }, [activeAccount, closedOrders]);
 
   const selectedPayoutAccount = useMemo(() => {
     return (
@@ -237,15 +244,15 @@ export const DashboardView: React.FC = () => {
   if (!user) {
     return (
       <main className="max-w-4xl mx-auto px-6 py-20 text-center space-y-4">
-        <div className="apex-glass-card rounded-3xl p-8 space-y-4 max-w-md mx-auto">
-          <h1 className="text-2xl font-display font-extrabold text-white">Authentication Required</h1>
-          <p className="text-sm font-medium text-[#94B8AA]">
+        <div className="bg-[#090D0A] border border-[#00E676]/20 rounded-[14px] p-8 space-y-4 max-w-md mx-auto">
+          <h1 className="text-2xl font-display font-bold text-white">Authentication Required</h1>
+          <p className="text-sm text-[#A7B1AA]">
             Please sign in to access your FUNDED APEX Trader Dashboard.
           </p>
           <button
             type="button"
             onClick={() => navigate('login')}
-            className="px-6 py-3 rounded-xl apex-glow-btn text-xs cursor-pointer"
+            className="px-6 py-3 rounded-[9px] apex-glow-btn text-xs cursor-pointer"
           >
             Go to Login
           </button>
@@ -294,60 +301,82 @@ export const DashboardView: React.FC = () => {
     pushNotification('Copied Link', `Partner referral link copied: ${link}`, 'info');
   };
 
+  const isAdmin =
+    user.role === 'admin' ||
+    user.role === 'super_admin' ||
+    user.email.toLowerCase() === 'kingritikx0343@gmail.com';
+
+  // Exact Sidebar Items requested by specification:
+  // Overview | My Accounts | Trading History | Performance | Payouts | Certificates | Rewards | Support | Settings
   const menuItems: { id: DashboardTabType; label: string; icon: React.ReactNode }[] = [
-    { id: 'overview', label: 'Overview', icon: <Grid className="w-4 h-4 text-[#00FFA3]" /> },
-    { id: 'dashboard', label: 'Dashboard', icon: <BarChart3 className="w-4 h-4 text-[#00FFA3]" /> },
-    { id: 'challenges', label: 'Challenges', icon: <Trophy className="w-4 h-4 text-[#00FFA3]" /> },
-    { id: 'kyc', label: 'KYC', icon: <UserCheck className="w-4 h-4 text-[#00FFA3]" /> },
-    { id: 'certificates', label: 'Certificates', icon: <Award className="w-4 h-4 text-[#00FFA3]" /> },
-    { id: 'payouts', label: 'Payouts', icon: <Wallet className="w-4 h-4 text-[#00FFA3]" /> },
-    { id: 'settings', label: 'Settings', icon: <Settings className="w-4 h-4 text-[#00FFA3]" /> },
-    { id: 'affiliate', label: 'Affiliate', icon: <Users className="w-4 h-4 text-[#00FFA3]" /> },
+    { id: 'overview', label: 'Overview', icon: <Grid className="w-4 h-4" /> },
+    { id: 'challenges', label: 'My Accounts', icon: <Trophy className="w-4 h-4" /> },
+    { id: 'history', label: 'Trading History', icon: <History className="w-4 h-4" /> },
+    { id: 'dashboard', label: 'Performance', icon: <BarChart3 className="w-4 h-4" /> },
+    { id: 'payouts', label: 'Payouts', icon: <Wallet className="w-4 h-4" /> },
+    { id: 'certificates', label: 'Certificates', icon: <Award className="w-4 h-4" /> },
+    { id: 'affiliate', label: 'Rewards', icon: <Gift className="w-4 h-4" /> },
+    { id: 'kyc', label: 'Support & KYC', icon: <HelpCircle className="w-4 h-4" /> },
+    { id: 'settings', label: 'Settings', icon: <Settings className="w-4 h-4" /> },
   ];
 
+  const evalNetPnl = reconciledActiveAccount && riskMetrics
+    ? Math.round((riskMetrics.equity - reconciledActiveAccount.startingBalance) * 100) / 100
+    : totalProfit - totalLoss;
+
   return (
-    <main className="max-w-[1440px] mx-auto px-4 sm:px-6 py-6 sm:py-8 space-y-6">
-      {/* SIDE DRAWER OVERLAY */}
+    <div className="min-h-screen bg-transparent text-[#FFFFFF] flex">
+      {/* MOBILE DRAWER OVERLAY */}
       {isDrawerOpen && (
         <div
           aria-hidden="true"
           onClick={() => setIsDrawerOpen(false)}
-          className="fixed inset-0 z-50 bg-[#020806]/80 backdrop-blur-sm transition-opacity duration-300"
+          className="fixed inset-0 z-50 bg-[#000000]/80 backdrop-blur-sm lg:hidden"
         />
       )}
 
-      {/* SLIDE-OUT 3-LINES SIDE DRAWER MENU */}
+      {/* SIDEBAR DRAWER (MATCHING VIDEO 2 WITH MAIN, FINANCE, ACCOUNT SECTIONS) */}
+      {/* SIDEBAR DRAWER (COMPACT 1-SCREEN ARCHITECTURAL DESIGN WITH TELEGRAM & LOGOUT) */}
       <aside
-        className={`fixed top-0 left-0 bottom-0 z-50 w-72 bg-[#04100B]/95 border-r border-[#00FFA3]/30 backdrop-blur-2xl p-6 shadow-2xl transition-transform duration-300 ease-out flex flex-col justify-between ${
-          isDrawerOpen ? 'translate-x-0' : '-translate-x-full'
+        className={`fixed lg:sticky lg:top-0 inset-y-0 left-0 z-50 w-64 h-screen max-h-screen shrink-0 bg-[#030504]/95 backdrop-blur-xl border-r border-[#00E676]/15 p-3.5 flex flex-col justify-between overflow-y-auto custom-scrollbar transition-transform duration-200 ease-out select-none ${
+          isDrawerOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'
         }`}
       >
-        <div className="space-y-6">
-          <div className="flex items-center justify-between border-b border-emerald-500/20 pb-4">
-            <div className="flex items-center gap-3">
-              <img
-                src="/assets/aistudio/IMG_20261108_140853_727c5a1e.png"
-                alt="FUNDED APEX"
-                className="w-8 h-8 object-contain rounded-full shadow-[0_0_12px_rgba(0,255,163,0.5)]"
-              />
-              <span className="font-display font-extrabold text-white text-base tracking-tight">
-                FUNDED <span className="text-[#00FFA3]">APEX</span>
-              </span>
-            </div>
+        <div className="space-y-3.5">
+          {/* Logo Header */}
+          <div className="flex items-center justify-between border-b border-white/10 pb-2.5">
+            <button
+              type="button"
+              onClick={() => navigate('home')}
+              className="cursor-pointer text-left focus:outline-none"
+            >
+              <FundedApexLogo size="sm" variant="dashboard" />
+            </button>
             <button
               type="button"
               aria-label="Close menu drawer"
               onClick={() => setIsDrawerOpen(false)}
-              className="p-2 rounded-xl bg-[#081C14] text-[#94B8AA] hover:text-white cursor-pointer"
+              className="lg:hidden p-1 rounded-[7px] bg-[#090D0A] text-[#A7B1AA] hover:text-white cursor-pointer"
             >
-              <X className="w-5 h-5" />
+              <X className="w-4 h-4" />
             </button>
           </div>
 
-          <nav className="space-y-1.5" aria-label="Dashboard drawer menu">
-            {(user.role === 'admin' ||
-              user.role === 'super_admin' ||
-              user.email.toLowerCase() === 'kingritikx0343@gmail.com') && (
+          {/* User Badge */}
+          <div className="flex items-center gap-2.5 p-2 rounded-[9px] bg-[#090D0A] border border-[#00E676]/20">
+            <div className="w-7 h-7 rounded-full bg-[#00E676]/20 border border-[#00E676] flex items-center justify-center font-display font-extrabold text-[11px] text-[#00E676] shrink-0">
+              {user.fullName.slice(0, 2).toUpperCase()}
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="text-xs font-bold text-white truncate leading-tight">{user.fullName}</div>
+              <div className="text-[9px] font-mono text-[#00E676] uppercase leading-tight">
+                {user.role === 'admin' || user.role === 'super_admin' ? 'Super Admin' : 'Trader'}
+              </div>
+            </div>
+          </div>
+
+          <nav className="space-y-2.5" aria-label="Dashboard Sidebar Navigation">
+            {isAdmin && (
               <button
                 type="button"
                 data-testid="drawer-admin-access-btn"
@@ -355,1505 +384,2013 @@ export const DashboardView: React.FC = () => {
                   setIsDrawerOpen(false);
                   navigate('admin');
                 }}
-                className="w-full px-4 py-3 rounded-2xl text-xs font-display font-extrabold flex items-center justify-between gap-3 bg-gradient-to-r from-[#00FFA3]/25 via-emerald-500/20 to-teal-500/20 border border-[#00FFA3] text-[#00FFA3] hover:bg-[#00FFA3] hover:text-[#030A07] transition-all cursor-pointer shadow-[0_0_20px_rgba(0,255,163,0.3)] mb-2"
+                className="w-full px-3 py-1.5 rounded-[8px] text-xs font-display font-bold flex items-center justify-between gap-2 bg-[#0D130F] border border-[#00E676]/45 text-[#00E676] hover:bg-[#00E676] hover:text-black transition-all cursor-pointer"
               >
-                <span className="flex items-center gap-3">
-                  <Shield className="w-4 h-4 stroke-[2.5]" />
-                  <span>Admin Access</span>
+                <span className="flex items-center gap-2">
+                  <Shield className="w-3.5 h-3.5" />
+                  <span>Admin Panel</span>
                 </span>
-                <ArrowUpRight className="w-4 h-4" />
+                <ArrowUpRight className="w-3 h-3" />
               </button>
             )}
-            {menuItems.map((item) => (
+
+            {/* SECTION: MAIN */}
+            <div className="space-y-0.5">
+              <div className="px-2.5 text-[9px] font-mono font-bold uppercase tracking-[0.14em] text-[#77837B]">
+                MAIN
+              </div>
               <button
-                key={item.id}
                 type="button"
                 onClick={() => {
-                  setActiveTab(item.id);
+                  setActiveTab('overview');
                   setIsDrawerOpen(false);
                 }}
-                className={`w-full px-4 py-3 rounded-2xl text-xs font-display font-bold flex items-center gap-3 transition-all cursor-pointer ${
-                  activeTab === item.id
-                    ? 'bg-[#00FFA3]/15 border border-[#00FFA3]/50 text-white shadow-[0_0_20px_rgba(0,255,163,0.25)]'
-                    : 'text-[#94B8AA] hover:bg-[#081C14] hover:text-white'
+                className={`w-full px-2.5 py-1.5 rounded-[7px] text-xs font-medium flex items-center gap-2.5 transition-all cursor-pointer ${
+                  activeTab === 'overview'
+                    ? 'bg-[#090D0A] border border-[#00E676]/35 text-[#00E676] font-semibold'
+                    : 'text-[#A7B1AA] hover:bg-[#090D0A]/60 hover:text-white'
                 }`}
               >
-                {item.icon}
-                <span>{item.label}</span>
+                <Grid className="w-3.5 h-3.5" />
+                <span>Dashboard</span>
               </button>
-            ))}
+
+              <button
+                type="button"
+                onClick={() => {
+                  setActiveTab('challenges');
+                  setIsDrawerOpen(false);
+                }}
+                className={`w-full px-2.5 py-1.5 rounded-[7px] text-xs font-medium flex items-center gap-2.5 transition-all cursor-pointer ${
+                  activeTab === 'challenges'
+                    ? 'bg-[#090D0A] border border-[#00E676]/35 text-[#00E676] font-semibold'
+                    : 'text-[#A7B1AA] hover:bg-[#090D0A]/60 hover:text-white'
+                }`}
+              >
+                <Trophy className="w-3.5 h-3.5" />
+                <span>Accounts</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setActiveTab('challenges');
+                  setIsDrawerOpen(false);
+                }}
+                className="w-full px-2.5 py-1.5 rounded-[7px] text-xs font-medium flex items-center gap-2.5 text-[#A7B1AA] hover:bg-[#090D0A]/60 hover:text-white transition-all cursor-pointer"
+              >
+                <Gift className="w-3.5 h-3.5 text-[#00E676]" />
+                <span>New Challenge</span>
+              </button>
+            </div>
+
+            {/* SECTION: FINANCE */}
+            <div className="space-y-0.5">
+              <div className="px-2.5 text-[9px] font-mono font-bold uppercase tracking-[0.14em] text-[#77837B]">
+                FINANCE
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setActiveTab('history');
+                  setIsDrawerOpen(false);
+                }}
+                className={`w-full px-2.5 py-1.5 rounded-[7px] text-xs font-medium flex items-center gap-2.5 transition-all cursor-pointer ${
+                  activeTab === 'history'
+                    ? 'bg-[#090D0A] border border-[#00E676]/35 text-[#00E676] font-semibold'
+                    : 'text-[#A7B1AA] hover:bg-[#090D0A]/60 hover:text-white'
+                }`}
+              >
+                <History className="w-3.5 h-3.5" />
+                <span>Transaction History</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setActiveTab('payouts');
+                  setIsDrawerOpen(false);
+                }}
+                className={`w-full px-2.5 py-1.5 rounded-[7px] text-xs font-medium flex items-center gap-2.5 transition-all cursor-pointer ${
+                  activeTab === 'payouts'
+                    ? 'bg-[#090D0A] border border-[#00E676]/35 text-[#00E676] font-semibold'
+                    : 'text-[#A7B1AA] hover:bg-[#090D0A]/60 hover:text-white'
+                }`}
+              >
+                <Wallet className="w-3.5 h-3.5" />
+                <span>Payout</span>
+              </button>
+            </div>
+
+            {/* SECTION: ACCOUNT */}
+            <div className="space-y-0.5">
+              <div className="px-2.5 text-[9px] font-mono font-bold uppercase tracking-[0.14em] text-[#77837B]">
+                ACCOUNT
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowNotificationsPopover(true);
+                  setIsDrawerOpen(false);
+                }}
+                className="w-full px-2.5 py-1.5 rounded-[7px] text-xs font-medium flex items-center justify-between text-[#A7B1AA] hover:bg-[#090D0A]/60 hover:text-white transition-all cursor-pointer"
+              >
+                <span className="flex items-center gap-2.5">
+                  <Bell className="w-3.5 h-3.5" />
+                  <span>Notifications</span>
+                </span>
+                {notifications.length > 0 && (
+                  <span className="px-1.5 py-0.2 rounded-full bg-[#00E676] text-black text-[9px] font-bold font-mono">
+                    {notifications.length}
+                  </span>
+                )}
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setActiveTab('kyc');
+                  setIsDrawerOpen(false);
+                }}
+                className={`w-full px-2.5 py-1.5 rounded-[7px] text-xs font-medium flex items-center gap-2.5 transition-all cursor-pointer ${
+                  activeTab === 'kyc'
+                    ? 'bg-[#090D0A] border border-[#00E676]/35 text-[#00E676] font-semibold'
+                    : 'text-[#A7B1AA] hover:bg-[#090D0A]/60 hover:text-white'
+                }`}
+              >
+                <UserCheck className="w-3.5 h-3.5" />
+                <span>KYC &amp; Support</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setActiveTab('certificates');
+                  setIsDrawerOpen(false);
+                }}
+                className={`w-full px-2.5 py-1.5 rounded-[7px] text-xs font-medium flex items-center gap-2.5 transition-all cursor-pointer ${
+                  activeTab === 'certificates'
+                    ? 'bg-[#090D0A] border border-[#00E676]/35 text-[#00E676] font-semibold'
+                    : 'text-[#A7B1AA] hover:bg-[#090D0A]/60 hover:text-white'
+                }`}
+              >
+                <Award className="w-3.5 h-3.5" />
+                <span>Certificates</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setIsDrawerOpen(false);
+                  navigate('trading-rules');
+                }}
+                className="w-full px-2.5 py-1.5 rounded-[7px] text-xs font-medium flex items-center gap-2.5 text-[#A7B1AA] hover:bg-[#090D0A]/60 hover:text-white transition-all cursor-pointer"
+              >
+                <Shield className="w-3.5 h-3.5" />
+                <span>Rules</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setActiveTab('settings');
+                  setIsDrawerOpen(false);
+                }}
+                className={`w-full px-2.5 py-1.5 rounded-[7px] text-xs font-medium flex items-center gap-2.5 transition-all cursor-pointer ${
+                  activeTab === 'settings'
+                    ? 'bg-[#090D0A] border border-[#00E676]/35 text-[#00E676] font-semibold'
+                    : 'text-[#A7B1AA] hover:bg-[#090D0A]/60 hover:text-white'
+                }`}
+              >
+                <Settings className="w-3.5 h-3.5" />
+                <span>Settings</span>
+              </button>
+            </div>
           </nav>
         </div>
 
-        {/* BOTTOM TELEGRAM BUTTON INSIDE DRAWER */}
-        <div className="pt-4 border-t border-emerald-500/20 space-y-3">
+        {/* Sidebar Bottom Actions (1-SCREEN FIT: TELEGRAM VIP + LIVE TERMINAL + LOGOUT) */}
+        <div className="pt-2.5 border-t border-white/10 space-y-1.5">
+          <button
+            type="button"
+            onClick={() => navigate('terminal')}
+            className="w-full py-2 px-3 rounded-[8px] apex-glow-btn text-xs flex items-center justify-center gap-2 cursor-pointer"
+          >
+            <Terminal className="w-3.5 h-3.5" />
+            <span>Launch Live Terminal</span>
+          </button>
+
           <a
             href="https://t.me/fundedapex"
             target="_blank"
             rel="noopener noreferrer"
-            className="w-full py-3.5 px-4 rounded-2xl bg-gradient-to-r from-emerald-500/20 via-[#00FFA3]/20 to-teal-500/20 border border-[#00FFA3]/40 text-xs font-display font-extrabold text-[#00FFA3] hover:text-white flex items-center justify-center gap-2 transition-all shadow-[0_0_18px_rgba(0,255,163,0.25)]"
+            data-testid="sidebar-telegram-btn"
+            className="w-full py-1.5 px-3 rounded-[8px] bg-[#0088cc]/15 hover:bg-[#0088cc]/25 border border-[#0088cc]/35 text-[#38bdf8] text-xs font-semibold flex items-center justify-center gap-2 transition-all cursor-pointer"
           >
-            <Send className="w-4 h-4 text-[#00FFA3]" />
-            <span>Join Telegram Community</span>
+            <Send className="w-3.5 h-3.5" />
+            <span>Join Telegram VIP</span>
           </a>
-          <div className="text-[10px] text-center font-mono text-[#94B8AA]">
-            Official Support &amp; Announcements
-          </div>
 
           <button
             type="button"
+            data-testid="sidebar-logout-btn"
             onClick={() => {
               setIsDrawerOpen(false);
               logout();
               navigate('login');
             }}
-            className="w-full py-3 px-4 rounded-2xl bg-rose-500/15 hover:bg-rose-500/30 border border-rose-500/40 text-[#FF88A5] hover:text-white text-xs font-display font-extrabold flex items-center justify-center gap-2 transition-all cursor-pointer shadow-[0_0_16px_rgba(244,63,94,0.2)]"
+            className="w-full py-1.5 px-3 rounded-[8px] bg-[#090D0A] hover:bg-red-950/40 border border-white/10 hover:border-red-500/40 text-[#A7B1AA] hover:text-red-300 text-xs font-medium flex items-center justify-center gap-2 transition-all cursor-pointer"
           >
-            <LogOut className="w-4 h-4" />
-            <span>Logout Account</span>
+            <LogOut className="w-3.5 h-3.5" />
+            <span>Log out</span>
           </button>
         </div>
       </aside>
 
-      {/* TOP HEADER ROW: SLEEK BORDERLESS HEADER WITH LOGO & PROFILE DIRECTLY OPPOSITE IN SAME LINE */}
-      <div className="flex items-center justify-between gap-3 pb-4 border-b border-emerald-500/20">
-        {/* TOP-LEFT: 3-LINES MENU BUTTON + BRAND LOGO BADGE */}
-        <div className="flex items-center gap-2.5 sm:gap-3 shrink-0">
-          <button
-            type="button"
-            aria-label="Open side menu drawer"
-            onClick={() => setIsDrawerOpen(true)}
-            className="p-2.5 rounded-xl bg-[#04100B] border border-[#00FFA3]/50 text-[#00FFA3] hover:bg-[#00FFA3]/15 transition-all cursor-pointer shadow-[0_0_16px_rgba(0,255,163,0.3)] flex items-center gap-2 font-display font-extrabold text-xs"
-          >
-            <Menu className="w-5 h-5 stroke-[2.8]" />
-            <span className="hidden sm:inline">MENU</span>
-          </button>
-
-          <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-[#04100B]/80 border border-emerald-500/30">
-            <img
-              src="/assets/aistudio/IMG_20261108_140853_727c5a1e.png"
-              alt="FUNDED APEX"
-              className="w-7 h-7 object-contain rounded-full shadow-[0_0_8px_rgba(0,255,163,0.5)]"
-            />
-            <span className="font-display font-bold text-white text-sm tracking-tight whitespace-nowrap">
-              FUNDED <span className="text-[#00FFA3]">APEX</span>
-            </span>
-          </div>
-        </div>
-
-        {/* TOP-RIGHT: ACCOUNT SELECTOR & CLICKABLE PROFILE CORNER DROPDOWN DIRECTLY OPPOSITE LOGO */}
-        <div className="flex items-center gap-2.5 ml-auto relative shrink-0">
-          {/* Account Selector */}
-          {accounts.length > 0 && (
-            <select
-              aria-label="Select active evaluation account"
-              value={activeAccount?.id || ''}
-              onChange={(e) => setActiveAccountId(e.target.value)}
-              className="hidden md:block px-3 py-2 rounded-xl bg-[#04100B] border border-emerald-500/40 text-xs font-mono font-extrabold text-white max-w-[190px] truncate focus:outline-none focus:border-[#00FFA3]"
-            >
-              {accounts.map((acc) => (
-                <option key={acc.id} value={acc.id}>
-                  #{acc.accountNumber} · ${acc.startingBalance.toLocaleString()}
-                </option>
-              ))}
-            </select>
-          )}
-
-          {/* Clickable Profile Badge in the Corner */}
-          <div className="relative">
+      {/* MAIN CONTENT AREA */}
+      <div className="flex-1 min-w-0 flex flex-col">
+        {/* TOP NAVIGATION BAR (ROUNDED CAPSULE HEADER: HAMBURGER + TITLE "Dashboard" + USER BADGE) */}
+        <header className="sticky top-2 z-40 mx-3 sm:mx-6 mt-2 rounded-full bg-[#051015]/92 backdrop-blur-xl border border-[#00E5B0]/25 px-4 sm:px-6 h-[64px] flex items-center justify-between gap-3 shadow-[0_14px_38px_rgba(0,0,0,0.78),inset_0_1px_0_rgba(56,248,210,0.14)]">
+          <div className="flex items-center gap-3 min-w-0">
             <button
               type="button"
-              data-testid="dashboard-profile-corner-btn"
-              aria-expanded={isProfileMenuOpen}
-              onClick={() => setIsProfileMenuOpen((prev) => !prev)}
-              className="flex items-center gap-2.5 pl-2.5 pr-3 py-1.5 rounded-2xl bg-[#04100B]/95 hover:bg-[#071C13] border border-[#00FFA3]/45 transition-all cursor-pointer shadow-[0_0_18px_rgba(0,255,163,0.2)]"
+              aria-label="Open side menu drawer"
+              onClick={() => setIsDrawerOpen(true)}
+              className="p-2 rounded-full bg-[#090D0A] border border-[#00E676]/30 text-[#00E676] cursor-pointer"
             >
-              {/* Avatar Badge */}
-              <div className="relative shrink-0">
-                <div className="w-9 h-9 rounded-xl p-[1.5px] bg-gradient-to-br from-[#00FFA3] via-emerald-400 to-teal-500 shadow-[0_0_12px_rgba(0,255,163,0.35)]">
-                  <div className="w-full h-full rounded-[10px] bg-[#04100B] flex items-center justify-center overflow-hidden">
-                    {user.avatarUrl ? (
-                      <img
-                        src={user.avatarUrl}
-                        alt={user.fullName}
-                        referrerPolicy="no-referrer"
-                        className="w-full h-full object-cover"
-                      />
-                    ) : (
-                      <span className="text-xs font-display font-black text-[#00FFA3]">
-                        {user.fullName.charAt(0).toUpperCase()}
-                      </span>
-                    )}
-                  </div>
-                </div>
-                <div
-                  title="Verified Prop Trader"
-                  className="absolute -bottom-0.5 -right-0.5 w-3.5 h-3.5 rounded-full bg-[#00FFA3] text-[#030A07] flex items-center justify-center border border-[#030A07]"
-                >
-                  <Shield className="w-2 h-2 stroke-[3]" />
-                </div>
-              </div>
-
-              {/* Trader Name & Role */}
-              <div className="text-left hidden sm:block">
-                <div className="text-xs font-display font-extrabold text-white flex items-center gap-1.5 leading-tight">
-                  <span className="max-w-[130px] truncate">{user.fullName}</span>
-                  <span className="px-1.5 py-0.5 rounded-md bg-emerald-500/20 border border-[#00FFA3]/40 text-[#00FFA3] text-[9px] font-mono">
-                    {user.role.toUpperCase()}
-                  </span>
-                </div>
-                <div className="text-[10px] font-mono text-[#94B8AA] mt-0.5">
-                  ID: <strong className="text-[#00FFA3]">{user.referralCode}</strong>
-                </div>
-              </div>
-
-              <ChevronDown
-                className={`w-4 h-4 text-[#00FFA3] transition-transform duration-200 ${
-                  isProfileMenuOpen ? 'rotate-180' : ''
-                }`}
-              />
+              <Menu className="w-5 h-5" />
             </button>
 
-            {/* Profile Corner Dropdown Menu (Shows Logout & Profile Options on Click) */}
-            {isProfileMenuOpen && (
-              <>
-                <div
-                  aria-hidden="true"
-                  onClick={() => setIsProfileMenuOpen(false)}
-                  className="fixed inset-0 z-40"
-                />
-                <div
-                  data-testid="dashboard-profile-dropdown"
-                  className="absolute right-0 mt-2.5 w-72 rounded-2xl bg-[#04110C]/98 border border-[#00FFA3]/45 shadow-[0_20px_50px_rgba(0,0,0,0.9)] backdrop-blur-2xl p-4 space-y-3.5 z-50 apex-scale-in"
-                >
-                  {/* User Identity Header */}
-                  <div className="flex items-center gap-3 pb-3 border-b border-emerald-500/20">
-                    <div className="w-11 h-11 rounded-xl bg-emerald-500/15 border border-[#00FFA3]/45 flex items-center justify-center font-display font-black text-base text-[#00FFA3] shrink-0">
-                      {user.fullName.charAt(0).toUpperCase()}
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <div className="text-sm font-display font-extrabold text-white truncate">
-                        {user.fullName}
-                      </div>
-                      <div className="text-[11px] font-mono text-[#00FFA3] truncate">
-                        {user.email}
-                      </div>
-                      <div className="text-[10px] font-mono text-[#94B8AA] mt-0.5">
-                        ID: {user.referralCode} · {user.country}
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Mobile Account Switcher inside Profile Dropdown */}
-                  {accounts.length > 0 && (
-                    <div className="space-y-1">
-                      <label className="block text-[10px] font-mono uppercase tracking-wider text-[#94B8AA]">
-                        Active Trading Account
-                      </label>
-                      <select
-                        value={activeAccount?.id || ''}
-                        onChange={(e) => setActiveAccountId(e.target.value)}
-                        className="w-full px-2.5 py-2 rounded-xl bg-[#030A07] border border-emerald-500/35 text-xs font-mono font-bold text-white"
-                      >
-                        {accounts.map((acc) => (
-                          <option key={acc.id} value={acc.id}>
-                            #{acc.accountNumber} · ${acc.startingBalance.toLocaleString()}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                  )}
-
-                  {/* Quick Profile Navigation Links */}
-                  <div className="space-y-1">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setActiveTab('settings');
-                        setIsProfileMenuOpen(false);
-                      }}
-                      className="w-full px-3 py-2.5 rounded-xl hover:bg-emerald-500/15 text-left text-xs font-display font-bold text-slate-200 hover:text-white flex items-center gap-2.5 transition-colors cursor-pointer"
-                    >
-                      <Settings className="w-4 h-4 text-[#00FFA3]" />
-                      <span>Profile &amp; Security Settings</span>
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setActiveTab('challenges');
-                        setIsProfileMenuOpen(false);
-                      }}
-                      className="w-full px-3 py-2.5 rounded-xl hover:bg-emerald-500/15 text-left text-xs font-display font-bold text-slate-200 hover:text-white flex items-center gap-2.5 transition-colors cursor-pointer"
-                    >
-                      <Trophy className="w-4 h-4 text-[#00FFA3]" />
-                      <span>My Trading Accounts &amp; Passcodes</span>
-                    </button>
-                  </div>
-
-                  {/* Logout Button inside Profile Click Menu */}
-                  <div className="pt-2 border-t border-emerald-500/20">
-                    <button
-                      type="button"
-                      data-testid="profile-dropdown-logout-btn"
-                      onClick={() => {
-                        setIsProfileMenuOpen(false);
-                        logout();
-                        navigate('login');
-                      }}
-                      className="w-full py-2.5 px-4 rounded-xl bg-rose-500/20 hover:bg-rose-500/35 border border-rose-500/45 text-[#FF88A5] hover:text-white transition-all cursor-pointer flex items-center justify-center gap-2 text-xs font-display font-extrabold shadow-[0_0_16px_rgba(244,63,94,0.25)]"
-                    >
-                      <LogOut className="w-4 h-4 stroke-[2.5]" />
-                      <span>Logout Account</span>
-                    </button>
-                  </div>
-                </div>
-              </>
-            )}
+            <h1 className="text-base sm:text-lg font-display font-bold text-white truncate">
+              Dashboard
+            </h1>
           </div>
-        </div>
-      </div>
 
-      {/* OVERVIEW TAB (Matching Video Layout) */}
-      {activeTab === 'overview' && (
-        <div className="space-y-8 apex-fade-up">
-          {/* 4 STATUS METRIC GRID TILES (Matching Video) */}
-          <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
-            <div className="apex-glass-card rounded-3xl p-6 space-y-2">
-              <div className="text-xs font-display font-extrabold uppercase tracking-wider text-[#94B8AA]">
-                Delivered Accounts
-              </div>
-              <div className="text-3xl font-extrabold text-white font-mono">
-                {accounts.length} / {accounts.length}
-              </div>
-              <div className="text-[11px] text-[#00FFA3] font-bold">Total accounts provisioned</div>
-            </div>
-
-            <div className="apex-glass-card rounded-3xl p-6 space-y-2">
-              <div className="text-xs font-display font-extrabold uppercase tracking-wider text-[#94B8AA]">
-                Active Accounts
-              </div>
-              <div className="text-3xl font-extrabold text-[#00FFA3] font-mono">
-                {activeAccountsCount} / {accounts.length}
-              </div>
-              <div className="text-[11px] text-emerald-300 font-bold">Currently active evaluations</div>
-            </div>
-
-            <div className="apex-glass-card rounded-3xl p-6 space-y-2">
-              <div className="text-xs font-display font-extrabold uppercase tracking-wider text-[#94B8AA]">
-                KYC Status
-              </div>
-              <div className="text-xl font-extrabold text-white font-display">
-                {user.kycStatus === 'verified'
-                  ? 'Verified ✓'
-                  : user.kycStatus === 'pending'
-                  ? 'Pending Review'
-                  : 'Not Submitted'}
-              </div>
-              <button
-                type="button"
-                onClick={() => setActiveTab('kyc')}
-                className="text-[11px] text-[#00FFA3] hover:underline font-bold cursor-pointer"
+          <div className="flex items-center gap-2.5 shrink-0">
+            {/* Account Selector */}
+            {accounts.length > 0 && (
+              <select
+                aria-label="Select active evaluation account"
+                value={activeAccount?.id || ''}
+                onChange={(e) => setActiveAccountId(e.target.value)}
+                className="hidden md:block px-3 py-2 rounded-[9px] bg-[#090D0A] border border-[#00E676]/25 text-xs font-mono font-bold text-white max-w-[220px] truncate focus:outline-none focus:border-[#00E676]"
               >
-                Complete identity verification →
-              </button>
-            </div>
-
-            <div className="apex-glass-card rounded-3xl p-6 space-y-2">
-              <div className="text-xs font-display font-extrabold uppercase tracking-wider text-[#94B8AA]">
-                Payout Status
-              </div>
-              <div className="text-xl font-extrabold text-white font-display">
-                {verifiedPayouts.length > 0 ? 'Verified Trader' : 'No payout requested'}
-              </div>
-              <button
-                type="button"
-                onClick={() => setActiveTab('payouts')}
-                className="text-[11px] text-[#00FFA3] hover:underline font-bold cursor-pointer"
-              >
-                Request performance settlement →
-              </button>
-            </div>
-          </section>
-
-          {/* SELECT ACCOUNT DROPDOWN & EMPTY STATE BANNER */}
-          {accounts.length === 0 ? (
-            <div className="apex-glass-card rounded-3xl p-8 space-y-6 text-center max-w-2xl mx-auto">
-              <div className="w-16 h-16 rounded-2xl bg-emerald-500/15 border border-[#00FFA3]/40 flex items-center justify-center mx-auto text-[#00FFA3]">
-                <Trophy className="w-8 h-8 stroke-[2.2]" />
-              </div>
-              <div className="space-y-2">
-                <h2 className="text-2xl font-display font-extrabold text-white">No account yet...</h2>
-                <p className="text-sm text-[#94B8AA] max-w-md mx-auto leading-relaxed">
-                  Start your prop evaluation challenge from $5,000 ($10 with code 5K30OFF) to $200,000 and trade live with institutional capital.
-                </p>
-              </div>
-              <div className="flex flex-wrap items-center justify-center gap-3">
-                <button
-                  type="button"
-                  onClick={() => setActiveTab('challenges')}
-                  className="px-8 py-3.5 rounded-2xl apex-glow-btn text-xs font-display font-extrabold cursor-pointer shadow-[0_0_24px_rgba(0,255,163,0.35)]"
-                >
-                  Open Challenges ($5,000 to $200,000) →
-                </button>
-              </div>
-            </div>
-          ) : (
-            <div className="apex-glass-card rounded-3xl p-6 flex flex-col md:flex-row items-center justify-between gap-4">
-              <div className="space-y-1.5 text-left">
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="text-xs font-display font-extrabold text-[#00FFA3] uppercase tracking-wider">
-                    Active Purchased Account
-                  </span>
-                  <span
-                    className={`px-2.5 py-0.5 rounded-full text-[10px] font-mono font-extrabold uppercase ${
-                      activeAccount?.status === 'failed'
-                        ? 'bg-rose-500/20 border border-rose-500/50 text-rose-300'
-                        : activeAccount?.status === 'passed'
-                        ? 'bg-emerald-500/25 border border-[#00FFA3] text-[#00FFA3]'
-                        : 'bg-emerald-500/15 border border-[#00FFA3]/40 text-[#00FFA3]'
-                    }`}
-                  >
-                    {activeAccount?.status === 'failed'
-                      ? 'BREACHED (DRAWDOWN VIOLATION)'
-                      : activeAccount?.status === 'passed'
-                      ? 'PASSED • FUNDED'
-                      : activeAccount?.challengeType === 'instant'
-                      ? 'INSTANT FUNDED'
-                      : `ACTIVE • PHASE ${activeAccount?.currentStep || 1} OF ${
-                          activeAccount?.totalSteps || 2
-                        }`}
-                  </span>
-                </div>
-                <h2 className="text-xl font-display font-extrabold text-white">
-                  #{activeAccount?.accountNumber} — {activeAccount?.challengeTitle}
-                </h2>
-                {activeAccount?.status === 'failed' && activeAccount?.breachReason && (
-                  <div className="text-xs font-bold text-rose-400">
-                    ⚠ {activeAccount.breachReason}
-                  </div>
-                )}
-                <div className="text-xs font-mono text-[#94B8AA] flex flex-wrap items-center gap-3 pt-1">
-                  <div className="flex items-center gap-1.5">
-                    <span>Terminal User ID:</span>
-                    <strong className="text-[#00FFA3] font-mono px-2 py-0.5 rounded-md bg-[#030A07] border border-[#00FFA3]/40">
-                      {activeAccount?.terminalUserId || 'APEX-MASTER'}
-                    </strong>
-                  </div>
-                  <div className="flex items-center gap-1.5">
-                    <span>Terminal Password:</span>
-                    {activeAccount?.status === 'failed' || !activeAccount?.terminalPassword ? (
-                      <strong className="text-rose-400 font-mono px-2 py-0.5 rounded-md bg-rose-950/60 border border-rose-500/50">
-                        REMOVED (BREACHED)
-                      </strong>
-                    ) : (
-                      <strong className="text-[#00FFA3] font-mono px-2 py-0.5 rounded-md bg-[#030A07] border border-[#00FFA3]/40">
-                        {activeAccount.terminalPassword}
-                      </strong>
-                    )}
-                  </div>
-                </div>
-              </div>
-              <div className="flex flex-wrap items-center gap-3">
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (activeAccount) setActiveAccountId(activeAccount.id);
-                    navigate('terminal');
-                  }}
-                  className="px-6 py-3 rounded-2xl apex-glow-btn text-xs font-extrabold flex items-center gap-2 cursor-pointer shadow-[0_0_24px_rgba(0,255,163,0.35)]"
-                >
-                  <Terminal className="w-4 h-4 stroke-[2.5]" />
-                  <span>Launch Live Terminal →</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (activeAccount) setSelectedPayoutAccountId(activeAccount.id);
-                    setActiveTab('payouts');
-                  }}
-                  className="px-4 py-3 rounded-2xl bg-[#081C14] hover:bg-emerald-500/20 border border-[#00FFA3]/40 text-xs font-bold text-[#00FFA3] cursor-pointer"
-                >
-                  P&amp;L Payouts
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setActiveTab('dashboard')}
-                  className="px-4 py-3 rounded-2xl bg-[#081C14] hover:bg-emerald-500/20 border border-[#00FFA3]/40 text-xs font-bold text-[#00FFA3] cursor-pointer"
-                >
-                  View P&amp;L Analytics
-                </button>
-              </div>
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* DASHBOARD TAB (P&L, Balance Curve & Days Profit Chart) */}
-      {activeTab === 'dashboard' && (
-        <div className="space-y-8 apex-fade-up">
-          {/* TELEMETRY CARDS GRID */}
-          <section className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4">
-            <div className="apex-metric-tile p-5 rounded-3xl">
-              <div className="text-[11px] font-display font-bold uppercase tracking-wider text-[#6EE7B7]">
-                Starting Capital
-              </div>
-              <div className="text-xl sm:text-2xl font-extrabold text-white font-mono mt-1.5">
-                ${(activeAccount?.startingBalance ?? 0).toLocaleString('en-US', { minimumFractionDigits: 0 })}
-              </div>
-            </div>
-            <div className="apex-metric-tile p-5 rounded-3xl">
-              <div className="text-[11px] font-display font-bold uppercase tracking-wider text-[#6EE7B7]">
-                Total Balance
-              </div>
-              <div className="text-xl sm:text-2xl font-extrabold text-white font-mono mt-1.5">
-                ${(activeAccount?.balance ?? 0).toLocaleString('en-US', { minimumFractionDigits: 2 })}
-              </div>
-            </div>
-            <div className="apex-metric-tile p-5 rounded-3xl">
-              <div className="text-[11px] font-display font-bold uppercase tracking-wider text-[#6EE7B7]">
-                Current Equity
-              </div>
-              <div className="text-xl sm:text-2xl font-extrabold text-[#00FFA3] font-mono mt-1.5">
-                ${(riskMetrics?.equity ?? 0).toLocaleString('en-US', { minimumFractionDigits: 2 })}
-              </div>
-            </div>
-            <div className="apex-metric-tile p-5 rounded-3xl">
-              <div className="text-[11px] font-display font-bold uppercase tracking-wider text-[#6EE7B7]">
-                Realized Profit
-              </div>
-              <div className="text-xl sm:text-2xl font-extrabold text-[#00FFA3] font-mono mt-1.5">
-                +${totalProfit.toLocaleString('en-US', { minimumFractionDigits: 2 })}
-              </div>
-            </div>
-            <div className="apex-metric-tile p-5 rounded-3xl">
-              <div className="text-[11px] font-display font-bold uppercase tracking-wider text-[#6EE7B7]">
-                Realized Loss
-              </div>
-              <div className="text-xl sm:text-2xl font-extrabold text-rose-400 font-mono mt-1.5">
-                -${totalLoss.toLocaleString('en-US', { minimumFractionDigits: 2 })}
-              </div>
-            </div>
-            <div className="apex-metric-tile p-5 rounded-3xl">
-              <div className="text-[11px] font-display font-bold uppercase tracking-wider text-[#6EE7B7]">
-                Win Rate
-              </div>
-              <div className="text-xl sm:text-2xl font-extrabold text-white font-mono mt-1.5">
-                {winRatePct}%
-              </div>
-            </div>
-          </section>
-
-          {/* TRADE PERFORMANCE VISUALIZER & DAYS PROFIT CHART */}
-          <TradePerformanceVisualizer
-            activeAccount={activeAccount}
-            orders={
-              activeAccount
-                ? userOrders.filter((o) => o.accountId === activeAccount.id)
-                : userOrders
-            }
-            onOpenTerminal={() => navigate('terminal')}
-          />
-
-          {/* BALANCE & EQUITY CURVE */}
-          <section className="apex-glass-card rounded-3xl p-6 space-y-4">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <div>
-                <h2 className="text-lg font-display font-extrabold text-white">
-                  Balance & Equity Curve
-                </h2>
-                <p className="text-xs font-semibold text-[#94B8AA] mt-0.5">
-                  {activeAccount
-                    ? `Account #${activeAccount.accountNumber} · Real-Time Performance`
-                    : 'No Active Evaluation Selected'}
-                </p>
-              </div>
-              <span className="text-xs font-mono font-extrabold text-[#00FFA3]">
-                Start: ${(activeAccount?.startingBalance ?? 0).toLocaleString()}
-              </span>
-            </div>
-
-            <div className="h-56 w-full apex-glass-panel rounded-2xl p-4 flex flex-col justify-between">
-              <svg className="w-full h-40 overflow-visible" viewBox="0 0 600 140">
-                <defs>
-                  <linearGradient id="eqGradDash" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stopColor="#00FFA3" stopOpacity="0.45" />
-                    <stop offset="100%" stopColor="#10B981" stopOpacity="0.0" />
-                  </linearGradient>
-                </defs>
-                {(() => {
-                  const minVal = Math.min(...equityPoints) * 0.998;
-                  const maxVal = Math.max(...equityPoints) * 1.002;
-                  const span = Math.max(1, maxVal - minVal);
-                  const coords = equityPoints.map((val, idx) => {
-                    const x = (idx / Math.max(1, equityPoints.length - 1)) * 580 + 10;
-                    const y = 130 - ((val - minVal) / span) * 110;
-                    return `${x},${y}`;
-                  });
-                  const polylinePoints = coords.join(' ');
-                  const areaPoints = `10,130 ${polylinePoints} 590,130`;
-                  return (
-                    <>
-                      <polygon points={areaPoints} fill="url(#eqGradDash)" />
-                      <polyline
-                        fill="none"
-                        stroke="#00FFA3"
-                        strokeWidth="3"
-                        points={polylinePoints}
-                      />
-                    </>
-                  );
-                })()}
-              </svg>
-            </div>
-          </section>
-        </div>
-      )}
-
-      {/* CHALLENGES TAB */}
-      {activeTab === 'challenges' && (
-        <section className="space-y-8 apex-fade-up">
-          {/* 1. YOUR PURCHASED ACCOUNTS SECTION WITH LAUNCH TERMINAL BUTTON & PASSCODE */}
-          <div className="space-y-4">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div>
-                <h2 className="text-2xl font-display font-extrabold text-white">
-                  Your Active Evaluation Accounts ({accounts.length})
-                </h2>
-                <p className="text-xs text-[#94B8AA] mt-0.5">
-                  Launch the live trading terminal directly from your challenge section below.
-                </p>
-              </div>
-              <div className="flex items-center gap-2.5">
-                <button
-                  type="button"
-                  onClick={() => navigate('terminal')}
-                  className="px-5 py-2.5 rounded-2xl bg-[#04120C] border border-[#00FFA3] text-[#00FFA3] hover:bg-[#00FFA3] hover:text-[#030A07] text-xs font-extrabold flex items-center gap-2 cursor-pointer transition-all shadow-[0_0_18px_rgba(0,255,163,0.25)]"
-                >
-                  <Terminal className="w-4 h-4 stroke-[2.5]" />
-                  <span>Open Challenge Terminal →</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => openStripeCheckout('two-step-5000', '5K30OFF')}
-                  className="px-5 py-2.5 rounded-2xl apex-glow-btn text-xs font-extrabold cursor-pointer"
-                >
-                  + Buy New Evaluation
-                </button>
-              </div>
-            </div>
-
-            {accounts.length === 0 ? (
-              <div className="p-8 rounded-3xl bg-[#04100B] border border-emerald-500/20 text-center space-y-4">
-                <Trophy className="w-10 h-10 text-[#00FFA3] mx-auto" />
-                <div className="space-y-1">
-                  <h3 className="text-base font-display font-extrabold text-white">No active evaluation accounts yet</h3>
-                  <p className="text-xs text-[#94B8AA] max-w-md mx-auto">
-                    Select an evaluation model from the challenge catalog below or open the Challenge Terminal with your Terminal User ID &amp; Password.
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => navigate('terminal')}
-                  className="px-6 py-3 rounded-2xl apex-glow-btn text-xs font-extrabold inline-flex items-center gap-2 cursor-pointer shadow-[0_0_20px_rgba(0,255,163,0.3)]"
-                >
-                  <Terminal className="w-4 h-4 stroke-[2.5]" />
-                  <span>Launch Challenge Trading Terminal →</span>
-                </button>
-              </div>
-            ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
                 {accounts.map((acc) => (
-                  <div
-                    key={acc.id}
-                    className={`apex-glass-card rounded-3xl p-6 space-y-4 transition-all ${
-                      acc.id === activeAccount?.id ? 'ring-2 ring-[#00FFA3] shadow-[0_0_24px_rgba(0,255,163,0.25)]' : ''
-                    }`}
-                  >
-                    <div className="flex items-center justify-between border-b border-emerald-500/20 pb-3">
-                      <span className="font-mono text-xs font-extrabold text-[#00FFA3]">
-                        #{acc.accountNumber}
-                      </span>
-                      <span
-                        className={`px-2.5 py-0.5 rounded-full text-[10px] font-mono font-bold uppercase ${
-                          acc.status === 'failed'
-                            ? 'bg-rose-500/20 border border-rose-500/50 text-rose-300'
-                            : acc.status === 'passed'
-                            ? 'bg-emerald-500/25 border border-[#00FFA3] text-[#00FFA3]'
-                            : 'bg-emerald-500/15 border border-[#00FFA3]/40 text-[#00FFA3]'
-                        }`}
-                      >
-                        {acc.status === 'failed'
-                          ? 'BREACHED'
-                          : acc.status === 'passed'
-                          ? 'PASSED • FUNDED'
-                          : acc.challengeType === 'instant'
-                          ? 'INSTANT FUNDED'
-                          : `PHASE ${acc.currentStep || 1}/${acc.totalSteps || 2}`}
-                      </span>
-                    </div>
-
-                    <div className="space-y-1.5">
-                      <h3 className="text-lg font-display font-extrabold text-white">
-                        {acc.challengeTitle}
-                      </h3>
-                      {acc.status === 'failed' && acc.breachReason && (
-                        <div className="text-[11px] font-bold text-rose-400">
-                          ⚠ {acc.breachReason}
-                        </div>
-                      )}
-                      <div className="grid grid-cols-2 gap-2 pt-1 text-[11px] font-mono">
-                        <div className="p-2 rounded-xl bg-[#030A07] border border-[#00FFA3]/30">
-                          <span className="text-[#94B8AA] block text-[9px] uppercase">Terminal User ID</span>
-                          <strong className="text-[#00FFA3]">{acc.terminalUserId || 'APEX-MASTER'}</strong>
-                        </div>
-                        <div className="p-2 rounded-xl bg-[#030A07] border border-[#00FFA3]/30">
-                          <span className="text-[#94B8AA] block text-[9px] uppercase">Terminal Password</span>
-                          {acc.status === 'failed' || !acc.terminalPassword ? (
-                            <strong className="text-rose-400">REMOVED (BREACHED)</strong>
-                          ) : (
-                            <strong className="text-[#00FFA3]">{acc.terminalPassword}</strong>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="space-y-2 text-xs border-t border-emerald-500/20 pt-3">
-                      <div className="flex justify-between">
-                        <span className="text-[#94B8AA] font-semibold">Balance</span>
-                        <span className="font-mono font-extrabold text-white">
-                          ${acc.balance.toLocaleString('en-US', { minimumFractionDigits: 2 })}
-                        </span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="text-[#94B8AA] font-semibold">Equity</span>
-                        <span className="font-mono font-extrabold text-[#00FFA3]">
-                          ${acc.equity.toLocaleString('en-US', { minimumFractionDigits: 2 })}
-                        </span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="text-[#94B8AA] font-semibold">Realized P&amp;L</span>
-                        <span
-                          className={`font-mono font-extrabold ${
-                            acc.balance - acc.startingBalance >= 0 ? 'text-[#00FFA3]' : 'text-rose-400'
-                          }`}
-                        >
-                          {acc.balance - acc.startingBalance >= 0 ? '+' : ''}$
-                          {(acc.balance - acc.startingBalance).toFixed(2)}
-                        </span>
-                      </div>
-                    </div>
-
-                    <div className="grid grid-cols-2 gap-2">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setActiveAccountId(acc.id);
-                          navigate('terminal');
-                        }}
-                        className="py-3 px-3 rounded-2xl apex-glow-btn text-xs font-display font-extrabold flex items-center justify-center gap-1.5 cursor-pointer shadow-[0_0_20px_rgba(0,255,163,0.3)]"
-                      >
-                        <Terminal className="w-3.5 h-3.5 stroke-[2.5]" />
-                        <span>Terminal</span>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setSelectedPayoutAccountId(acc.id);
-                          setActiveTab('payouts');
-                        }}
-                        className="py-3 px-3 rounded-2xl bg-[#081C14] hover:bg-emerald-500/20 border border-[#00FFA3]/40 text-xs font-display font-extrabold text-[#00FFA3] flex items-center justify-center gap-1.5 cursor-pointer"
-                      >
-                        <Wallet className="w-3.5 h-3.5" />
-                        <span>Payout P&amp;L</span>
-                      </button>
-                    </div>
-                  </div>
+                  <option key={acc.id} value={acc.id}>
+                    #{acc.accountNumber} · ${acc.startingBalance.toLocaleString()} ({acc.status.toUpperCase()})
+                  </option>
                 ))}
-              </div>
+              </select>
             )}
-          </div>
 
-          {/* 2. CATALOG OF ALL AVAILABLE CHALLENGE PACKAGES ($5K TO $200K) */}
-          <div className="space-y-4 pt-6 border-t border-emerald-500/20">
-            <div>
-              <h2 className="text-2xl font-display font-extrabold text-white">
-                All Challenge Programs Catalog
-              </h2>
-              <p className="text-xs text-[#94B8AA] mt-0.5">
-                Select any evaluation program tier from $5,000 to $200,000 to buy and activate instantly.
-              </p>
-            </div>
+            {/* Notifications Bell & Responsive Notification Screen */}
+            <div className="relative">
+              <button
+                type="button"
+                aria-label="Notifications"
+                data-testid="dashboard-notifications-btn"
+                onClick={() => {
+                  setIsProfileMenuOpen(false);
+                  setShowNotificationsPopover((prev) => !prev);
+                }}
+                className="w-10 h-10 rounded-full bg-[#071419] hover:bg-[#0C2129] border border-[#00E5B0]/28 text-[#A3BDB8] hover:text-[#00E5B0] flex items-center justify-center relative cursor-pointer transition-all"
+              >
+                <Bell className="w-4 h-4" />
+                {notifications.length > 0 && (
+                  <span className="absolute top-2 right-2 w-2 h-2 rounded-full bg-[#00E5B0] shadow-[0_0_8px_#00E5B0]" />
+                )}
+              </button>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
-              {challenges.map((ch) => (
-                <div
-                  key={ch.id}
-                  className="apex-glass-card rounded-3xl p-6 space-y-4 border border-emerald-500/30 hover:border-[#00FFA3]/60 transition-all flex flex-col justify-between"
-                >
-                  <div className="space-y-3">
-                    <div className="flex items-center justify-between border-b border-emerald-500/20 pb-3">
-                      <span className="px-2.5 py-0.5 rounded-full bg-emerald-500/15 border border-[#00FFA3]/40 text-[10px] font-mono font-bold text-[#00FFA3] uppercase">
-                        {ch.typeLabel}
-                      </span>
-                      <span className="font-mono text-lg font-extrabold text-[#00FFA3]">
-                        ${ch.priceUsd}
-                      </span>
-                    </div>
-
-                    <div>
-                      <h3 className="text-xl font-display font-extrabold text-white">
-                        ${ch.accountSize.toLocaleString()} USD
-                      </h3>
-                      <div className="text-xs text-[#94B8AA] mt-0.5">{ch.title}</div>
-                    </div>
-
-                    <div className="space-y-2 text-xs bg-[#04100B] p-3.5 rounded-2xl border border-emerald-500/20">
-                      <div className="flex justify-between">
-                        <span className="text-[#94B8AA]">Profit Target</span>
-                        <span className="font-mono font-bold text-white">{ch.profitTargetPct}%</span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="text-[#94B8AA]">Max Daily Drawdown</span>
-                        <span className="font-mono font-bold text-white">{ch.dailyDrawdownPct}%</span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="text-[#94B8AA]">Max Overall Drawdown</span>
-                        <span className="font-mono font-bold text-white">{ch.maxDrawdownPct}%</span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="text-[#94B8AA]">Profit Split</span>
-                        <span className="font-mono font-bold text-[#00FFA3]">Up to {ch.profitSplitPct}%</span>
-                      </div>
-                    </div>
-                  </div>
-
-                  <button
-                    type="button"
-                    onClick={() => openStripeCheckout(ch.id)}
-                    className="w-full py-3.5 rounded-2xl apex-glow-btn text-xs font-display font-extrabold uppercase tracking-wider cursor-pointer shadow-[0_0_20px_rgba(0,255,163,0.3)] mt-2"
-                  >
-                    Buy Challenge — ${ch.priceUsd}
-                  </button>
-                </div>
-              ))}
-            </div>
-          </div>
-        </section>
-      )}
-
-      {/* KYC TAB */}
-      {activeTab === 'kyc' && (
-        <section className="max-w-3xl mx-auto apex-fade-up">
-          <div className="apex-glass-card rounded-3xl p-8 space-y-6">
-            <div className="flex items-center justify-between border-b border-emerald-500/20 pb-4">
-              <div>
-                <h2 className="text-2xl font-display font-extrabold text-white flex items-center gap-2">
-                  <UserCheck className="w-6 h-6 text-[#00FFA3]" />
-                  <span>Trader Identity Verification (KYC)</span>
-                </h2>
-                <p className="text-xs text-[#94B8AA] mt-1">
-                  Upload official government ID to verify your trader profile and unlock direct payout settlements.
-                </p>
-              </div>
-              <span className="px-3.5 py-1.5 rounded-full bg-emerald-500/15 border border-[#00FFA3]/40 text-xs font-extrabold text-[#00FFA3]">
-                Status: {user.kycStatus?.toUpperCase() || 'NOT SUBMITTED'}
-              </span>
-            </div>
-
-            {kycSubmittedSuccess ? (
-              <div className="p-6 rounded-2xl bg-[#04100B] border border-[#00FFA3]/40 text-center space-y-3">
-                <CheckCircle2 className="w-12 h-12 text-[#00FFA3] mx-auto" />
-                <h3 className="text-xl font-display font-extrabold text-white">KYC Submitted Successfully!</h3>
-                <p className="text-xs text-[#94B8AA] max-w-md mx-auto">
-                  Our compliance desk is processing your identity documents. Verification typically completes within 12–24 hours.
-                </p>
-              </div>
-            ) : (
-              <form onSubmit={handleKycSubmit} className="space-y-5">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-xs font-bold text-[#94B8AA] mb-1.5">
-                      Full Legal Name
-                    </label>
-                    <input
-                      type="text"
-                      required
-                      value={profileName}
-                      onChange={(e) => setProfileName(e.target.value)}
-                      className="w-full px-4 py-3 rounded-2xl bg-[#040E0A] border border-emerald-500/35 text-xs text-white font-bold"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-bold text-[#94B8AA] mb-1.5">
-                      Document Type
-                    </label>
-                    <select
-                      value={kycDocType}
-                      onChange={(e) => setKycDocType(e.target.value)}
-                      className="w-full px-4 py-3 rounded-2xl bg-[#040E0A] border border-emerald-500/35 text-xs text-white font-bold"
-                    >
-                      <option value="Passport">International Passport</option>
-                      <option value="National ID">National ID Card / Aadhaar</option>
-                      <option value="Driver License">Driver's License</option>
-                    </select>
-                  </div>
-                </div>
-
-                <div>
-                  <label className="block text-xs font-bold text-[#94B8AA] mb-1.5">
-                    Document Number / Serial
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    placeholder="Enter document number"
-                    value={kycDocNumber}
-                    onChange={(e) => setKycDocNumber(e.target.value)}
-                    className="w-full px-4 py-3 rounded-2xl bg-[#040E0A] border border-emerald-500/35 text-xs text-white font-mono font-bold"
-                  />
-                </div>
-
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-xs font-bold text-[#94B8AA] mb-1.5">
-                      Front Side Photo Upload
-                    </label>
-                    <label className="h-32 rounded-2xl border-2 border-dashed border-emerald-500/30 bg-[#040E0A] flex flex-col items-center justify-center gap-2 cursor-pointer hover:border-[#00FFA3]/50 transition-all">
-                      <Upload className="w-6 h-6 text-[#00FFA3]" />
-                      <span className="text-[11px] font-bold text-white">Click to Upload Front ID</span>
-                      <input
-                        type="file"
-                        accept="image/*"
-                        onChange={(e) => {
-                          const f = e.target.files?.[0];
-                          if (f) setKycFrontImage(URL.createObjectURL(f));
-                        }}
-                        className="hidden"
-                      />
-                    </label>
-                    {kycFrontImage && (
-                      <div className="mt-2 text-[11px] font-bold text-[#00FFA3]">Front ID Selected ✓</div>
-                    )}
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-bold text-[#94B8AA] mb-1.5">
-                      Back Side Photo Upload
-                    </label>
-                    <label className="h-32 rounded-2xl border-2 border-dashed border-emerald-500/30 bg-[#040E0A] flex flex-col items-center justify-center gap-2 cursor-pointer hover:border-[#00FFA3]/50 transition-all">
-                      <Upload className="w-6 h-6 text-[#00FFA3]" />
-                      <span className="text-[11px] font-bold text-white">Click to Upload Back ID</span>
-                      <input
-                        type="file"
-                        accept="image/*"
-                        onChange={(e) => {
-                          const f = e.target.files?.[0];
-                          if (f) setKycBackImage(URL.createObjectURL(f));
-                        }}
-                        className="hidden"
-                      />
-                    </label>
-                    {kycBackImage && (
-                      <div className="mt-2 text-[11px] font-bold text-[#00FFA3]">Back ID Selected ✓</div>
-                    )}
-                  </div>
-                </div>
-
-                <button
-                  type="submit"
-                  disabled={kycSubmitting}
-                  className="w-full py-4 rounded-2xl apex-glow-btn text-xs font-display font-extrabold cursor-pointer"
-                >
-                  {kycSubmitting ? 'Submitting Documents...' : 'Submit Identity Documents for Verification'}
-                </button>
-              </form>
-            )}
-          </div>
-        </section>
-      )}
-
-      {/* CERTIFICATES TAB */}
-      {activeTab === 'certificates' && (
-        <section className="space-y-8 apex-fade-up">
-          <div className="apex-glass-card rounded-3xl p-7 space-y-2">
-            <h2 className="text-2xl font-display font-extrabold text-white flex items-center gap-2">
-              <Award className="w-6 h-6 text-[#00FFA3]" />
-              <span>Trader Certificates & Achievements</span>
-            </h2>
-            <p className="text-xs text-[#94B8AA]">
-              View and download your official FUNDED APEX Prop Trader Certificates for passed evaluation accounts.
-            </p>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {[
-              { title: 'Funded Evaluation Certificate', size: 1000, date: 'Nov 2026' },
-              { title: 'Prop Trader Master Certificate', size: 50000, date: 'Oct 2026' },
-              { title: 'Apex Elite Trader Award', size: 100000, date: 'Sep 2026' },
-            ].map((cert) => (
-              <div key={cert.title} className="apex-glass-card rounded-3xl p-6 space-y-4">
-                <div className="w-12 h-12 rounded-2xl bg-[#00FFA3]/15 border border-[#00FFA3]/40 flex items-center justify-center text-[#00FFA3]">
-                  <Award className="w-6 h-6" />
-                </div>
-                <div>
-                  <h3 className="text-lg font-display font-extrabold text-white">{cert.title}</h3>
-                  <div className="text-xs text-[#00FFA3] font-mono font-bold mt-1">
-                    Simulated Capital: ${cert.size.toLocaleString()} USD
-                  </div>
-                  <div className="text-[11px] text-[#94B8AA] mt-0.5">Issued: {cert.date}</div>
-                </div>
-                <button
-                  type="button"
-                  onClick={() =>
-                    setSelectedCertificateModal({
-                      title: cert.title,
-                      accountSize: cert.size,
-                      issueDate: cert.date,
-                      traderName: user.fullName,
-                    })
-                  }
-                  className="w-full py-3 rounded-2xl bg-[#081C14] hover:bg-emerald-500/20 border border-[#00FFA3]/40 text-xs font-extrabold text-[#00FFA3] flex items-center justify-center gap-2 cursor-pointer"
-                >
-                  <Download className="w-4 h-4" />
-                  <span>View Certificate PDF</span>
-                </button>
-              </div>
-            ))}
-          </div>
-
-          {/* CERTIFICATE PREVIEW MODAL */}
-          {selectedCertificateModal && (
-            <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-[#020806]/85 backdrop-blur-md">
-              <div className="w-full max-w-2xl bg-[#04100B] border-2 border-[#00FFA3]/50 rounded-3xl p-8 space-y-6 text-center shadow-[0_0_80px_rgba(0,255,163,0.3)]">
-                <div className="flex justify-between items-center">
-                  <div className="flex items-center gap-2">
-                    <img src="/assets/aistudio/IMG_20261108_140853_727c5a1e.png" alt="FUNDED APEX" className="w-8 h-8 rounded-full" />
-                    <span className="font-display font-black text-white text-lg">FUNDED APEX</span>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => setSelectedCertificateModal(null)}
-                    className="p-2 rounded-xl bg-[#081C14] text-[#94B8AA] hover:text-white"
-                  >
-                    <X className="w-5 h-5" />
-                  </button>
-                </div>
-
-                <div className="border-4 border-double border-[#00FFA3]/40 p-8 rounded-2xl space-y-4 bg-gradient-to-b from-[#071911] to-[#04100B]">
-                  <Award className="w-16 h-16 text-[#00FFA3] mx-auto" />
-                  <h3 className="text-3xl font-display font-black text-white uppercase tracking-wider">
-                    Certificate of Excellence
-                  </h3>
-                  <p className="text-xs text-[#94B8AA]">This is to certify that</p>
-                  <h4 className="text-2xl font-display font-black text-[#00FFA3]">
-                    {selectedCertificateModal.traderName}
-                  </h4>
-                  <p className="text-xs text-[#94B8AA] max-w-md mx-auto">
-                    has successfully passed the official FUNDED APEX Prop Trading Evaluation for simulated capital allocation of ${selectedCertificateModal.accountSize.toLocaleString()} USD.
-                  </p>
-                  <div className="text-xs font-mono font-bold text-white pt-4">
-                    Issue Date: {selectedCertificateModal.issueDate} · Verification ID: APEX-CERT-{Math.floor(100000 + Math.random() * 900000)}
-                  </div>
-                </div>
-
-                <button
-                  type="button"
-                  onClick={() => {
-                    pushNotification('Certificate Downloaded', 'Saved PDF certificate copy to downloads.', 'success');
-                    setSelectedCertificateModal(null);
-                  }}
-                  className="px-8 py-3.5 rounded-2xl apex-glow-btn text-xs font-bold cursor-pointer"
-                >
-                  Download Official PDF →
-                </button>
-              </div>
-            </div>
-          )}
-        </section>
-      )}
-
-      {/* PAYOUTS TAB — DIRECTLY ATTACHED TO CHALLENGE STEP COMPLETION & ACCOUNT P&L */}
-      {activeTab === 'payouts' && (
-        <section className="space-y-8 apex-fade-up">
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-            <div className="apex-glass-card rounded-3xl p-7 space-y-5">
-              <div className="space-y-1">
-                <h2 className="text-xl font-display font-extrabold text-white flex items-center gap-2">
-                  <Wallet className="w-5 h-5 text-[#00FFA3]" />
-                  <span>Challenge P&amp;L Performance Payout</span>
-                </h2>
-                <p className="text-xs text-[#94B8AA] leading-relaxed">
-                  Payouts are directly linked to your Trading Account P&amp;L and Challenge Rules:
-                  <strong className="text-white"> Instant Funding</strong> accounts can withdraw profit immediately when P&amp;L &gt; $0; <strong className="text-white">1-Step, 2-Step, and 3-Step</strong> challenges unlock payouts once all evaluation steps are passed and P&amp;L &gt; $0.
-                </p>
-              </div>
-
-              {accounts.length === 0 ? (
-                <div className="p-6 rounded-2xl bg-[#04100B] border border-emerald-500/25 text-center space-y-3">
-                  <p className="text-xs text-[#94B8AA]">
-                    You do not have any trading accounts yet. Purchase an Instant or Multi-Step Challenge and generate positive P&amp;L to unlock payouts.
-                  </p>
-                  <button
-                    type="button"
-                    onClick={() => setActiveTab('challenges')}
-                    className="px-5 py-2.5 rounded-xl apex-glow-btn text-xs font-extrabold cursor-pointer"
-                  >
-                    Browse Challenges →
-                  </button>
-                </div>
-              ) : (
+              {showNotificationsPopover && (
                 <>
-                  {/* 1. Challenge Account Selector */}
-                  <div>
-                    <label className="block text-xs font-bold text-[#94B8AA] mb-1.5">
-                      1. Select Challenge Trading Account
-                    </label>
-                    <select
-                      value={selectedPayoutAccount?.id || ''}
-                      onChange={(e) => {
-                        setSelectedPayoutAccountId(e.target.value);
-                        setPayoutErrorMsg(null);
-                        setPayoutSubmittedMsg(null);
-                      }}
-                      className="w-full px-4 py-3 rounded-2xl bg-[#040E0A] border border-emerald-500/40 text-xs font-mono font-bold text-white"
-                    >
-                      {accounts.map((acc) => {
-                        const pnl = Math.round((acc.balance - acc.startingBalance) * 100) / 100;
-                        return (
-                          <option key={acc.id} value={acc.id}>
-                            #{acc.accountNumber} · {acc.challengeTitle} · P&amp;L: {pnl >= 0 ? '+' : ''}${pnl.toFixed(2)} ({acc.status.toUpperCase()})
-                          </option>
-                        );
-                      })}
-                    </select>
-                  </div>
-
-                  {/* 2. Live Challenge Step & P&L Eligibility Card */}
-                  {payoutEligibility && (
-                    <div
-                      className={`p-4 rounded-2xl border space-y-3 ${
-                        payoutEligibility.eligible
-                          ? 'bg-emerald-500/10 border-[#00FFA3]/50'
-                          : payoutEligibility.isBreached
-                          ? 'bg-rose-950/40 border-rose-500/50'
-                          : 'bg-amber-500/10 border-amber-400/40'
-                      }`}
-                    >
-                      <div className="flex items-center justify-between">
-                        <span className="text-xs font-display font-extrabold text-white">
-                          {payoutEligibility.challengeTitle} (#{payoutEligibility.accountNumber})
+                  <div
+                    aria-hidden="true"
+                    onClick={() => setShowNotificationsPopover(false)}
+                    className="fixed inset-0 z-40 bg-black/40 sm:bg-transparent"
+                  />
+                  <div
+                    data-testid="dashboard-notifications-panel"
+                    className="fixed sm:absolute left-3 right-3 sm:left-auto sm:right-0 top-[76px] sm:top-full sm:mt-2.5 sm:w-[370px] rounded-[22px] bg-[#061116]/98 backdrop-blur-2xl border border-[#00E5B0]/35 shadow-[0_28px_72px_rgba(0,0,0,0.95),inset_0_1px_0_rgba(56,248,210,0.16)] p-4 z-50 space-y-3 apex-layout-transition"
+                  >
+                    <div className="flex items-center justify-between border-b border-[#00E5B0]/18 pb-2.5">
+                      <div className="flex items-center gap-2">
+                        <Bell className="w-4 h-4 text-[#00E5B0]" />
+                        <span className="text-xs sm:text-sm font-display font-bold text-white">
+                          Notification Center
                         </span>
-                        <span
-                          className={`px-2.5 py-0.5 rounded-full text-[10px] font-mono font-extrabold uppercase ${
-                            payoutEligibility.eligible
-                              ? 'bg-[#00FFA3]/20 text-[#00FFA3] border border-[#00FFA3]/50'
-                              : payoutEligibility.isBreached
-                              ? 'bg-rose-500/20 text-rose-300 border border-rose-500/40'
-                              : 'bg-amber-400/20 text-amber-300 border border-amber-400/40'
-                          }`}
-                        >
-                          {payoutEligibility.eligible
-                            ? 'PAYOUT UNLOCKED ✓'
-                            : payoutEligibility.isBreached
-                            ? 'ACCOUNT BREACHED'
-                            : 'STEP / P&L REQUIRED'}
+                        <span className="px-2 py-0.5 rounded-full bg-[#091A21] border border-[#00E5B0]/30 text-[10px] font-mono font-bold text-[#00E5B0]">
+                          {notifications.length}
                         </span>
                       </div>
-
-                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs font-mono">
-                        <div className="p-2.5 rounded-xl bg-[#030A07] border border-white/10">
-                          <span className="text-[10px] text-[#94B8AA] block">Starting Capital</span>
-                          <strong className="text-white">${payoutEligibility.startingBalance.toLocaleString()}</strong>
-                        </div>
-                        <div className="p-2.5 rounded-xl bg-[#030A07] border border-white/10">
-                          <span className="text-[10px] text-[#94B8AA] block">Current Balance</span>
-                          <strong className="text-white">${payoutEligibility.balance.toLocaleString('en-US', { minimumFractionDigits: 2 })}</strong>
-                        </div>
-                        <div className="p-2.5 rounded-xl bg-[#030A07] border border-white/10">
-                          <span className="text-[10px] text-[#94B8AA] block">Realized P&amp;L</span>
-                          <strong
-                            className={
-                              payoutEligibility.realizedProfitUsd > 0
-                                ? 'text-[#00FFA3]'
-                                : payoutEligibility.realizedProfitUsd < 0
-                                ? 'text-rose-400'
-                                : 'text-slate-300'
-                            }
-                          >
-                            {payoutEligibility.realizedProfitUsd >= 0 ? '+' : ''}$
-                            {payoutEligibility.realizedProfitUsd.toFixed(2)}
-                          </strong>
-                        </div>
-                        <div className="p-2.5 rounded-xl bg-[#030A07] border border-[#00FFA3]/30">
-                          <span className="text-[10px] text-[#94B8AA] block">
-                            Withdrawable ({payoutEligibility.profitSplitPct}%)
-                          </span>
-                          <strong className="text-[#00FFA3]">
-                            ${payoutEligibility.maxWithdrawableUsd.toFixed(2)}
-                          </strong>
-                        </div>
-                      </div>
-
-                      {payoutEligibility.challengeType === 'instant' && (
-                        <div className="p-3 rounded-xl bg-[#030A07] border border-emerald-500/30 space-y-1.5 text-xs font-mono">
-                          <div className="flex items-center justify-between">
-                            <span className="text-[11px] font-bold text-[#00FFA3] uppercase">
-                              Instant Account 15% Consistency Rule (Hidden Rule)
-                            </span>
-                            <span
-                              className={`px-2 py-0.5 rounded-md text-[10px] font-extrabold ${
-                                payoutEligibility.isConsistencyViolated
-                                  ? 'bg-rose-500/20 text-rose-300 border border-rose-500/40'
-                                  : 'bg-[#00FFA3]/20 text-[#00FFA3] border border-[#00FFA3]/40'
-                              }`}
-                            >
-                              {payoutEligibility.isConsistencyViolated ? 'EXCEEDS 15% LIMIT' : 'CONSISTENCY OK (≤15%)'}
-                            </span>
-                          </div>
-                          <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-[#94B8AA]">
-                            <span>
-                              Highest Single Trade:{' '}
-                              <strong className="text-white">
-                                +${payoutEligibility.maxSingleTradeProfitUsd.toFixed(2)}
-                              </strong>
-                            </span>
-                            <span>
-                              Single Trade Share:{' '}
-                              <strong
-                                className={
-                                  payoutEligibility.isConsistencyViolated ? 'text-rose-400' : 'text-[#00FFA3]'
-                                }
-                              >
-                                {payoutEligibility.highestTradeSharePct.toFixed(1)}% / 15% Max
-                              </strong>
-                            </span>
-                          </div>
-                        </div>
-                      )}
-
-                      <div className="text-xs font-bold leading-relaxed text-slate-200">
-                        {payoutEligibility.reason}
-                      </div>
-                    </div>
-                  )}
-
-                  {payoutErrorMsg && (
-                    <div className="p-4 rounded-2xl bg-rose-950/60 border border-rose-500/50 text-xs font-bold text-rose-300">
-                      {payoutErrorMsg}
-                    </div>
-                  )}
-
-                  {payoutSubmittedMsg && (
-                    <div className="p-4 rounded-2xl bg-emerald-500/15 border border-[#00FFA3]/40 text-xs font-bold text-[#00FFA3]">
-                      {payoutSubmittedMsg}
-                    </div>
-                  )}
-
-                  <form onSubmit={handlePayoutSubmit} className="space-y-4">
-                    <div>
-                      <div className="flex items-center justify-between mb-1.5">
-                        <label className="text-xs font-bold text-[#94B8AA]">
-                          2. Payout Withdrawal Amount (USD)
-                        </label>
-                        {payoutEligibility && payoutEligibility.maxWithdrawableUsd > 0 && (
-                          <button
-                            type="button"
-                            onClick={() => setPayoutAmount(payoutEligibility.maxWithdrawableUsd)}
-                            className="text-[11px] font-mono font-extrabold text-[#00FFA3] hover:underline cursor-pointer"
-                          >
-                            Max: ${payoutEligibility.maxWithdrawableUsd.toFixed(2)}
-                          </button>
-                        )}
-                      </div>
-                      <input
-                        type="number"
-                        step="0.01"
-                        min="20"
-                        max={payoutEligibility?.maxWithdrawableUsd || 100000}
-                        disabled={!payoutEligibility?.eligible}
-                        value={payoutAmount}
-                        onChange={(e) => setPayoutAmount(Number(e.target.value))}
-                        className="w-full px-4 py-3 rounded-2xl bg-[#040E0A] border border-emerald-500/35 text-sm font-mono font-bold text-white disabled:opacity-50"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="block text-xs font-bold text-[#94B8AA] mb-1.5">
-                        3. Settlement Method
-                      </label>
-                      <select
-                        disabled={!payoutEligibility?.eligible}
-                        value={payoutMethod}
-                        onChange={(e) => setPayoutMethod(e.target.value as any)}
-                        className="w-full px-4 py-3 rounded-2xl bg-[#040E0A] border border-emerald-500/35 text-xs text-white font-bold disabled:opacity-50"
+                      <button
+                        type="button"
+                        onClick={() => setShowNotificationsPopover(false)}
+                        className="p-1 rounded-full text-[#A3BDB8] hover:text-white hover:bg-white/5 transition-colors cursor-pointer"
                       >
-                        <option value="USDT_BEP20">USDT Crypto (BEP-20 BNB Smart Chain)</option>
-                        <option value="USDT_TRC20">USDT Crypto (TRC-20)</option>
-                        <option value="USDC">USDC Crypto (ERC-20)</option>
-                        <option value="WIRE">Bank Wire Transfer</option>
-                      </select>
+                        <X className="w-4 h-4" />
+                      </button>
                     </div>
-
-                    <div>
-                      <label className="block text-xs font-bold text-[#94B8AA] mb-1.5">
-                        4. Destination Wallet Address (BEP-20) / Details
-                      </label>
-                      <input
-                        type="text"
-                        required
-                        disabled={!payoutEligibility?.eligible}
-                        placeholder="Enter 0x... USDT (BEP-20) wallet address"
-                        value={payoutWalletAddress}
-                        onChange={(e) => setPayoutWalletAddress(e.target.value)}
-                        className="w-full px-4 py-3 rounded-2xl bg-[#040E0A] border border-emerald-500/35 text-xs text-white font-mono font-bold disabled:opacity-50"
-                      />
+                    <div className="max-h-[60vh] sm:max-h-72 overflow-y-auto space-y-2 pr-1 custom-scrollbar">
+                      {notifications.length === 0 ? (
+                        <div className="py-8 text-center space-y-1.5">
+                          <Bell className="w-6 h-6 text-[#00E5B0]/40 mx-auto" />
+                          <div className="text-xs font-semibold text-white">All caught up</div>
+                          <div className="text-[11px] text-[#728F8A]">
+                            Real-time account, payout, and terminal alerts appear here.
+                          </div>
+                        </div>
+                      ) : (
+                        notifications.slice(0, 12).map((n) => (
+                          <div
+                            key={n.id}
+                            className="p-3 rounded-[14px] bg-[#09181F] border border-[#00E5B0]/18 hover:border-[#00E5B0]/40 transition-colors text-xs space-y-1"
+                          >
+                            <div className="flex items-start justify-between gap-2">
+                              <span className="font-display font-bold text-[#00E5B0] leading-snug">
+                                {n.title}
+                              </span>
+                              <span className="text-[10px] font-mono text-[#728F8A] shrink-0">
+                                {new Date(n.timestamp).toLocaleTimeString([], {
+                                  hour: '2-digit',
+                                  minute: '2-digit',
+                                })}
+                              </span>
+                            </div>
+                            <div className="text-[#D6EBE7] text-[11px] leading-relaxed">
+                              {n.message}
+                            </div>
+                          </div>
+                        ))
+                      )}
                     </div>
-
-                    <button
-                      type="submit"
-                      disabled={!payoutEligibility?.eligible}
-                      className="w-full py-4 rounded-2xl apex-glow-btn text-xs font-display font-extrabold cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
-                    >
-                      {payoutEligibility?.eligible
-                        ? `Withdraw $${payoutAmount.toLocaleString('en-US', {
-                            minimumFractionDigits: 2,
-                          })} USD Profit →`
-                        : 'Payout Locked — Complete Challenge Step & Profit Target'}
-                    </button>
-                  </form>
+                  </div>
                 </>
               )}
             </div>
 
-            <div className="apex-glass-card rounded-3xl p-7 space-y-5">
-              <h2 className="text-xl font-display font-extrabold text-white">
-                Public Verified Payout Registry
-              </h2>
-              <div className="space-y-3 max-h-[380px] overflow-y-auto pr-1">
-                {verifiedPayouts.map((p) => (
-                  <div
-                    key={p.id}
-                    className="p-4 rounded-2xl bg-[#040E0A] border border-emerald-500/20 flex items-center justify-between gap-3 text-xs"
-                  >
-                    <div>
-                      <div className="font-display font-bold text-white">{p.traderName}</div>
-                      <div className="text-[11px] text-[#94B8AA] font-mono">{p.currency} · {p.paymentDate}</div>
-                    </div>
-                    <div className="font-mono text-[#00FFA3] font-extrabold text-sm">
-                      +${p.amountUsd.toLocaleString('en-US', { minimumFractionDigits: 2 })}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
-        </section>
-      )}
-
-      {/* SETTINGS TAB */}
-      {activeTab === 'settings' && (
-        <section className="grid grid-cols-1 lg:grid-cols-2 gap-8 apex-fade-up">
-          <div className="apex-glass-card rounded-3xl p-7 space-y-5">
-            <h2 className="text-lg font-display font-extrabold text-white flex items-center gap-2">
-              <Settings className="w-5 h-5 text-[#00FFA3]" />
-              <span>Profile Settings</span>
-            </h2>
-
-            <div className="space-y-4">
-              <div>
-                <label className="block text-xs font-bold text-[#94B8AA] mb-1.5">
-                  Profile Picture Upload
-                </label>
-                <label className="inline-flex items-center gap-2 px-4 py-2.5 rounded-2xl apex-glass-panel text-xs font-bold text-white cursor-pointer hover:border-[#00FFA3]/50">
-                  <Upload className="w-4 h-4 text-[#00FFA3]" />
-                  <span>Upload Image</span>
-                  <input type="file" accept="image/*" onChange={handleAvatarUpload} className="hidden" />
-                </label>
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold text-[#94B8AA] mb-1.5">Full Name</label>
-                <input
-                  type="text"
-                  value={profileName}
-                  onChange={(e) => setProfileName(e.target.value)}
-                  className="w-full px-4 py-3 rounded-2xl bg-[#040E0A] border border-emerald-500/35 text-sm font-semibold text-white"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold text-[#94B8AA] mb-1.5">Country</label>
-                <select
-                  value={profileCountry}
-                  onChange={(e) => setProfileCountry(e.target.value)}
-                  className="w-full px-4 py-3 rounded-2xl bg-[#040E0A] border border-emerald-500/35 text-sm font-semibold text-white"
-                >
-                  {COUNTRIES.map((c) => (
-                    <option key={c} value={c}>
-                      {c}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
+            {/* User Profile Corner Dropdown */}
+            <div className="relative">
               <button
                 type="button"
-                onClick={() => updateUserProfile({ fullName: profileName, country: profileCountry })}
-                className="px-6 py-3 rounded-2xl apex-glow-btn text-xs font-extrabold cursor-pointer"
+                data-testid="dashboard-profile-corner-btn"
+                aria-expanded={isProfileMenuOpen}
+                onClick={() => setIsProfileMenuOpen((prev) => !prev)}
+                className="flex items-center gap-2.5 pl-2.5 pr-3 py-1.5 rounded-[10px] bg-[#090D0A] hover:bg-[#0D130F] border border-[#00E676]/25 transition-all cursor-pointer"
               >
-                Save Profile Changes
+                <div className="w-8 h-8 rounded-[8px] bg-[#0D130F] border border-[#00E676]/40 flex items-center justify-center overflow-hidden shrink-0">
+                  {user.avatarUrl ? (
+                    <img
+                      src={user.avatarUrl}
+                      alt={user.fullName}
+                      referrerPolicy="no-referrer"
+                      className="w-full h-full object-cover"
+                    />
+                  ) : (
+                    <span className="text-xs font-display font-extrabold text-[#00E676]">
+                      {user.fullName.charAt(0).toUpperCase()}
+                    </span>
+                  )}
+                </div>
+
+                <div className="text-left hidden sm:block">
+                  <div className="text-xs font-display font-bold text-white leading-tight max-w-[120px] truncate">
+                    {user.fullName}
+                  </div>
+                  <div className="text-[10px] font-mono text-[#00E676]">
+                    {user.role.toUpperCase()}
+                  </div>
+                </div>
+
+                <ChevronDown className="w-3.5 h-3.5 text-[#A7B1AA]" />
               </button>
-            </div>
-          </div>
 
-          <div className="apex-glass-card rounded-3xl p-7 space-y-5">
-            <h2 className="text-lg font-display font-extrabold text-white flex items-center gap-2">
-              <Shield className="w-5 h-5 text-[#00FFA3]" />
-              <span>Security & Credentials</span>
-            </h2>
-
-            <div className="space-y-4">
-              <div>
-                <label className="block text-xs font-bold text-[#94B8AA] mb-1.5">Change Password</label>
-                <div className="flex gap-2">
-                  <input
-                    type="password"
-                    value={newPassword}
-                    onChange={(e) => setNewPassword(e.target.value)}
-                    placeholder="New password (min. 8 chars)"
-                    className="flex-1 px-4 py-3 rounded-2xl bg-[#040E0A] border border-emerald-500/35 text-xs font-semibold text-white"
+              {isProfileMenuOpen && (
+                <>
+                  <div
+                    aria-hidden="true"
+                    onClick={() => setIsProfileMenuOpen(false)}
+                    className="fixed inset-0 z-40"
                   />
-                  <button
-                    type="button"
-                    onClick={async () => {
-                      try {
-                        await changeUserPassword(newPassword);
-                        setNewPassword('');
-                        setPasswordStatus('Password updated.');
-                      } catch (err: any) {
-                        setPasswordStatus(err.message);
-                      }
-                    }}
-                    className="px-5 py-3 rounded-2xl apex-glow-btn text-xs font-extrabold cursor-pointer"
+                  <div
+                    data-testid="dashboard-profile-dropdown"
+                    className="absolute right-0 mt-2 w-72 rounded-[14px] bg-[#050806] border border-[#00E676]/30 shadow-2xl p-4 space-y-3 z-50 apex-scale-in"
                   >
-                    Update
-                  </button>
-                </div>
-                {passwordStatus && <p className="text-xs text-[#00FFA3] mt-1 font-bold">{passwordStatus}</p>}
-              </div>
+                    <div className="flex items-center gap-3 pb-3 border-b border-white/10">
+                      <div className="w-10 h-10 rounded-[9px] bg-[#090D0A] border border-[#00E676]/40 flex items-center justify-center font-display font-bold text-sm text-[#00E676] shrink-0">
+                        {user.fullName.charAt(0).toUpperCase()}
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <div className="text-sm font-display font-bold text-white truncate">
+                          {user.fullName}
+                        </div>
+                        <div className="text-[11px] font-mono text-[#00E676] truncate">
+                          {user.email}
+                        </div>
+                        <div className="text-[10px] font-mono text-[#77837B] mt-0.5">
+                          ID: {user.referralCode} · {user.country}
+                        </div>
+                      </div>
+                    </div>
 
-              <div className="flex items-center justify-between p-4 rounded-2xl apex-glass-panel">
-                <div>
-                  <div className="text-sm font-display font-extrabold text-white">
-                    Multi-Factor Authentication (MFA)
-                  </div>
-                  <div className="text-xs text-[#94B8AA]">
-                    Status: {user.mfaEnabled ? 'Enabled' : 'Disabled'}
-                  </div>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => updateUserProfile({ mfaEnabled: !user.mfaEnabled })}
-                  className="px-4 py-2.5 rounded-2xl bg-emerald-500/20 border border-[#00FFA3]/40 text-xs text-[#00FFA3] font-extrabold cursor-pointer"
-                >
-                  {user.mfaEnabled ? 'Disable' : 'Enable'}
-                </button>
-              </div>
+                    {accounts.length > 0 && (
+                      <div className="space-y-1">
+                        <label className="block text-[10px] font-mono uppercase tracking-wider text-[#77837B]">
+                          Active Trading Account
+                        </label>
+                        <select
+                          value={activeAccount?.id || ''}
+                          onChange={(e) => setActiveAccountId(e.target.value)}
+                          className="w-full px-2.5 py-2 rounded-[8px] bg-[#090D0A] border border-white/15 text-xs font-mono font-bold text-white"
+                        >
+                          {accounts.map((acc) => (
+                            <option key={acc.id} value={acc.id}>
+                              #{acc.accountNumber} · ${acc.startingBalance.toLocaleString()}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    )}
 
-              <div className="flex items-center justify-between p-4 rounded-2xl bg-rose-950/40 border border-rose-500/40">
-                <div>
-                  <div className="text-sm font-display font-extrabold text-white flex items-center gap-2">
-                    <LogOut className="w-4 h-4 text-rose-400" />
-                    <span>Active Session Sign Out</span>
+                    <div className="space-y-1">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setActiveTab('settings');
+                          setIsProfileMenuOpen(false);
+                        }}
+                        className="w-full px-3 py-2 rounded-[8px] hover:bg-[#090D0A] text-left text-xs font-medium text-[#A7B1AA] hover:text-white flex items-center gap-2.5 cursor-pointer"
+                      >
+                        <Settings className="w-4 h-4 text-[#00E676]" />
+                        <span>Profile &amp; Security Settings</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setActiveTab('challenges');
+                          setIsProfileMenuOpen(false);
+                        }}
+                        className="w-full px-3 py-2 rounded-[8px] hover:bg-[#090D0A] text-left text-xs font-medium text-[#A7B1AA] hover:text-white flex items-center gap-2.5 cursor-pointer"
+                      >
+                        <Trophy className="w-4 h-4 text-[#00E676]" />
+                        <span>My Accounts &amp; Credentials</span>
+                      </button>
+                    </div>
+
+                    <div className="pt-2 border-t border-white/10">
+                      <button
+                        type="button"
+                        data-testid="profile-dropdown-logout-btn"
+                        onClick={() => {
+                          setIsProfileMenuOpen(false);
+                          logout();
+                          navigate('login');
+                        }}
+                        className="w-full py-2.5 px-4 rounded-[8px] bg-red-500/15 hover:bg-red-500/30 border border-red-500/40 text-red-300 hover:text-white transition-all cursor-pointer flex items-center justify-center gap-2 text-xs font-bold"
+                      >
+                        <LogOut className="w-4 h-4" />
+                        <span>Logout Account</span>
+                      </button>
+                    </div>
                   </div>
-                  <div className="text-xs text-[#94B8AA] mt-0.5">
-                    Log out of your Funded Apex trader account session safely.
-                  </div>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => {
-                    logout();
-                    navigate('login');
-                  }}
-                  className="px-5 py-2.5 rounded-2xl bg-rose-500/20 hover:bg-rose-500/35 border border-rose-500/50 text-rose-300 font-extrabold text-xs cursor-pointer flex items-center gap-1.5 shadow-[0_0_12px_rgba(244,63,94,0.3)]"
-                >
-                  <LogOut className="w-4 h-4" />
-                  <span>Logout</span>
-                </button>
-              </div>
+                </>
+              )}
             </div>
           </div>
-        </section>
-      )}
+        </header>
 
-      {/* AFFILIATE TAB */}
-      {activeTab === 'affiliate' && (
-        <section className="space-y-8 apex-fade-up">
-          <div className="apex-glass-card rounded-3xl p-8 space-y-6">
-            <div className="flex flex-col md:flex-row items-center justify-between gap-6 border-b border-emerald-500/20 pb-6">
-              <div className="space-y-2">
-                <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-[#00FFA3]/15 border border-[#00FFA3]/40 text-xs font-mono font-bold text-[#00FFA3]">
-                  <Users className="w-4 h-4" />
-                  <span>FUNDED APEX PARTNER PROGRAM</span>
-                </div>
-                <h2 className="text-2xl font-display font-extrabold text-white">
-                  Earn Up to 15% Commission on Referrals
-                </h2>
-                <p className="text-xs text-[#94B8AA] max-w-xl">
-                  Share your unique referral link with fellow traders and earn instant payout commissions whenever they purchase an evaluation account.
+        {/* DASHBOARD BODY */}
+        <main className="flex-1 max-w-[1440px] w-full mx-auto px-4 sm:px-6 lg:px-8 py-5 sm:py-6 space-y-5 sm:space-y-6">
+          {/* =====================================================================
+              1. OVERVIEW TAB (Video 2 Layout: Welcome Back, 4 Cards, Quick Actions + 8 KPIs & Terminal Details)
+              ===================================================================== */}
+          {activeTab === 'overview' && (
+            <div className="space-y-6 apex-fade-up">
+              {/* WELCOME BACK HEADER (ORIGINAL CONTENT + EXACT SCREENSHOT GEOMETRIC SANS FONT) */}
+              <div className="space-y-1">
+                <h1 className="text-3xl sm:text-4xl font-display font-black text-white tracking-[-0.035em] leading-[1.08]">
+                  Welcome back{user?.fullName ? `, ${user.fullName.split(' ')[0]}` : ''}
+                </h1>
+                <p className="text-sm sm:text-base text-[#A7B1AA] font-normal">
+                  Manage your trading challenges, accounts, and payouts.
                 </p>
               </div>
-              <button
-                type="button"
-                onClick={handleCopyReferral}
-                className="px-6 py-3.5 rounded-2xl apex-glow-btn text-xs font-bold flex items-center gap-2 cursor-pointer shadow-[0_0_20px_rgba(0,255,163,0.3)]"
-              >
-                <Copy className="w-4 h-4" />
-                <span>Copy Referral Link</span>
-              </button>
-            </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
-              <div className="p-5 rounded-2xl bg-[#040E0A] border border-emerald-500/30 space-y-1">
-                <div className="text-xs text-[#94B8AA] font-bold">Partner ID</div>
-                <div className="text-xl font-mono font-extrabold text-[#00FFA3]">{user.referralCode}</div>
-              </div>
-              <div className="p-5 rounded-2xl bg-[#040E0A] border border-emerald-500/30 space-y-1">
-                <div className="text-xs text-[#94B8AA] font-bold">Tier 1 Commission Rate</div>
-                <div className="text-xl font-mono font-extrabold text-white">15% Lifetime</div>
-              </div>
-              <div className="p-5 rounded-2xl bg-[#040E0A] border border-emerald-500/30 space-y-1">
-                <div className="text-xs text-[#94B8AA] font-bold">Tier 2 Commission Rate</div>
-                <div className="text-xl font-mono font-extrabold text-white">5% Secondary</div>
-              </div>
-            </div>
+              {/* 4 CARDS AS SHOWN IN VIDEO 2 (USING EXACT SANS FINTECH NUMBERS) */}
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-3.5 sm:gap-4">
+                {/* 1. Active accounts */}
+                <div
+                  onClick={() => setActiveTab('challenges')}
+                  className="bg-[#090D0A] hover:bg-[#0D130F] border border-[#00E676]/15 hover:border-[#00E676]/35 rounded-[12px] p-4 transition-all cursor-pointer group shadow-lg"
+                >
+                  <div className="flex items-center justify-between text-[#A7B1AA]">
+                    <span className="text-xs font-medium">Active accounts</span>
+                    <ArrowUpRight className="w-4 h-4 text-[#77837B] group-hover:text-[#00E676] transition-colors" />
+                  </div>
+                  <div className="flex items-center gap-2.5 mt-3">
+                    <div className="w-8 h-8 rounded-[8px] bg-[#00E676]/10 border border-[#00E676]/25 flex items-center justify-center text-[#00E676] shrink-0">
+                      <BarChart3 className="w-4 h-4" />
+                    </div>
+                    <div className="text-2xl sm:text-3xl font-display font-extrabold text-white tracking-tight tabular-nums">
+                      {activeAccountsCount}
+                    </div>
+                  </div>
+                </div>
 
-            <div className="flex flex-wrap items-center gap-4 pt-2">
-              <a
-                href={`https://t.me/share/url?url=${encodeURIComponent(`https://fundedapex.com/?ref=${user.referralCode}`)}&text=${encodeURIComponent('Join FUNDED APEX Prop Firm and get funded up to $600,000!')}`}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="px-5 py-3 rounded-2xl bg-[#081C14] hover:bg-emerald-500/20 border border-[#00FFA3]/40 text-xs font-bold text-[#00FFA3] flex items-center gap-2 cursor-pointer"
-              >
-                <Send className="w-4 h-4" />
-                <span>Share on Telegram</span>
-              </a>
-              <a
-                href={`https://api.whatsapp.com/send?text=${encodeURIComponent(`Join FUNDED APEX Prop Firm and get funded! https://fundedapex.com/?ref=${user.referralCode}`)}`}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="px-5 py-3 rounded-2xl bg-[#081C14] hover:bg-emerald-500/20 border border-[#00FFA3]/40 text-xs font-bold text-emerald-300 flex items-center gap-2 cursor-pointer"
-              >
-                <Share2 className="w-4 h-4" />
-                <span>Share on WhatsApp</span>
-              </a>
+                {/* 2. Open challenges */}
+                <div
+                  onClick={() => setActiveTab('challenges')}
+                  className="bg-[#090D0A] hover:bg-[#0D130F] border border-[#00E676]/15 hover:border-[#00E676]/35 rounded-[12px] p-4 transition-all cursor-pointer group shadow-lg"
+                >
+                  <div className="flex items-center justify-between text-[#A7B1AA]">
+                    <span className="text-xs font-medium">Open challenges</span>
+                    <ArrowUpRight className="w-4 h-4 text-[#77837B] group-hover:text-[#00E676] transition-colors" />
+                  </div>
+                  <div className="flex items-center gap-2.5 mt-3">
+                    <div className="w-8 h-8 rounded-[8px] bg-[#00E676]/10 border border-[#00E676]/25 flex items-center justify-center text-[#00E676] shrink-0">
+                      <Clock className="w-4 h-4" />
+                    </div>
+                    <div className="text-2xl sm:text-3xl font-display font-extrabold text-white tracking-tight tabular-nums">
+                      {accounts.length > 0 ? accounts.length : 1}
+                    </div>
+                  </div>
+                </div>
+
+                {/* 3. Available payout */}
+                <div
+                  onClick={() => setActiveTab('payouts')}
+                  className="bg-[#090D0A] hover:bg-[#0D130F] border border-[#00E676]/15 hover:border-[#00E676]/35 rounded-[12px] p-4 transition-all cursor-pointer group shadow-lg"
+                >
+                  <div className="flex items-center justify-between text-[#A7B1AA]">
+                    <span className="text-xs font-medium">Available payout</span>
+                    <ArrowUpRight className="w-4 h-4 text-[#77837B] group-hover:text-[#00E676] transition-colors" />
+                  </div>
+                  <div className="flex items-center gap-2.5 mt-3">
+                    <div className="w-8 h-8 rounded-[8px] bg-[#00E676]/10 border border-[#00E676]/25 flex items-center justify-center text-[#00E676] shrink-0">
+                      <Wallet className="w-4 h-4" />
+                    </div>
+                    <div className="text-2xl sm:text-3xl font-display font-extrabold text-[#00E676] tracking-tight tabular-nums">
+                      ${Math.max(0, evalNetPnl > 0 ? evalNetPnl * 0.8 : 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </div>
+                  </div>
+                </div>
+
+                {/* 4. Notifications */}
+                <div
+                  onClick={() => setShowNotificationsPopover(true)}
+                  className="bg-[#090D0A] hover:bg-[#0D130F] border border-[#00E676]/15 hover:border-[#00E676]/35 rounded-[12px] p-4 transition-all cursor-pointer group shadow-lg"
+                >
+                  <div className="flex items-center justify-between text-[#A7B1AA]">
+                    <span className="text-xs font-medium">Notifications</span>
+                    <ArrowUpRight className="w-4 h-4 text-[#77837B] group-hover:text-[#00E676] transition-colors" />
+                  </div>
+                  <div className="flex items-center gap-2.5 mt-3">
+                    <div className="w-8 h-8 rounded-[8px] bg-[#00E676]/10 border border-[#00E676]/25 flex items-center justify-center text-[#00E676] shrink-0">
+                      <Bell className="w-4 h-4" />
+                    </div>
+                    <div className="text-2xl sm:text-3xl font-display font-extrabold text-white tracking-tight tabular-nums">
+                      {notifications.length}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* QUICK ACTIONS CARD AS SHOWN IN VIDEO 2 */}
+              <div className="bg-[#090D0A]/90 backdrop-blur-md border border-[#00E676]/15 rounded-[14px] p-5 space-y-3 shadow-lg">
+                <div className="text-xs font-display font-bold uppercase tracking-wider text-[#77837B]">
+                  Quick actions
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  {/* New Challenge */}
+                  <button
+                    type="button"
+                    onClick={() => setActiveTab('challenges')}
+                    className="p-3.5 rounded-[10px] bg-[#030504] hover:bg-[#0D130F] border border-white/5 hover:border-[#00E676]/30 text-left transition-all group cursor-pointer flex items-center justify-between"
+                  >
+                    <div>
+                      <div className="text-sm font-display font-bold text-white group-hover:text-[#00E676] transition-colors">
+                        New Challenge
+                      </div>
+                      <div className="text-[11px] text-[#A7B1AA] mt-0.5">
+                        Step One · Step Two · Zero Instant
+                      </div>
+                    </div>
+                    <ChevronRight className="w-4 h-4 text-[#77837B] group-hover:text-[#00E676] transition-colors" />
+                  </button>
+
+                  {/* Accounts */}
+                  <button
+                    type="button"
+                    onClick={() => setActiveTab('challenges')}
+                    className="p-3.5 rounded-[10px] bg-[#030504] hover:bg-[#0D130F] border border-white/5 hover:border-[#00E676]/30 text-left transition-all group cursor-pointer flex items-center justify-between"
+                  >
+                    <div>
+                      <div className="text-sm font-display font-bold text-white group-hover:text-[#00E676] transition-colors">
+                        Accounts
+                      </div>
+                      <div className="text-[11px] text-[#A7B1AA] mt-0.5">
+                        $5k – $100k+ sizes
+                      </div>
+                    </div>
+                    <ChevronRight className="w-4 h-4 text-[#77837B] group-hover:text-[#00E676] transition-colors" />
+                  </button>
+
+                  {/* Payout */}
+                  <button
+                    type="button"
+                    onClick={() => setActiveTab('payouts')}
+                    className="p-3.5 rounded-[10px] bg-[#030504] hover:bg-[#0D130F] border border-white/5 hover:border-[#00E676]/30 text-left transition-all group cursor-pointer flex items-center justify-between"
+                  >
+                    <div>
+                      <div className="text-sm font-display font-bold text-white group-hover:text-[#00E676] transition-colors">
+                        Payout
+                      </div>
+                      <div className="text-[11px] text-[#A7B1AA] mt-0.5">
+                        Request when eligible
+                      </div>
+                    </div>
+                    <ChevronRight className="w-4 h-4 text-[#77837B] group-hover:text-[#00E676] transition-colors" />
+                  </button>
+                </div>
+              </div>
+
+              {/* 8 OVERVIEW KPI METRICS: Balance, Equity, Total Profit, Daily Profit, Active Accounts, Trading Days, Daily Drawdown, Maximum Drawdown */}
+              <section className="grid grid-cols-2 sm:grid-cols-4 gap-3.5">
+                <div className="apex-metric-tile p-4 rounded-[12px]">
+                  <div className="text-[12px] font-medium text-[#A7B1AA]">Balance</div>
+                  <div className="text-xl sm:text-2xl font-display font-extrabold text-white mt-1 tracking-tight tabular-nums">
+                    ${(reconciledActiveAccount?.balance ?? 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  </div>
+                  <div className="text-[11px] text-[#77837B] mt-0.5">
+                    Start: ${(reconciledActiveAccount?.startingBalance ?? 0).toLocaleString()}
+                  </div>
+                </div>
+
+                <div className="apex-metric-tile p-4 rounded-[12px]">
+                  <div className="text-[12px] font-medium text-[#A7B1AA]">Equity</div>
+                  <div className="text-xl sm:text-2xl font-display font-extrabold text-[#00E676] mt-1 tracking-tight tabular-nums">
+                    ${(riskMetrics?.equity ?? reconciledActiveAccount?.equity ?? 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  </div>
+                  <div className="text-[11px] text-[#77837B] mt-0.5">
+                    Real-Time Floating Valuation
+                  </div>
+                </div>
+
+                <div className="apex-metric-tile p-4 rounded-[12px]">
+                  <div className="text-[12px] font-medium text-[#A7B1AA]">Total Profit</div>
+                  <div className={`text-xl sm:text-2xl font-display font-extrabold mt-1 tracking-tight tabular-nums ${evalNetPnl >= 0 ? 'text-[#00E676]' : 'text-red-400'}`}>
+                    {evalNetPnl >= 0 ? '+' : '-'}${Math.abs(evalNetPnl).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  </div>
+                  <div className="text-[11px] text-[#77837B] mt-0.5">
+                    Win Rate: {winRatePct}% ({closedOrders.length} trades)
+                  </div>
+                </div>
+
+                <div className="apex-metric-tile p-4 rounded-[12px]">
+                  <div className="text-[12px] font-medium text-[#A7B1AA]">Daily Profit</div>
+                  <div className={`text-xl sm:text-2xl font-display font-extrabold mt-1 tracking-tight tabular-nums ${dailyProfit >= 0 ? 'text-[#69F0AE]' : 'text-red-400'}`}>
+                    {dailyProfit >= 0 ? '+' : '-'}${Math.abs(dailyProfit).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  </div>
+                  <div className="text-[11px] text-[#77837B] mt-0.5">
+                    Current Session Realized
+                  </div>
+                </div>
+
+                <div className="apex-metric-tile p-4 rounded-[12px]">
+                  <div className="text-[12px] font-medium text-[#A7B1AA]">Active Accounts</div>
+                  <div className="text-xl sm:text-2xl font-display font-extrabold text-white mt-1 tracking-tight tabular-nums">
+                    {activeAccountsCount} <span className="text-sm font-normal text-[#77837B]">/ {accounts.length}</span>
+                  </div>
+                  <div className="text-[11px] text-[#00E676] mt-0.5">
+                    {accounts.length > 0 ? `#${activeAccount?.accountNumber}` : 'No active allocation'}
+                  </div>
+                </div>
+
+                <div className="apex-metric-tile p-4 rounded-[12px]">
+                  <div className="text-[12px] font-medium text-[#A7B1AA]">Trading Days</div>
+                  <div className="text-xl sm:text-2xl font-display font-extrabold text-white mt-1 tracking-tight tabular-nums">
+                    {reconciledActiveAccount?.tradingDaysCount ?? 0}{' '}
+                    <span className="text-sm font-normal text-[#77837B]">
+                      / {reconciledActiveAccount?.minTradingDays ?? 3} Min
+                    </span>
+                  </div>
+                  <div className="text-[11px] text-[#77837B] mt-0.5">
+                    Objective Progress
+                  </div>
+                </div>
+
+                <div className="apex-metric-tile p-4 rounded-[12px]">
+                  <div className="text-[12px] font-medium text-[#A7B1AA]">Daily Drawdown</div>
+                  <div className="text-xl sm:text-2xl font-display font-extrabold text-white mt-1 tracking-tight tabular-nums">
+                    {(riskMetrics?.dailyDrawdownUsedPct ?? 0).toFixed(1)}%
+                  </div>
+                  <div className="text-[11px] text-[#77837B] mt-0.5">
+                    Limit: {riskMetrics?.dailyDrawdownPct ?? 5}% (${(riskMetrics?.dailyLossLimitUsd ?? 0).toFixed(0)})
+                  </div>
+                </div>
+
+                <div className="apex-metric-tile p-4 rounded-[12px]">
+                  <div className="text-[12px] font-medium text-[#A7B1AA]">Maximum Drawdown</div>
+                  <div className="text-xl sm:text-2xl font-display font-extrabold text-white mt-1 tracking-tight tabular-nums">
+                    {(riskMetrics?.maxDrawdownUsedPct ?? 0).toFixed(1)}%
+                  </div>
+                  <div className="text-[11px] text-[#77837B] mt-0.5">
+                    Limit: {riskMetrics?.maxDrawdownPct ?? 10}% (${(riskMetrics?.maxLossLimitUsd ?? 0).toFixed(0)})
+                  </div>
+                </div>
+              </section>
+
+              {/* ACCOUNT DETAILS, CHALLENGE PROGRESS, TRADING OBJECTIVES */}
+              {accounts.length === 0 ? (
+                <div className="bg-[#090D0A] border border-[#00E676]/20 rounded-[14px] p-8 space-y-5 text-center max-w-2xl mx-auto">
+                  <div className="w-14 h-14 rounded-[12px] bg-[#0D130F] border border-[#00E676]/30 flex items-center justify-center mx-auto text-[#00E676]">
+                    <Trophy className="w-7 h-7" />
+                  </div>
+                  <div className="space-y-2">
+                    <h2 className="text-2xl font-display font-bold text-white">No Active Evaluation Account</h2>
+                    <p className="text-sm text-[#A3BDB8] max-w-md mx-auto leading-relaxed">
+                      Start your structured evaluation challenge from $5,000 up to $200,000 and trade on the FUNDED APEX Terminal.
+                    </p>
+                  </div>
+                  <div className="flex flex-wrap items-center justify-center gap-3">
+                    <button
+                      type="button"
+                      onClick={() => setActiveTab('challenges')}
+                      className="px-6 py-3 rounded-[14px] apex-glow-btn text-xs cursor-pointer"
+                    >
+                      Explore Challenges ($5,000 – $200,000) →
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => navigate('terminal')}
+                      className="px-5 py-3 rounded-[9px] apex-secondary-btn text-xs cursor-pointer"
+                    >
+                      Preview Trading Terminal
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
+                  {/* Left: Active Account Status & Credentials */}
+                  <div className="lg:col-span-7 bg-[#090D0A] border border-[#00E676]/18 rounded-[14px] p-6 space-y-4">
+                    <div className="flex flex-wrap items-center justify-between gap-2 border-b border-white/10 pb-4">
+                      <div>
+                        <div className="text-[11px] font-display font-semibold text-[#00E676] uppercase tracking-wider">
+                          Account Details &amp; Status
+                        </div>
+                        <h2 className="text-lg sm:text-xl font-display font-bold text-white mt-0.5">
+                          #{activeAccount?.accountNumber} — {activeAccount?.challengeTitle}
+                        </h2>
+                      </div>
+                      <span
+                        className={`px-3 py-1 rounded-[7px] text-xs font-display font-bold uppercase ${
+                          activeAccount?.status === 'failed'
+                            ? 'bg-red-500/15 border border-red-500/40 text-red-300'
+                            : activeAccount?.status === 'passed'
+                            ? 'bg-[#00E676]/20 border border-[#00E676] text-[#00E676]'
+                            : 'bg-[#0D130F] border border-[#00E676]/35 text-[#00E676]'
+                        }`}
+                      >
+                        {activeAccount?.status === 'failed'
+                          ? 'BREACHED'
+                          : activeAccount?.status === 'passed'
+                          ? 'PASSED • FUNDED'
+                          : activeAccount?.challengeType === 'instant'
+                          ? 'INSTANT FUNDED'
+                          : `PHASE ${activeAccount?.currentStep || 1} OF ${activeAccount?.totalSteps || 2}`}
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs font-display">
+                      <div className="p-3.5 rounded-[10px] bg-[#030504] border border-white/10">
+                        <span className="text-[#77837B] block text-[10px] uppercase">Terminal User ID</span>
+                        <strong className="text-[#00E676] text-sm mt-0.5 block">
+                          {activeAccount?.terminalUserId || 'APEX-MASTER'}
+                        </strong>
+                      </div>
+                      <div className="p-3.5 rounded-[10px] bg-[#030504] border border-white/10">
+                        <span className="text-[#77837B] block text-[10px] uppercase">Terminal Password</span>
+                        {activeAccount?.status === 'failed' || !activeAccount?.terminalPassword ? (
+                          <strong className="text-red-400 text-sm mt-0.5 block">REMOVED (BREACHED)</strong>
+                        ) : (
+                          <strong className="text-[#00E676] text-sm mt-0.5 block">
+                            {activeAccount.terminalPassword}
+                          </strong>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-2.5 pt-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (activeAccount) setActiveAccountId(activeAccount.id);
+                          navigate('terminal');
+                        }}
+                        className="px-5 py-2.5 rounded-[9px] apex-glow-btn text-xs flex items-center gap-2 cursor-pointer"
+                      >
+                        <Terminal className="w-4 h-4" />
+                        <span>Launch Live Terminal →</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (activeAccount) setSelectedPayoutAccountId(activeAccount.id);
+                          setActiveTab('payouts');
+                        }}
+                        className="px-4 py-2.5 rounded-[9px] apex-secondary-btn text-xs cursor-pointer"
+                      >
+                        Request Payout
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setActiveTab('history')}
+                        className="px-4 py-2.5 rounded-[9px] bg-[#030504] hover:bg-[#0D130F] border border-white/10 text-xs font-medium text-[#A7B1AA] hover:text-white cursor-pointer"
+                      >
+                        Trading History ({closedOrders.length})
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Right: Trading Objectives & Challenge Progress */}
+                  <div className="lg:col-span-5 bg-[#090D0A]/90 backdrop-blur-md border border-[#00E676]/18 rounded-[14px] p-6 space-y-4">
+                    <div className="border-b border-white/10 pb-3">
+                      <div className="text-[11px] font-display font-semibold text-[#00E676] uppercase tracking-wider">
+                        Trading Objectives
+                      </div>
+                      <h3 className="text-base font-display font-bold text-white mt-0.5">
+                        Challenge Progress &amp; Risk Rules
+                      </h3>
+                    </div>
+
+                    <div className="space-y-3.5 text-xs">
+                      {/* Profit Target Bar */}
+                      <div className="space-y-1.5">
+                        <div className="flex justify-between font-display">
+                          <span className="text-[#A7B1AA]">
+                            Profit Target ({reconciledActiveAccount?.challengeType === 'instant' || (riskMetrics?.profitTargetPct ?? 0) === 0 ? 'None' : `+${riskMetrics?.profitTargetPct}%`})
+                          </span>
+                          <span className="text-[#00E676] font-extrabold tabular-nums">
+                            {reconciledActiveAccount?.challengeType === 'instant' || (riskMetrics?.profitTargetPct ?? 0) === 0
+                              ? 'DIRECT FUNDED'
+                              : `${(riskMetrics?.profitProgressPct ?? 0).toFixed(1)}%`}
+                          </span>
+                        </div>
+                        <div className="h-2 w-full bg-[#030504] rounded-full overflow-hidden border border-white/10">
+                          <div
+                            className="h-full bg-[#00E676] transition-all duration-500"
+                            style={{ width: `${Math.min(100, riskMetrics?.profitProgressPct ?? 0)}%` }}
+                          />
+                        </div>
+                      </div>
+
+                      {/* Daily Drawdown Bar */}
+                      <div className="space-y-1.5">
+                        <div className="flex justify-between font-display">
+                          <span className="text-[#A7B1AA]">Daily Drawdown Limit ({riskMetrics?.dailyDrawdownPct ?? 5}%)</span>
+                          <span className="text-white font-extrabold tabular-nums">
+                            ${(riskMetrics?.dailyDropUsd ?? 0).toFixed(2)} / ${(riskMetrics?.dailyLossLimitUsd ?? 0).toFixed(0)}
+                          </span>
+                        </div>
+                        <div className="h-2 w-full bg-[#030504] rounded-full overflow-hidden border border-white/10">
+                          <div
+                            className="h-full bg-red-500 transition-all duration-500"
+                            style={{ width: `${Math.min(100, riskMetrics?.dailyDrawdownUsedPct ?? 0)}%` }}
+                          />
+                        </div>
+                      </div>
+
+                      {/* Max Drawdown Bar */}
+                      <div className="space-y-1.5">
+                        <div className="flex justify-between font-display">
+                          <span className="text-[#A7B1AA]">Max Drawdown Limit ({riskMetrics?.maxDrawdownPct ?? 10}%)</span>
+                          <span className="text-white font-extrabold tabular-nums">
+                            ${(riskMetrics?.overallDropUsd ?? 0).toFixed(2)} / ${(riskMetrics?.maxLossLimitUsd ?? 0).toFixed(0)}
+                          </span>
+                        </div>
+                        <div className="h-2 w-full bg-[#030504] rounded-full overflow-hidden border border-white/10">
+                          <div
+                            className="h-full bg-red-600 transition-all duration-500"
+                            style={{ width: `${Math.min(100, riskMetrics?.maxDrawdownUsedPct ?? 0)}%` }}
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* EMBEDDED EQUITY CURVE, DAILY PERFORMANCE, TRADING STATISTICS & PROFIT DISTRIBUTION */}
+              <TradePerformanceVisualizer
+                activeAccount={reconciledActiveAccount}
+                orders={
+                  reconciledActiveAccount
+                    ? userOrders.filter((o) => o.accountId === reconciledActiveAccount.id)
+                    : userOrders
+                }
+                onOpenTerminal={() => navigate('terminal')}
+              />
             </div>
-          </div>
-        </section>
-      )}
-    </main>
+          )}
+
+          {/* =====================================================================
+              2. PERFORMANCE TAB (Dedicated Charts & Quantitative Analytics)
+              ===================================================================== */}
+          {activeTab === 'dashboard' && (
+            <div className="space-y-6 apex-fade-up">
+              <TradePerformanceVisualizer
+                activeAccount={reconciledActiveAccount}
+                orders={
+                  reconciledActiveAccount
+                    ? userOrders.filter((o) => o.accountId === reconciledActiveAccount.id)
+                    : userOrders
+                }
+                onOpenTerminal={() => navigate('terminal')}
+              />
+            </div>
+          )}
+
+          {/* =====================================================================
+              3. TRADING HISTORY TAB (Complete Order & Account History Blotter)
+              ===================================================================== */}
+          {activeTab === 'history' && (
+            <section className="bg-[#090D0A] border border-[#00E676]/15 rounded-[14px] p-6 space-y-5 apex-fade-up">
+              <div className="flex flex-wrap items-center justify-between gap-3 border-b border-white/10 pb-4">
+                <div>
+                  <div className="text-[11px] font-mono font-semibold text-[#00E676] uppercase tracking-wider">
+                    Execution Blotter
+                  </div>
+                  <h2 className="text-xl font-display font-bold text-white mt-0.5">
+                    Trading History &amp; Order Log ({userOrders.length})
+                  </h2>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => navigate('terminal')}
+                  className="px-4 py-2 rounded-[9px] apex-glow-btn text-xs cursor-pointer"
+                >
+                  Open Trading Terminal →
+                </button>
+              </div>
+
+              {userOrders.length === 0 ? (
+                <div className="p-8 text-center text-xs text-[#77837B] bg-[#030504] rounded-[12px] border border-white/5">
+                  No orders executed yet. Launch the trading terminal to place simulated market, limit, or stop orders.
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left border-collapse text-xs font-mono">
+                    <thead>
+                      <tr className="text-[#77837B] border-b border-white/10">
+                        <th className="py-2.5 pr-4">Ticket</th>
+                        <th className="py-2.5 pr-4">Symbol</th>
+                        <th className="py-2.5 pr-4">Type &amp; Side</th>
+                        <th className="py-2.5 pr-4">Lots</th>
+                        <th className="py-2.5 pr-4">Entry</th>
+                        <th className="py-2.5 pr-4">Exit / Current</th>
+                        <th className="py-2.5 pr-4">Status</th>
+                        <th className="py-2.5 text-right">Net P&amp;L</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-white/5">
+                      {userOrders.map((ord) => (
+                        <tr key={ord.id} className="hover:bg-[#0D130F]">
+                          <td className="py-2.5 pr-4 text-[#00E676] font-bold">{ord.ticketId}</td>
+                          <td className="py-2.5 pr-4 text-white font-bold">{ord.symbol}</td>
+                          <td className="py-2.5 pr-4">
+                            <span className={ord.side === 'BUY' ? 'text-[#00E676] font-bold' : 'text-red-400 font-bold'}>
+                              {ord.side}
+                            </span>{' '}
+                            <span className="text-[#77837B]">{ord.orderType}</span>
+                          </td>
+                          <td className="py-2.5 pr-4 text-white tabular-nums">{ord.volume.toFixed(2)}</td>
+                          <td className="py-2.5 pr-4 text-[#A7B1AA] tabular-nums">{ord.entryPrice}</td>
+                          <td className="py-2.5 pr-4 text-[#A7B1AA] tabular-nums">{ord.exitPrice || ord.currentPrice}</td>
+                          <td className="py-2.5 pr-4 text-[#A7B1AA]">{ord.status}</td>
+                          <td className={`py-2.5 text-right font-bold tabular-nums ${ord.netPnl >= 0 ? 'text-[#00E676]' : 'text-red-400'}`}>
+                            {ord.netPnl >= 0 ? '+' : ''}${ord.netPnl.toFixed(2)}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </section>
+          )}
+
+          {/* =====================================================================
+              4. MY ACCOUNTS & CHALLENGES TAB
+              ===================================================================== */}
+          {activeTab === 'challenges' && (
+            <section className="space-y-8 apex-fade-up">
+              <div className="space-y-4">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <h2 className="text-2xl font-display font-bold text-white">
+                      My Trading Accounts ({accounts.length})
+                    </h2>
+                    <p className="text-xs text-[#A7B1AA] mt-0.5">
+                      Manage your active evaluation and funded simulation accounts or launch the terminal.
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2.5">
+                    <button
+                      type="button"
+                      onClick={() => navigate('terminal')}
+                      className="px-4 py-2.5 rounded-[9px] apex-secondary-btn text-xs flex items-center gap-2 cursor-pointer"
+                    >
+                      <Terminal className="w-4 h-4 text-[#00E676]" />
+                      <span>Open Terminal</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => openStripeCheckout('two-step-5000', '5K30OFF')}
+                      className="px-4 py-2.5 rounded-[9px] apex-glow-btn text-xs cursor-pointer"
+                    >
+                      + Buy New Challenge
+                    </button>
+                  </div>
+                </div>
+
+                {accounts.length > 0 && (
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+                    {accounts.map((acc) => {
+                      const accRules = resolveChallengeRulesForAccount(acc);
+                      const accOpen = userOrders.filter(
+                        (o) => o.accountId === acc.id && o.status === 'OPEN'
+                      );
+                      const accClosed = userOrders.filter(
+                        (o) => o.accountId === acc.id && o.status === 'CLOSED'
+                      );
+                      const accRealizedNet = accClosed.reduce((s, o) => s + (o.netPnl || 0), 0);
+                      const accWithdrawnGross = payouts
+                        .filter((p) => p.accountId === acc.id)
+                        .reduce((s, p) => s + p.amountUsd / ((accRules.profitSplitPct || 80) / 100), 0);
+                      const syncedAccBalance =
+                        accClosed.length > 0
+                          ? Math.round((acc.startingBalance + accRealizedNet - accWithdrawnGross) * 100) / 100
+                          : Math.round(acc.balance * 100) / 100;
+                      const accMetrics = evaluateAccountRiskMetrics(
+                        { ...acc, balance: syncedAccBalance },
+                        accOpen
+                      );
+                      const evalPnl = Math.round((accMetrics.equity - acc.startingBalance) * 100) / 100;
+
+                      return (
+                        <div
+                          key={acc.id}
+                          className={`bg-[#090D0A] border rounded-[14px] p-6 space-y-4 transition-all ${
+                            acc.id === activeAccount?.id
+                              ? 'border-[#00E676] shadow-[0_0_24px_rgba(0,230,118,0.14)]'
+                              : 'border-[#00E676]/15'
+                          }`}
+                        >
+                          <div className="flex items-center justify-between border-b border-white/10 pb-3">
+                            <span className="font-mono text-xs font-bold text-[#00E676]">
+                              #{acc.accountNumber}
+                            </span>
+                            <span
+                              className={`px-2.5 py-0.5 rounded-[6px] text-[10px] font-mono font-bold uppercase ${
+                                acc.status === 'failed'
+                                  ? 'bg-red-500/20 border border-red-500/40 text-red-300'
+                                  : 'bg-[#0D130F] border border-[#00E676]/35 text-[#00E676]'
+                              }`}
+                            >
+                              {acc.status === 'failed'
+                                ? 'BREACHED'
+                                : acc.status === 'passed'
+                                ? 'PASSED • FUNDED'
+                                : acc.challengeType === 'instant'
+                                ? 'INSTANT FUNDED'
+                                : `PHASE ${acc.currentStep || 1}/${acc.totalSteps || 2}`}
+                            </span>
+                          </div>
+
+                          <div className="space-y-2">
+                            <h3 className="text-lg font-display font-bold text-white">
+                              {acc.challengeTitle}
+                            </h3>
+                            <div className="grid grid-cols-2 gap-2 text-[11px] font-mono">
+                              <div className="p-2 rounded-[8px] bg-[#030504] border border-white/10">
+                                <span className="text-[#77837B] block text-[9px] uppercase">Terminal ID</span>
+                                <strong className="text-[#00E676]">{acc.terminalUserId || 'APEX-MASTER'}</strong>
+                              </div>
+                              <div className="p-2 rounded-[8px] bg-[#030504] border border-white/10">
+                                <span className="text-[#77837B] block text-[9px] uppercase">Password</span>
+                                {acc.status === 'failed' || !acc.terminalPassword ? (
+                                  <strong className="text-red-400">REMOVED</strong>
+                                ) : (
+                                  <strong className="text-[#00E676]">{acc.terminalPassword}</strong>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="space-y-1.5 text-xs border-t border-white/10 pt-3 font-mono">
+                            <div className="flex justify-between">
+                              <span className="text-[#A7B1AA] font-sans">Balance</span>
+                              <span className="font-bold text-white tabular-nums">
+                                ${syncedAccBalance.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                              </span>
+                            </div>
+                            <div className="flex justify-between">
+                              <span className="text-[#A7B1AA] font-sans">Equity</span>
+                              <span className="font-bold text-[#00E676] tabular-nums">
+                                ${accMetrics.equity.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                              </span>
+                            </div>
+                            <div className="flex justify-between">
+                              <span className="text-[#A7B1AA] font-sans">Net P&amp;L</span>
+                              <span className={`font-bold tabular-nums ${evalPnl >= 0 ? 'text-[#00E676]' : 'text-red-400'}`}>
+                                {evalPnl >= 0 ? '+' : '-'}${Math.abs(evalPnl).toFixed(2)}
+                              </span>
+                            </div>
+                          </div>
+
+                          <div className="grid grid-cols-2 gap-2">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setActiveAccountId(acc.id);
+                                navigate('terminal');
+                              }}
+                              className="py-2.5 px-3 rounded-[9px] apex-glow-btn text-xs flex items-center justify-center gap-1.5 cursor-pointer"
+                            >
+                              <Terminal className="w-3.5 h-3.5" />
+                              <span>Terminal</span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setSelectedPayoutAccountId(acc.id);
+                                setActiveTab('payouts');
+                              }}
+                              className="py-2.5 px-3 rounded-[9px] apex-secondary-btn text-xs flex items-center justify-center gap-1.5 cursor-pointer"
+                            >
+                              <Wallet className="w-3.5 h-3.5 text-[#00E676]" />
+                              <span>Payouts</span>
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+
+              {/* Complete Catalog of All 24 Challenge Packages */}
+              <div className="space-y-4 pt-4 border-t border-white/10">
+                <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-3">
+                  <div>
+                    <div className="inline-flex items-center gap-2 px-2.5 py-0.5 rounded-[6px] bg-[#090D0A] border border-[#00E676]/30 text-[10px] font-mono font-bold text-[#00E676] uppercase tracking-wider">
+                      ALL 24 INSTITUTIONAL PROGRAMS
+                    </div>
+                    <h2 className="text-xl sm:text-2xl font-display font-extrabold text-white mt-1">
+                      Start a New Evaluation Challenge
+                    </h2>
+                    <p className="text-xs text-[#A3BDB8] mt-0.5">
+                      Select your evaluation track and account capital from $5,000 up to $200,000.
+                    </p>
+                  </div>
+
+                  <span className="font-mono text-xs text-[#728F8A]">
+                    Showing {dashboardFilteredChallenges.length} of {challenges.length} Programs
+                  </span>
+                </div>
+
+                {/* Neatly Shifted & Aligned Challenge Type & Account Size Filter Bar */}
+                <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 p-3 rounded-[20px] bg-[#081318]/90 border border-[#00E5B0]/20 shadow-lg">
+                  {/* Challenge Type Category Tabs */}
+                  <div className="flex flex-wrap items-center gap-2">
+                    {[
+                      { id: 'all', label: `All Programs (${challenges.length})` },
+                      { id: 'two_step', label: '2-Step Classic (6)' },
+                      { id: 'one_step', label: '1-Step Pro (6)' },
+                      { id: 'instant', label: 'Instant Funded (6)' },
+                      { id: 'three_step', label: '3-Step Institutional (6)' },
+                    ].map((tabItem) => (
+                      <button
+                        key={tabItem.id}
+                        type="button"
+                        onClick={() => setDashChTypeFilter(tabItem.id as ChallengeType | 'all')}
+                        className={`px-3.5 py-2 rounded-full text-xs font-display font-bold whitespace-nowrap transition-all cursor-pointer ${
+                          dashChTypeFilter === tabItem.id
+                            ? 'bg-[#00E676] text-[#03120F] shadow-[0_6px_20px_rgba(0,229,176,0.32)]'
+                            : 'bg-[#050C10] text-[#A3BDB8] hover:text-white hover:bg-[#0D1E26] border border-white/10'
+                        }`}
+                      >
+                        {tabItem.label}
+                      </button>
+                    ))}
+                  </div>
+
+                  {/* Account Size Filter Pills (Clean $5K to $200K without $10 clutter) */}
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => setDashChSizeFilter('all')}
+                      className={`px-3.5 py-1.5 rounded-full text-xs font-display font-bold transition-all cursor-pointer ${
+                        dashChSizeFilter === 'all'
+                          ? 'bg-[#00E5B0]/20 border border-[#00E5B0] text-[#00E5B0] shadow-[0_0_14px_rgba(0,229,176,0.2)]'
+                          : 'bg-[#050C10] text-[#728F8A] hover:text-white border border-white/10'
+                      }`}
+                    >
+                      All Sizes
+                    </button>
+                    {ACCOUNT_SIZES.map((size) => (
+                      <button
+                        key={size}
+                        type="button"
+                        onClick={() => setDashChSizeFilter(size)}
+                        className={`px-3.5 py-1.5 rounded-full text-xs font-display font-bold transition-all cursor-pointer tabular-nums ${
+                          dashChSizeFilter === size
+                            ? 'bg-[#00E5B0]/20 border border-[#00E5B0] text-[#00E5B0] shadow-[0_0_14px_rgba(0,229,176,0.2)]'
+                            : 'bg-[#050C10] text-[#A3BDB8] hover:text-white border border-white/10'
+                        }`}
+                      >
+                        ${(size / 1000).toFixed(0)}K
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Grid of All Filtered Challenges */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 pt-1">
+                  {dashboardFilteredChallenges.map((ch) => (
+                    <div
+                      key={ch.id}
+                      className="bg-[#090D0A] hover:bg-[#0D130F] border border-[#00E676]/15 hover:border-[#00E676]/45 rounded-[14px] p-5 space-y-3.5 transition-all flex flex-col justify-between shadow-lg"
+                    >
+                      <div className="space-y-3">
+                        <div className="flex items-center justify-between border-b border-white/10 pb-2.5">
+                          <span className="px-2 py-0.5 rounded-[5px] bg-[#030504] border border-[#00E676]/30 text-[10px] font-display font-bold text-[#00E676] uppercase">
+                            {ch.typeLabel}
+                          </span>
+                          <span className="font-display text-base font-extrabold text-[#00E676] tabular-nums">
+                            ${ch.priceUsd} USD
+                          </span>
+                        </div>
+
+                        <div>
+                          <h3 className="text-lg font-display font-bold text-white tabular-nums">
+                            ${ch.accountSize.toLocaleString()} USD
+                          </h3>
+                          <div className="text-[11px] text-[#A3BDB8] mt-0.5">
+                            {ch.title}
+                          </div>
+                        </div>
+
+                        <div className="space-y-1.5 text-xs bg-[#030504] p-3 rounded-[9px] border border-white/10">
+                          <div className="flex justify-between">
+                            <span className="text-[#A7B1AA]">Profit Target</span>
+                            <span className="font-display font-bold text-[#00E676]">
+                              {ch.type === 'instant' || ch.profitTargetPct === 0
+                                ? 'None (Instant Funded)'
+                                : `${ch.profitTargetPct}%`}
+                            </span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-[#A7B1AA]">Daily Drawdown</span>
+                            <span className="font-display font-bold text-white">{ch.dailyDrawdownPct}%</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-[#A7B1AA]">Max Drawdown</span>
+                            <span className="font-display font-bold text-white">{ch.maxDrawdownPct}%</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-[#A7B1AA]">Profit Split</span>
+                            <span className="font-display font-bold text-[#00E676]">Up to {ch.profitSplitPct}%</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-[#A7B1AA]">Leverage</span>
+                            <span className="font-display font-bold text-white">1:{ch.leverage}</span>
+                          </div>
+                        </div>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() => openStripeCheckout(ch.id, ch.accountSize === 5000 ? '5K30OFF' : undefined)}
+                        className="w-full py-2.5 rounded-[9px] apex-glow-btn text-xs uppercase tracking-wider cursor-pointer mt-1"
+                      >
+                        Start Challenge — ${ch.priceUsd}
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </section>
+          )}
+
+          {/* =====================================================================
+              5. SUPPORT & KYC TAB
+              ===================================================================== */}
+          {activeTab === 'kyc' && (
+            <section className="grid grid-cols-1 lg:grid-cols-2 gap-6 apex-fade-up">
+              {/* KYC Form */}
+              <div className="bg-[#090D0A] border border-[#00E676]/15 rounded-[14px] p-6 sm:p-7 space-y-5">
+                <div className="flex items-center justify-between border-b border-white/10 pb-4">
+                  <div>
+                    <h2 className="text-xl font-display font-bold text-white flex items-center gap-2">
+                      <UserCheck className="w-5 h-5 text-[#00E676]" />
+                      <span>Identity Verification (KYC)</span>
+                    </h2>
+                    <p className="text-xs text-[#A7B1AA] mt-1">
+                      Verify your identity to unlock direct performance payouts.
+                    </p>
+                  </div>
+                  <span className="px-3 py-1 rounded-[7px] bg-[#0D130F] border border-[#00E676]/30 text-xs font-mono font-bold text-[#00E676]">
+                    {user.kycStatus?.toUpperCase() || 'NOT SUBMITTED'}
+                  </span>
+                </div>
+
+                {kycSubmittedSuccess ? (
+                  <div className="p-6 rounded-[12px] bg-[#030504] border border-[#00E676]/35 text-center space-y-3">
+                    <CheckCircle2 className="w-10 h-10 text-[#00E676] mx-auto" />
+                    <h3 className="text-lg font-display font-bold text-white">KYC Submitted Successfully</h3>
+                    <p className="text-xs text-[#A7B1AA]">
+                      Our compliance desk is reviewing your documents (12–24 hours).
+                    </p>
+                  </div>
+                ) : (
+                  <form onSubmit={handleKycSubmit} className="space-y-4">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-xs font-medium text-[#A7B1AA] mb-1">Full Legal Name</label>
+                        <input
+                          type="text"
+                          required
+                          value={profileName}
+                          onChange={(e) => setProfileName(e.target.value)}
+                          className="w-full px-3.5 py-2.5 rounded-[9px] bg-[#030504] border border-white/15 text-xs text-white font-semibold"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-medium text-[#A7B1AA] mb-1">Document Type</label>
+                        <select
+                          value={kycDocType}
+                          onChange={(e) => setKycDocType(e.target.value)}
+                          className="w-full px-3.5 py-2.5 rounded-[9px] bg-[#030504] border border-white/15 text-xs text-white font-semibold"
+                        >
+                          <option value="Passport">International Passport</option>
+                          <option value="National ID">National ID Card</option>
+                          <option value="Driver License">Driver&apos;s License</option>
+                        </select>
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-medium text-[#A7B1AA] mb-1">Document Serial Number</label>
+                      <input
+                        type="text"
+                        required
+                        placeholder="Enter document number"
+                        value={kycDocNumber}
+                        onChange={(e) => setKycDocNumber(e.target.value)}
+                        className="w-full px-3.5 py-2.5 rounded-[9px] bg-[#030504] border border-white/15 text-xs text-white font-mono"
+                      />
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-3">
+                      <label className="h-24 rounded-[10px] border border-dashed border-[#00E676]/35 bg-[#030504] flex flex-col items-center justify-center gap-1.5 cursor-pointer hover:border-[#00E676]">
+                        <Upload className="w-5 h-5 text-[#00E676]" />
+                        <span className="text-[11px] font-medium text-white">
+                          {kycFrontImage ? 'Front ID Attached ✓' : 'Upload Front ID'}
+                        </span>
+                        <input
+                          type="file"
+                          accept="image/*"
+                          onChange={(e) => {
+                            const f = e.target.files?.[0];
+                            if (f) setKycFrontImage(URL.createObjectURL(f));
+                          }}
+                          className="hidden"
+                        />
+                      </label>
+                      <label className="h-24 rounded-[10px] border border-dashed border-[#00E676]/35 bg-[#030504] flex flex-col items-center justify-center gap-1.5 cursor-pointer hover:border-[#00E676]">
+                        <Upload className="w-5 h-5 text-[#00E676]" />
+                        <span className="text-[11px] font-medium text-white">
+                          {kycBackImage ? 'Back ID Attached ✓' : 'Upload Back ID'}
+                        </span>
+                        <input
+                          type="file"
+                          accept="image/*"
+                          onChange={(e) => {
+                            const f = e.target.files?.[0];
+                            if (f) setKycBackImage(URL.createObjectURL(f));
+                          }}
+                          className="hidden"
+                        />
+                      </label>
+                    </div>
+
+                    <button
+                      type="submit"
+                      disabled={kycSubmitting}
+                      className="w-full py-3 rounded-[9px] apex-glow-btn text-xs cursor-pointer"
+                    >
+                      {kycSubmitting ? 'Submitting...' : 'Submit Identity Verification'}
+                    </button>
+                  </form>
+                )}
+              </div>
+
+              {/* Support Desk Ticket Form */}
+              <div className="bg-[#090D0A] border border-[#00E676]/15 rounded-[14px] p-6 sm:p-7 space-y-5">
+                <div className="border-b border-white/10 pb-4">
+                  <h2 className="text-xl font-display font-bold text-white flex items-center gap-2">
+                    <HelpCircle className="w-5 h-5 text-[#00E676]" />
+                    <span>Institutional Trader Support Desk</span>
+                  </h2>
+                  <p className="text-xs text-[#A7B1AA] mt-1">
+                    Submit a direct support ticket regarding your evaluation account, terminal credentials, or payouts.
+                  </p>
+                </div>
+
+                <form
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    if (!supportSubject.trim() || !supportMessage.trim()) return;
+                    pushNotification(
+                      'Support Ticket Opened',
+                      `Ticket "${supportSubject}" dispatched to FUNDED APEX Support Desk.`,
+                      'success'
+                    );
+                    setSupportSubject('');
+                    setSupportMessage('');
+                  }}
+                  className="space-y-4"
+                >
+                  <div>
+                    <label className="block text-xs font-medium text-[#A7B1AA] mb-1">Subject</label>
+                    <input
+                      type="text"
+                      required
+                      value={supportSubject}
+                      onChange={(e) => setSupportSubject(e.target.value)}
+                      placeholder="e.g. Account #APEX-100K Terminal Credentials"
+                      className="w-full px-3.5 py-2.5 rounded-[9px] bg-[#030504] border border-white/15 text-xs text-white"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-[#A7B1AA] mb-1">Message</label>
+                    <textarea
+                      rows={4}
+                      required
+                      value={supportMessage}
+                      onChange={(e) => setSupportMessage(e.target.value)}
+                      placeholder="Describe how our institutional desk can assist you..."
+                      className="w-full px-3.5 py-2.5 rounded-[9px] bg-[#030504] border border-white/15 text-xs text-white"
+                    />
+                  </div>
+                  <button
+                    type="submit"
+                    className="w-full py-3 rounded-[9px] apex-secondary-btn text-xs cursor-pointer"
+                  >
+                    Submit Support Ticket →
+                  </button>
+                </form>
+              </div>
+            </section>
+          )}
+
+          {/* =====================================================================
+              6. CERTIFICATES TAB
+              ===================================================================== */}
+          {activeTab === 'certificates' && (
+            <section className="space-y-6 apex-fade-up">
+              <div className="bg-[#090D0A] border border-[#00E676]/15 rounded-[14px] p-6 space-y-2">
+                <h2 className="text-xl font-display font-bold text-white flex items-center gap-2">
+                  <Award className="w-5 h-5 text-[#00E676]" />
+                  <span>Official Trader Certificates</span>
+                </h2>
+                <p className="text-xs text-[#A7B1AA]">
+                  Issued automatically when your evaluation account passes all steps or when an Instant Funded account is active.
+                </p>
+              </div>
+
+              {(() => {
+                const eligibleCertAccounts = accounts.filter(
+                  (acc) =>
+                    acc.status === 'passed' ||
+                    acc.status === 'completed' ||
+                    (acc.challengeType === 'instant' &&
+                      acc.status !== 'failed' &&
+                      acc.status !== 'suspended')
+                );
+
+                if (eligibleCertAccounts.length === 0) {
+                  return (
+                    <div className="bg-[#090D0A] border border-dashed border-[#00E676]/30 rounded-[14px] p-10 text-center space-y-4">
+                      <Award className="w-10 h-10 text-[#00E676] mx-auto" />
+                      <div className="space-y-1 max-w-md mx-auto">
+                        <h3 className="text-lg font-display font-bold text-white">
+                          No Passed or Instant Funded Certificates Yet
+                        </h3>
+                        <p className="text-xs text-[#A7B1AA]">
+                          Pass your evaluation target or activate an Instant Funded account to generate your verified certificate.
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => navigate('terminal')}
+                        className="px-6 py-3 rounded-[9px] apex-glow-btn text-xs cursor-pointer"
+                      >
+                        Open Trading Terminal →
+                      </button>
+                    </div>
+                  );
+                }
+
+                return (
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+                    {eligibleCertAccounts.map((acc) => {
+                      const isInstantCert = acc.challengeType === 'instant';
+                      const certTitle = isInstantCert
+                        ? `Instant Funded Certificate (#${acc.accountNumber})`
+                        : `Passed Evaluation Certificate (#${acc.accountNumber})`;
+                      const issuedDate = new Date(
+                        acc.updatedAt || acc.createdAt || Date.now()
+                      ).toLocaleDateString('en-US', {
+                        month: 'short',
+                        day: 'numeric',
+                        year: 'numeric',
+                      });
+
+                      return (
+                        <div key={acc.id} className="bg-[#090D0A] border border-[#00E676]/20 rounded-[14px] p-6 space-y-4">
+                          <div className="flex items-center justify-between">
+                            <Award className="w-6 h-6 text-[#00E676]" />
+                            <span className="px-2.5 py-0.5 rounded-[6px] bg-[#0D130F] border border-[#00E676]/30 text-[10px] font-mono font-bold text-[#00E676]">
+                              {isInstantCert ? 'INSTANT FUNDED' : 'PASSED'}
+                            </span>
+                          </div>
+                          <div>
+                            <h3 className="text-base font-display font-bold text-white">{certTitle}</h3>
+                            <div className="text-xs text-[#00E676] font-mono font-bold mt-1">
+                              Capital: ${acc.startingBalance.toLocaleString()} USD
+                            </div>
+                            <div className="text-[11px] text-[#77837B] mt-0.5 font-mono">
+                              Trader: {user.fullName} · {issuedDate}
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setSelectedCertificateModal({
+                                title: certTitle,
+                                accountSize: acc.startingBalance,
+                                issueDate: issuedDate,
+                                traderName: user.fullName,
+                              })
+                            }
+                            className="w-full py-2.5 rounded-[9px] apex-secondary-btn text-xs flex items-center justify-center gap-2 cursor-pointer"
+                          >
+                            <Download className="w-4 h-4 text-[#00E676]" />
+                            <span>View &amp; Download Certificate</span>
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                );
+              })()}
+
+              {selectedCertificateModal && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-[#000000]/85 backdrop-blur-md">
+                  <div className="w-full max-w-2xl bg-[#050806] border border-[#00E676]/45 rounded-[16px] p-8 space-y-6 text-center shadow-2xl">
+                    <div className="flex justify-between items-center">
+                      <FundedApexLogo size="sm" />
+                      <button
+                        type="button"
+                        onClick={() => setSelectedCertificateModal(null)}
+                        className="p-2 rounded-[8px] bg-[#090D0A] text-[#A7B1AA] hover:text-white cursor-pointer"
+                      >
+                        <X className="w-5 h-5" />
+                      </button>
+                    </div>
+
+                    <div className="border border-[#00E676]/35 p-8 rounded-[12px] space-y-4 bg-[#090D0A]">
+                      <Award className="w-12 h-12 text-[#00E676] mx-auto" />
+                      <div className="text-[11px] font-mono font-bold text-[#00E676] uppercase tracking-widest">
+                        {selectedCertificateModal.title}
+                      </div>
+                      <h3 className="text-2xl sm:text-3xl font-display font-extrabold text-white uppercase tracking-wider">
+                        Certificate of Achievement
+                      </h3>
+                      <p className="text-xs text-[#A7B1AA]">This certifies that</p>
+                      <h4 className="text-2xl font-display font-bold text-[#00E676]">
+                        {selectedCertificateModal.traderName}
+                      </h4>
+                      <p className="text-xs text-[#A7B1AA] max-w-md mx-auto leading-relaxed">
+                        is an authorized FUNDED APEX Trader managing a simulated capital allocation of{' '}
+                        <strong className="text-white">${selectedCertificateModal.accountSize.toLocaleString()} USD</strong>.
+                      </p>
+                      <div className="text-xs font-mono text-[#77837B] pt-3">
+                        Issued: {selectedCertificateModal.issueDate} · ID: APEX-CERT-{selectedCertificateModal.accountSize}
+                      </div>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        pushNotification('Certificate Downloaded', 'Saved official PDF certificate.', 'success');
+                        setSelectedCertificateModal(null);
+                      }}
+                      className="px-8 py-3 rounded-[9px] apex-glow-btn text-xs cursor-pointer"
+                    >
+                      Download Official PDF →
+                    </button>
+                  </div>
+                </div>
+              )}
+            </section>
+          )}
+
+          {/* =====================================================================
+              7. PAYOUTS TAB
+              ===================================================================== */}
+          {activeTab === 'payouts' && (
+            <section className="grid grid-cols-1 lg:grid-cols-2 gap-6 apex-fade-up">
+              <div className="bg-[#090D0A] border border-[#00E676]/15 rounded-[14px] p-6 sm:p-7 space-y-5">
+                <div className="space-y-1">
+                  <h2 className="text-xl font-display font-bold text-white flex items-center gap-2">
+                    <Wallet className="w-5 h-5 text-[#00E676]" />
+                    <span>Performance Payout Request</span>
+                  </h2>
+                  <p className="text-xs text-[#A7B1AA] leading-relaxed">
+                    Instant Funded accounts can withdraw profit when P&amp;L &gt; $0 and the 15% Consistency Rule is satisfied. Multi-step evaluations unlock payouts once all evaluation phases are passed.
+                  </p>
+                </div>
+
+                {accounts.length === 0 ? (
+                  <div className="p-6 rounded-[12px] bg-[#030504] border border-white/10 text-center space-y-3">
+                    <p className="text-xs text-[#A7B1AA]">
+                      Purchase an evaluation account and generate positive P&amp;L to unlock payouts.
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => setActiveTab('challenges')}
+                      className="px-5 py-2.5 rounded-[9px] apex-glow-btn text-xs cursor-pointer"
+                    >
+                      Explore Challenges →
+                    </button>
+                  </div>
+                ) : (
+                  <>
+                    <div>
+                      <label className="block text-xs font-medium text-[#A7B1AA] mb-1.5">
+                        1. Select Trading Account
+                      </label>
+                      <select
+                        value={selectedPayoutAccount?.id || ''}
+                        onChange={(e) => {
+                          setSelectedPayoutAccountId(e.target.value);
+                          setPayoutErrorMsg(null);
+                          setPayoutSubmittedMsg(null);
+                        }}
+                        className="w-full px-3.5 py-2.5 rounded-[9px] bg-[#030504] border border-white/15 text-xs font-mono font-bold text-white"
+                      >
+                        {accounts.map((acc) => {
+                          const pnl = Math.round((acc.balance - acc.startingBalance) * 100) / 100;
+                          return (
+                            <option key={acc.id} value={acc.id}>
+                              #{acc.accountNumber} · {acc.challengeTitle} · P&amp;L: {pnl >= 0 ? '+' : ''}${pnl.toFixed(2)}
+                            </option>
+                          );
+                        })}
+                      </select>
+                    </div>
+
+                    {payoutEligibility && (
+                      <div className="p-4 rounded-[12px] bg-[#030504] border border-white/10 space-y-3">
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs font-display font-bold text-white">
+                            #{payoutEligibility.accountNumber} Status
+                          </span>
+                          <span
+                            className={`px-2.5 py-0.5 rounded-[6px] text-[10px] font-mono font-bold uppercase ${
+                              payoutEligibility.eligible
+                                ? 'bg-[#00E676]/20 text-[#00E676] border border-[#00E676]/40'
+                                : 'bg-amber-500/15 text-amber-300 border border-amber-500/35'
+                            }`}
+                          >
+                            {payoutEligibility.eligible ? 'PAYOUT UNLOCKED ✓' : 'OBJECTIVES PENDING'}
+                          </span>
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-2 text-xs font-mono">
+                          <div className="p-2.5 rounded-[8px] bg-[#090D0A] border border-white/5">
+                            <span className="text-[10px] text-[#77837B] block">Realized P&amp;L</span>
+                            <strong className={payoutEligibility.realizedProfitUsd > 0 ? 'text-[#00E676]' : 'text-white'}>
+                              ${payoutEligibility.realizedProfitUsd.toFixed(2)}
+                            </strong>
+                          </div>
+                          <div className="p-2.5 rounded-[8px] bg-[#090D0A] border border-white/5">
+                            <span className="text-[10px] text-[#77837B] block">
+                              Withdrawable ({payoutEligibility.profitSplitPct}%)
+                            </span>
+                            <strong className="text-[#00E676]">
+                              ${payoutEligibility.maxWithdrawableUsd.toFixed(2)}
+                            </strong>
+                          </div>
+                        </div>
+
+                        <div className="text-xs text-[#A7B1AA]">{payoutEligibility.reason}</div>
+                      </div>
+                    )}
+
+                    {payoutErrorMsg && (
+                      <div className="p-3.5 rounded-[9px] bg-red-950/60 border border-red-500/50 text-xs font-bold text-red-300">
+                        {payoutErrorMsg}
+                      </div>
+                    )}
+
+                    {payoutSubmittedMsg && (
+                      <div className="p-3.5 rounded-[9px] bg-[#0D130F] border border-[#00E676]/45 text-xs font-bold text-[#00E676]">
+                        {payoutSubmittedMsg}
+                      </div>
+                    )}
+
+                    <form onSubmit={handlePayoutSubmit} className="space-y-4">
+                      <div>
+                        <label className="block text-xs font-medium text-[#A7B1AA] mb-1">
+                          2. Withdrawal Amount (USD)
+                        </label>
+                        <input
+                          type="number"
+                          step="0.01"
+                          min="20"
+                          max={payoutEligibility?.maxWithdrawableUsd || 100000}
+                          disabled={!payoutEligibility?.eligible}
+                          value={payoutAmount}
+                          onChange={(e) => setPayoutAmount(Number(e.target.value))}
+                          className="w-full px-3.5 py-2.5 rounded-[9px] bg-[#030504] border border-white/15 text-sm font-mono font-bold text-white disabled:opacity-50"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block text-xs font-medium text-[#A7B1AA] mb-1">
+                          3. Settlement Method
+                        </label>
+                        <select
+                          disabled={!payoutEligibility?.eligible}
+                          value={payoutMethod}
+                          onChange={(e) => setPayoutMethod(e.target.value as any)}
+                          className="w-full px-3.5 py-2.5 rounded-[9px] bg-[#030504] border border-white/15 text-xs text-white font-semibold disabled:opacity-50"
+                        >
+                          <option value="USDT_BEP20">USDT (BEP-20 BNB Smart Chain)</option>
+                          <option value="USDT_TRC20">USDT (TRC-20)</option>
+                          <option value="USDC">USDC (ERC-20)</option>
+                          <option value="WIRE">Bank Wire Transfer</option>
+                        </select>
+                      </div>
+
+                      <div>
+                        <label className="block text-xs font-medium text-[#A7B1AA] mb-1">
+                          4. Destination Wallet Address
+                        </label>
+                        <input
+                          type="text"
+                          required
+                          disabled={!payoutEligibility?.eligible}
+                          placeholder="0x... USDT (BEP-20) wallet address"
+                          value={payoutWalletAddress}
+                          onChange={(e) => setPayoutWalletAddress(e.target.value)}
+                          className="w-full px-3.5 py-2.5 rounded-[9px] bg-[#030504] border border-white/15 text-xs text-white font-mono disabled:opacity-50"
+                        />
+                      </div>
+
+                      <button
+                        type="submit"
+                        disabled={!payoutEligibility?.eligible}
+                        className="w-full py-3 rounded-[9px] apex-glow-btn text-xs cursor-pointer disabled:opacity-40"
+                      >
+                        {payoutEligibility?.eligible
+                          ? `Withdraw $${payoutAmount.toFixed(2)} USD Profit →`
+                          : 'Payout Locked — Complete Challenge Objectives'}
+                      </button>
+                    </form>
+                  </>
+                )}
+              </div>
+
+              <div className="bg-[#090D0A] border border-[#00E676]/15 rounded-[14px] p-6 sm:p-7 space-y-4">
+                <h2 className="text-xl font-display font-bold text-white">
+                  Verified Payout Registry
+                </h2>
+                <div className="space-y-2.5 max-h-[420px] overflow-y-auto pr-1 custom-scrollbar">
+                  {verifiedPayouts.map((p) => (
+                    <div
+                      key={p.id}
+                      className="p-3.5 rounded-[10px] bg-[#030504] border border-white/10 flex items-center justify-between gap-3 text-xs"
+                    >
+                      <div>
+                        <div className="font-display font-bold text-white">{p.traderName}</div>
+                        <div className="text-[11px] text-[#77837B] font-mono">{p.currency} · {p.paymentDate}</div>
+                      </div>
+                      <div className="font-mono text-[#00E676] font-extrabold text-sm tabular-nums">
+                        +${p.amountUsd.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </section>
+          )}
+
+          {/* =====================================================================
+              8. REWARDS & AFFILIATE TAB
+              ===================================================================== */}
+          {activeTab === 'affiliate' && (
+            <section className="space-y-6 apex-fade-up">
+              <div className="bg-[#090D0A] border border-[#00E676]/15 rounded-[14px] p-6 sm:p-8 space-y-6">
+                <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4 border-b border-white/10 pb-6">
+                  <div className="space-y-1.5">
+                    <div className="inline-flex items-center gap-2 px-3 py-1 rounded-[7px] bg-[#0D130F] border border-[#00E676]/30 text-xs font-mono font-bold text-[#00E676]">
+                      <Gift className="w-3.5 h-3.5" />
+                      <span>TRADER REWARDS &amp; PARTNER PROGRAM</span>
+                    </div>
+                    <h2 className="text-2xl font-display font-bold text-white">
+                      Rewards, Coupons &amp; 15% Partner Commissions
+                    </h2>
+                    <p className="text-xs text-[#A7B1AA] max-w-xl">
+                      Claim exclusive evaluation discount rewards or share your partner link to earn 15% commission on referrals.
+                    </p>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2.5">
+                    <span className="px-4 py-2.5 rounded-[12px] bg-[#061318] border border-[#00E5B0]/35 text-xs font-mono font-bold text-[#00E5B0]">
+                      Rewards Vault: Coming Soon
+                    </span>
+                    <button
+                      type="button"
+                      onClick={handleCopyReferral}
+                      className="px-5 py-2.5 rounded-[9px] apex-glow-btn text-xs flex items-center gap-2 cursor-pointer"
+                    >
+                      <Copy className="w-4 h-4" />
+                      <span>Copy Partner Link</span>
+                    </button>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <div className="p-4 rounded-[12px] bg-[#030504] border border-white/10">
+                    <div className="text-xs text-[#A7B1AA]">Partner Referral Code</div>
+                    <div className="text-xl font-mono font-bold text-[#00E676] mt-1">{user.referralCode}</div>
+                  </div>
+                  <div className="p-4 rounded-[12px] bg-[#030504] border border-white/10">
+                    <div className="text-xs text-[#A7B1AA]">Direct Commission</div>
+                    <div className="text-xl font-mono font-bold text-white mt-1">15% Lifetime</div>
+                  </div>
+                  <div className="p-4 rounded-[12px] bg-[#030504] border border-white/10">
+                    <div className="text-xs text-[#A7B1AA]">Active Reward Coupons</div>
+                    <div className="text-xl font-mono font-bold text-[#00E676] mt-1">{userCoupons.length} Available</div>
+                  </div>
+                </div>
+              </div>
+            </section>
+          )}
+
+          {/* =====================================================================
+              9. SETTINGS TAB
+              ===================================================================== */}
+          {activeTab === 'settings' && (
+            <section className="grid grid-cols-1 lg:grid-cols-2 gap-6 apex-fade-up">
+              <div className="bg-[#090D0A] border border-[#00E676]/15 rounded-[14px] p-6 sm:p-7 space-y-5">
+                <h2 className="text-lg font-display font-bold text-white flex items-center gap-2">
+                  <Settings className="w-5 h-5 text-[#00E676]" />
+                  <span>Profile Settings</span>
+                </h2>
+
+                <div className="space-y-4">
+                  <div>
+                    <label className="block text-xs font-medium text-[#A7B1AA] mb-1.5">
+                      Profile Picture
+                    </label>
+                    <label className="inline-flex items-center gap-2 px-4 py-2 rounded-[9px] bg-[#030504] border border-white/15 text-xs font-medium text-white cursor-pointer hover:border-[#00E676]">
+                      <Upload className="w-4 h-4 text-[#00E676]" />
+                      <span>Upload Avatar</span>
+                      <input type="file" accept="image/*" onChange={handleAvatarUpload} className="hidden" />
+                    </label>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-medium text-[#A7B1AA] mb-1.5">Full Name</label>
+                    <input
+                      type="text"
+                      value={profileName}
+                      onChange={(e) => setProfileName(e.target.value)}
+                      className="w-full px-3.5 py-2.5 rounded-[9px] bg-[#030504] border border-white/15 text-sm font-medium text-white"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-medium text-[#A7B1AA] mb-1.5">Country</label>
+                    <select
+                      value={profileCountry}
+                      onChange={(e) => setProfileCountry(e.target.value)}
+                      className="w-full px-3.5 py-2.5 rounded-[9px] bg-[#030504] border border-white/15 text-sm font-medium text-white"
+                    >
+                      {COUNTRIES.map((c) => (
+                        <option key={c} value={c}>
+                          {c}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => updateUserProfile({ fullName: profileName, country: profileCountry })}
+                    className="px-6 py-2.5 rounded-[9px] apex-glow-btn text-xs cursor-pointer"
+                  >
+                    Save Profile Changes
+                  </button>
+                </div>
+              </div>
+
+              <div className="bg-[#090D0A] border border-[#00E676]/15 rounded-[14px] p-6 sm:p-7 space-y-5">
+                <h2 className="text-lg font-display font-bold text-white flex items-center gap-2">
+                  <Shield className="w-5 h-5 text-[#00E676]" />
+                  <span>Security &amp; Credentials</span>
+                </h2>
+
+                <div className="space-y-4">
+                  <div>
+                    <label className="block text-xs font-medium text-[#A7B1AA] mb-1.5">Change Password</label>
+                    <div className="flex gap-2">
+                      <input
+                        type="password"
+                        value={newPassword}
+                        onChange={(e) => setNewPassword(e.target.value)}
+                        placeholder="New password (min. 8 chars)"
+                        className="flex-1 px-3.5 py-2.5 rounded-[9px] bg-[#030504] border border-white/15 text-xs text-white"
+                      />
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          try {
+                            await changeUserPassword(newPassword);
+                            setNewPassword('');
+                            setPasswordStatus('Password updated.');
+                          } catch (err: any) {
+                            setPasswordStatus(err.message);
+                          }
+                        }}
+                        className="px-4 py-2.5 rounded-[9px] apex-glow-btn text-xs cursor-pointer"
+                      >
+                        Update
+                      </button>
+                    </div>
+                    {passwordStatus && <p className="text-xs text-[#00E676] mt-1 font-medium">{passwordStatus}</p>}
+                  </div>
+
+                  <div className="flex items-center justify-between p-4 rounded-[10px] bg-[#030504] border border-white/10">
+                    <div>
+                      <div className="text-sm font-display font-bold text-white">
+                        Multi-Factor Authentication (MFA)
+                      </div>
+                      <div className="text-xs text-[#A7B1AA]">
+                        Status: {user.mfaEnabled ? 'Enabled' : 'Disabled'}
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => updateUserProfile({ mfaEnabled: !user.mfaEnabled })}
+                      className="px-4 py-2 rounded-[8px] bg-[#0D130F] border border-[#00E676]/35 text-xs text-[#00E676] font-bold cursor-pointer"
+                    >
+                      {user.mfaEnabled ? 'Disable' : 'Enable'}
+                    </button>
+                  </div>
+
+                  <div className="flex items-center justify-between p-4 rounded-[10px] bg-red-950/30 border border-red-500/35">
+                    <div>
+                      <div className="text-sm font-display font-bold text-white">
+                        Sign Out of Session
+                      </div>
+                      <div className="text-xs text-[#A7B1AA] mt-0.5">
+                        Safely terminate your current trader session.
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        logout();
+                        navigate('login');
+                      }}
+                      className="px-4 py-2 rounded-[8px] bg-red-500/20 hover:bg-red-500/35 border border-red-500/45 text-red-300 font-bold text-xs cursor-pointer flex items-center gap-1.5"
+                    >
+                      <LogOut className="w-4 h-4" />
+                      <span>Logout</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </section>
+          )}
+        </main>
+      </div>
+    </div>
   );
 };

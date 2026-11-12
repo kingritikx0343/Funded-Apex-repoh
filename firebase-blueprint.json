@@ -1,485 +1,203 @@
 {
   "entities": {
-    "UserProfile": {
-      "title": "UserProfile",
-      "description": "Registered user profile and account metadata with isolated PII",
+    "User": {
+      "title": "User",
+      "description": "User account profile and authentication details",
       "type": "object",
       "properties": {
-        "uid": {
-          "type": "string",
-          "description": "Firebase Auth UID",
-          "maxLength": 128,
-          "pattern": "^[a-zA-Z0-9_\\-]+$"
-        },
-        "fullName": {
-          "type": "string",
-          "description": "Full legal or display name of the trader",
-          "minLength": 1,
-          "maxLength": 100
-        },
-        "email": {
-          "type": "string",
-          "format": "email",
-          "description": "Verified email address",
-          "maxLength": 150
-        },
-        "country": {
-          "type": "string",
-          "description": "Country of residence",
-          "minLength": 1,
-          "maxLength": 80
-        },
-        "referralCode": {
-          "type": "string",
-          "description": "Unique referral code for this user",
-          "maxLength": 32
-        },
-        "referredBy": {
-          "type": "string",
-          "description": "Optional referral code used at signup",
-          "maxLength": 32
-        },
-        "role": {
-          "type": "string",
-          "description": "System role (always 'user' on client creation)",
-          "enum": ["user", "support", "admin", "super_admin"]
-        },
-        "rewardPoints": {
-          "type": "number",
-          "description": "Accumulated reward points from spins and trading"
-        },
-        "lastSpinDate": {
-          "type": "string",
-          "description": "ISO date string of last free daily spin",
-          "maxLength": 40
-        },
-        "mfaEnabled": {
-          "type": "boolean",
-          "description": "Whether multi-factor verification is enabled"
-        },
-        "deletionRequested": {
-          "type": "boolean",
-          "description": "Whether account deletion was requested"
-        },
-        "createdAt": {
-          "type": "string",
-          "format": "date-time",
-          "description": "Creation server timestamp"
-        },
-        "updatedAt": {
-          "type": "string",
-          "format": "date-time",
-          "description": "Last update server timestamp"
-        }
+        "uid": { "type": "string", "maxLength": 128 },
+        "fullName": { "type": "string", "maxLength": 128 },
+        "email": { "type": "string", "format": "email", "maxLength": 256 },
+        "country": { "type": "string", "maxLength": 64 },
+        "referralCode": { "type": "string", "maxLength": 64 },
+        "role": { "type": "string", "enum": ["user", "admin", "super_admin"] },
+        "rewardPoints": { "type": "number" },
+        "mfaEnabled": { "type": "boolean" },
+        "deletionRequested": { "type": "boolean" },
+        "avatarUrl": { "type": "string", "maxLength": 1024 },
+        "createdAt": { "type": "string", "maxLength": 64 }
       },
-      "required": [
-        "uid",
-        "fullName",
-        "email",
-        "country",
-        "referralCode",
-        "role",
-        "rewardPoints",
-        "mfaEnabled",
-        "deletionRequested",
-        "createdAt",
-        "updatedAt"
-      ]
+      "required": ["uid", "fullName", "email", "role"]
     },
-    "AdminRecord": {
-      "title": "AdminRecord",
-      "description": "Trusted administrator membership record",
+    "Admin": {
+      "title": "Admin",
+      "description": "Trusted admin role registry document",
       "type": "object",
       "properties": {
-        "uid": {
-          "type": "string",
-          "maxLength": 128,
-          "pattern": "^[a-zA-Z0-9_\\-]+$"
-        },
-        "role": {
-          "type": "string",
-          "enum": ["admin", "super_admin", "support"]
-        },
-        "createdAt": {
-          "type": "string",
-          "format": "date-time"
-        }
+        "email": { "type": "string", "format": "email", "maxLength": 256 },
+        "role": { "type": "string", "enum": ["admin", "super_admin"] },
+        "grantedAt": { "type": "string", "maxLength": 64 }
       },
-      "required": ["uid", "role", "createdAt"]
+      "required": ["email", "role"]
     },
     "TradingAccount": {
       "title": "TradingAccount",
-      "description": "Evaluation or funded demo prop trading account belonging to a user",
+      "description": "Prop trading account details and risk parameters",
       "type": "object",
       "properties": {
-        "accountNumber": {
-          "type": "string",
-          "maxLength": 32,
-          "pattern": "^[a-zA-Z0-9_\\-]+$"
-        },
-        "userId": {
-          "type": "string",
-          "maxLength": 128,
-          "pattern": "^[a-zA-Z0-9_\\-]+$"
-        },
-        "userEmail": {
-          "type": "string",
-          "maxLength": 150
-        },
-        "userName": {
-          "type": "string",
-          "maxLength": 100
-        },
-        "challengeId": {
-          "type": "string",
-          "maxLength": 64
-        },
-        "challengeTitle": {
-          "type": "string",
-          "maxLength": 100
-        },
-        "challengeType": {
-          "type": "string",
-          "enum": ["one_step", "two_step", "three_step", "instant"]
-        },
-        "accountSize": {
-          "type": "number"
-        },
-        "startingBalance": {
-          "type": "number"
-        },
-        "balance": {
-          "type": "number"
-        },
-        "equity": {
-          "type": "number"
-        },
-        "usedMargin": {
-          "type": "number"
-        },
-        "freeMargin": {
-          "type": "number"
-        },
-        "profitTargetPct": {
-          "type": "number"
-        },
-        "dailyDrawdownPct": {
-          "type": "number"
-        },
-        "maxDrawdownPct": {
-          "type": "number"
-        },
-        "minTradingDays": {
-          "type": "number"
-        },
-        "tradingDaysCount": {
-          "type": "number"
-        },
-        "leverage": {
-          "type": "number"
-        },
-        "status": {
-          "type": "string",
-          "enum": ["available", "active", "passed", "failed", "suspended", "completed"]
-        },
-        "terminalUserId": {
-          "type": "string",
-          "maxLength": 64
-        },
-        "terminalPassword": {
-          "type": "string",
-          "maxLength": 64
-        },
-        "currentStep": {
-          "type": "number"
-        },
-        "totalSteps": {
-          "type": "number"
-        },
-        "profitSplitPct": {
-          "type": "number"
-        },
-        "breachReason": {
-          "type": "string",
-          "maxLength": 300
-        },
-        "createdAt": {
-          "type": "string",
-          "format": "date-time"
-        },
-        "updatedAt": {
-          "type": "string",
-          "format": "date-time"
-        }
+        "id": { "type": "string", "maxLength": 128 },
+        "accountNumber": { "type": "string", "maxLength": 64 },
+        "userId": { "type": "string", "maxLength": 128 },
+        "challengeId": { "type": "string", "maxLength": 64 },
+        "challengeTitle": { "type": "string", "maxLength": 128 },
+        "challengeType": { "type": "string", "maxLength": 32 },
+        "accountSize": { "type": "number" },
+        "startingBalance": { "type": "number" },
+        "balance": { "type": "number" },
+        "equity": { "type": "number" },
+        "usedMargin": { "type": "number" },
+        "freeMargin": { "type": "number" },
+        "status": { "type": "string", "enum": ["active", "passed", "breached", "completed", "failed"] },
+        "terminalUserId": { "type": "string", "maxLength": 64 },
+        "terminalPassword": { "type": "string", "maxLength": 64 },
+        "profitTargetPct": { "type": "number" },
+        "dailyDrawdownPct": { "type": "number" },
+        "maxDrawdownPct": { "type": "number" },
+        "minTradingDays": { "type": "number" },
+        "tradingDaysCount": { "type": "number" },
+        "leverage": { "type": "number" },
+        "profitSplitPct": { "type": "number" },
+        "currentStep": { "type": "number" },
+        "totalSteps": { "type": "number" },
+        "peakEquity": { "type": "number" },
+        "dailyStartingEquity": { "type": "number" },
+        "lastDailyResetDate": { "type": "string", "maxLength": 32 },
+        "createdAt": { "type": "string", "maxLength": 64 },
+        "updatedAt": { "type": "string", "maxLength": 64 }
       },
-      "required": [
-        "accountNumber",
-        "userId",
-        "challengeId",
-        "challengeTitle",
-        "challengeType",
-        "accountSize",
-        "startingBalance",
-        "balance",
-        "equity",
-        "usedMargin",
-        "freeMargin",
-        "profitTargetPct",
-        "dailyDrawdownPct",
-        "maxDrawdownPct",
-        "minTradingDays",
-        "tradingDaysCount",
-        "leverage",
-        "status",
-        "createdAt",
-        "updatedAt"
-      ]
+      "required": ["id", "accountNumber", "userId", "accountSize", "balance", "equity", "status"]
     },
-    "TradeOrder": {
-      "title": "TradeOrder",
-      "description": "Simulated market or pending order and position record",
+    "Order": {
+      "title": "Order",
+      "description": "Trading order ticket and execution details",
       "type": "object",
       "properties": {
-        "ticketId": {
-          "type": "string",
-          "maxLength": 64,
-          "pattern": "^[a-zA-Z0-9_\\-]+$"
-        },
-        "accountId": {
-          "type": "string",
-          "maxLength": 128,
-          "pattern": "^[a-zA-Z0-9_\\-]+$"
-        },
-        "userId": {
-          "type": "string",
-          "maxLength": 128,
-          "pattern": "^[a-zA-Z0-9_\\-]+$"
-        },
-        "symbol": {
-          "type": "string",
-          "maxLength": 20
-        },
-        "side": {
-          "type": "string",
-          "enum": ["BUY", "SELL"]
-        },
-        "orderType": {
-          "type": "string",
-          "enum": ["MARKET", "BUY_LIMIT", "SELL_LIMIT", "BUY_STOP", "SELL_STOP"]
-        },
-        "volume": {
-          "type": "number"
-        },
-        "entryPrice": {
-          "type": "number"
-        },
-        "currentPrice": {
-          "type": "number"
-        },
-        "exitPrice": {
-          "type": "number"
-        },
-        "stopLoss": {
-          "type": "number"
-        },
-        "takeProfit": {
-          "type": "number"
-        },
-        "grossPnl": {
-          "type": "number"
-        },
-        "commission": {
-          "type": "number"
-        },
-        "netPnl": {
-          "type": "number"
-        },
-        "status": {
-          "type": "string",
-          "enum": ["OPEN", "PENDING", "CLOSED", "CANCELLED"]
-        },
-        "openTime": {
-          "type": "string",
-          "maxLength": 40
-        },
-        "closeTime": {
-          "type": "string",
-          "maxLength": 40
-        },
-        "createdAt": {
-          "type": "string",
-          "format": "date-time"
-        },
-        "updatedAt": {
-          "type": "string",
-          "format": "date-time"
-        }
+        "id": { "type": "string", "maxLength": 128 },
+        "ticketId": { "type": "string", "maxLength": 64 },
+        "accountId": { "type": "string", "maxLength": 128 },
+        "userId": { "type": "string", "maxLength": 128 },
+        "symbol": { "type": "string", "maxLength": 32 },
+        "side": { "type": "string", "enum": ["BUY", "SELL"] },
+        "orderType": { "type": "string", "maxLength": 32 },
+        "volume": { "type": "number" },
+        "entryPrice": { "type": "number" },
+        "currentPrice": { "type": "number" },
+        "exitPrice": { "type": "number" },
+        "stopLoss": { "type": "number" },
+        "takeProfit": { "type": "number" },
+        "grossPnl": { "type": "number" },
+        "commission": { "type": "number" },
+        "netPnl": { "type": "number" },
+        "status": { "type": "string", "enum": ["OPEN", "CLOSED", "CANCELLED"] },
+        "openTime": { "type": "string", "maxLength": 64 },
+        "closeTime": { "type": "string", "maxLength": 64 }
       },
-      "required": [
-        "ticketId",
-        "accountId",
-        "userId",
-        "symbol",
-        "side",
-        "orderType",
-        "volume",
-        "entryPrice",
-        "currentPrice",
-        "exitPrice",
-        "stopLoss",
-        "takeProfit",
-        "grossPnl",
-        "commission",
-        "netPnl",
-        "status",
-        "openTime",
-        "closeTime",
-        "createdAt",
-        "updatedAt"
-      ]
+      "required": ["id", "accountId", "userId", "symbol", "side", "volume", "status"]
     },
-    "AdminAuditLog": {
-      "title": "AdminAuditLog",
-      "description": "Immutable audit log for administrator actions",
+    "PurchaseRequest": {
+      "title": "PurchaseRequest",
+      "description": "Evaluation challenge purchase request",
       "type": "object",
       "properties": {
-        "adminId": {
-          "type": "string",
-          "maxLength": 128,
-          "pattern": "^[a-zA-Z0-9_\\-]+$"
-        },
-        "adminEmail": {
-          "type": "string",
-          "maxLength": 150
-        },
-        "action": {
-          "type": "string",
-          "maxLength": 100
-        },
-        "targetId": {
-          "type": "string",
-          "maxLength": 128
-        },
-        "details": {
-          "type": "string",
-          "maxLength": 500
-        },
-        "createdAt": {
-          "type": "string",
-          "format": "date-time"
-        }
+        "id": { "type": "string", "maxLength": 128 },
+        "orderNumber": { "type": "string", "maxLength": 64 },
+        "userId": { "type": "string", "maxLength": 128 },
+        "userFullName": { "type": "string", "maxLength": 128 },
+        "userEmail": { "type": "string", "format": "email", "maxLength": 256 },
+        "challengeId": { "type": "string", "maxLength": 64 },
+        "challengeTitle": { "type": "string", "maxLength": 128 },
+        "accountSize": { "type": "number" },
+        "originalPriceUsd": { "type": "number" },
+        "discountPct": { "type": "number" },
+        "finalAmountUsd": { "type": "number" },
+        "paymentMethod": { "type": "string", "maxLength": 32 },
+        "transactionRef": { "type": "string", "maxLength": 256 },
+        "status": { "type": "string", "enum": ["pending", "approved", "rejected"] },
+        "allocatedAccountNumber": { "type": "string", "maxLength": 64 },
+        "createdAt": { "type": "string", "maxLength": 64 },
+        "reviewedAt": { "type": "string", "maxLength": 64 }
       },
-      "required": ["adminId", "adminEmail", "action", "targetId", "details", "createdAt"]
+      "required": ["id", "userId", "userEmail", "finalAmountUsd", "status"]
     },
-    "MailNotification": {
-      "title": "MailNotification",
-      "description": "Automated Cloud Function email dispatch record for terminal credentials",
+    "Payout": {
+      "title": "Payout",
+      "description": "Public proof of verified payout to funded trader",
       "type": "object",
       "properties": {
-        "to": {
-          "type": "string",
-          "maxLength": 150
-        },
-        "recipientName": {
-          "type": "string",
-          "maxLength": 100
-        },
-        "sender": {
-          "type": "string",
-          "maxLength": 150
-        },
-        "domain": {
-          "type": "string",
-          "maxLength": 100
-        },
-        "accountId": {
-          "type": "string",
-          "maxLength": 128
-        },
-        "accountNumber": {
-          "type": "string",
-          "maxLength": 32
-        },
-        "challengeId": {
-          "type": "string",
-          "maxLength": 64
-        },
-        "challengeTitle": {
-          "type": "string",
-          "maxLength": 100
-        },
-        "terminalUserId": {
-          "type": "string",
-          "maxLength": 64
-        },
-        "terminalPassword": {
-          "type": "string",
-          "maxLength": 64
-        },
-        "subject": {
-          "type": "string",
-          "maxLength": 200
-        },
-        "htmlBody": {
-          "type": "string",
-          "maxLength": 10000
-        },
-        "textBody": {
-          "type": "string",
-          "maxLength": 5000
-        },
-        "triggeredBy": {
-          "type": "string",
-          "enum": ["admin_account_update", "admin_challenge_update", "account_allocation"]
-        },
-        "createdAt": {
-          "type": "string",
-          "maxLength": 40
-        }
+        "id": { "type": "string", "maxLength": 128 },
+        "traderName": { "type": "string", "maxLength": 128 },
+        "username": { "type": "string", "maxLength": 64 },
+        "amountUsd": { "type": "number" },
+        "currency": { "type": "string", "maxLength": 32 },
+        "status": { "type": "string", "maxLength": 32 },
+        "paymentDate": { "type": "string", "maxLength": 32 },
+        "accountSize": { "type": "number" },
+        "programType": { "type": "string", "maxLength": 64 }
       },
-      "required": [
-        "to",
-        "recipientName",
-        "sender",
-        "domain",
-        "accountId",
-        "accountNumber",
-        "challengeId",
-        "challengeTitle",
-        "terminalUserId",
-        "terminalPassword",
-        "subject",
-        "htmlBody",
-        "textBody",
-        "triggeredBy",
-        "createdAt"
-      ]
+      "required": ["id", "traderName", "amountUsd", "status", "paymentDate"]
+    },
+    "PaymentSettings": {
+      "title": "PaymentSettings",
+      "description": "Administrative crypto deposit addresses and instructions",
+      "type": "object",
+      "properties": {
+        "cryptoUsdtTrc20": { "type": "string", "maxLength": 256 },
+        "cryptoUsdtErc20": { "type": "string", "maxLength": 256 },
+        "cryptoUsdtBep20": { "type": "string", "maxLength": 256 },
+        "cryptoBtcAddress": { "type": "string", "maxLength": 256 },
+        "cryptoEthAddress": { "type": "string", "maxLength": 256 },
+        "cryptoSolAddress": { "type": "string", "maxLength": 256 },
+        "cryptoUsdtTrc20Qr": { "type": "string", "maxLength": 100000 }
+      },
+      "required": ["cryptoUsdtTrc20"]
+    },
+    "AdminCoupon": {
+      "title": "AdminCoupon",
+      "description": "Discount coupon code for evaluations",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "code": { "type": "string", "maxLength": 64 },
+        "discountPct": { "type": "number" },
+        "description": { "type": "string", "maxLength": 256 },
+        "active": { "type": "boolean" },
+        "createdAt": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["id", "code", "discountPct", "active"]
     }
   },
   "firestore": {
     "/users/{userId}": {
-      "schema": { "$ref": "#/entities/UserProfile" },
-      "description": "User profiles strictly isolated to owner and admins"
+      "schema": "User",
+      "description": "Protected user profile records"
     },
     "/admins/{adminId}": {
-      "schema": { "$ref": "#/entities/AdminRecord" },
-      "description": "Trusted admin lookup collection"
+      "schema": "Admin",
+      "description": "Protected administrative registry"
     },
-    "/tradingAccounts/{accountId}": {
-      "schema": { "$ref": "#/entities/TradingAccount" },
-      "description": "User prop trading evaluation and funded accounts"
+    "/accounts/{accountId}": {
+      "schema": "TradingAccount",
+      "description": "Trading accounts assigned to users"
     },
     "/orders/{orderId}": {
-      "schema": { "$ref": "#/entities/TradeOrder" },
-      "description": "User simulated orders, open positions, and trade history"
+      "schema": "Order",
+      "description": "Market and limit trading orders"
     },
-    "/adminLogs/{logId}": {
-      "schema": { "$ref": "#/entities/AdminAuditLog" },
-      "description": "Immutable administrator activity logs"
+    "/purchaseRequests/{requestId}": {
+      "schema": "PurchaseRequest",
+      "description": "Evaluation plan purchase requests"
     },
-    "/mail_notifications/{mailId}": {
-      "schema": { "$ref": "#/entities/MailNotification" },
-      "description": "Automated Cloud Function email notifications for terminal credentials"
+    "/payouts/{payoutId}": {
+      "schema": "Payout",
+      "description": "Public trader payouts showcase"
+    },
+    "/paymentSettings/{settingId}": {
+      "schema": "PaymentSettings",
+      "description": "Cryptocurrency deposit configurations"
+    },
+    "/adminCoupons/{couponId}": {
+      "schema": "AdminCoupon",
+      "description": "Official discount coupon codes"
     }
   }
 }

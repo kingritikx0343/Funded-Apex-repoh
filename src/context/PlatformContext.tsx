@@ -24,7 +24,7 @@ import {
   googleProvider,
   popupResolver,
   hasWorkingAuthToken,
-} from '../firebase';
+} from '../lib/firebase';
 import {
   INSTRUMENTS,
   SymbolCode,
@@ -35,6 +35,7 @@ import {
   OrderSubmissionInput,
   validateOrderRequest,
   calculatePositionPnl,
+  calculateOrderPnlSnapshot,
   evaluateOrderTrigger,
   evaluateAccountRiskMetrics,
   evaluateAccountPayoutEligibility,
@@ -48,7 +49,16 @@ import {
 } from '../engine/tradingEngine';
 import {
   buildTerminalCredentialsEmailPayload,
+  buildRegistrationWelcomeEmailPayload,
+  buildPasswordResetEmailPayload,
+  buildChallengeStatusUpdateEmailPayload,
+  buildPromotionalOfferEmailPayload,
+  buildCustomManualEmailPayload,
+  CustomManualEmailInput,
+  FundedApexEmailPayload,
   TerminalCredentialMailPayload,
+  EmailEventType,
+  ChallengeStatusEmailType,
   FUNDED_APEX_SUPPORT_EMAIL,
 } from '../engine/cloudFunctionsEmail';
 import {
@@ -87,7 +97,6 @@ export type PageRoute =
   | 'leaderboard'
   | 'payouts'
   | 'faq'
-  | 'contact'
   | 'login'
   | 'register'
   | 'privacy'
@@ -97,9 +106,9 @@ export type PageRoute =
   | 'dashboard'
   | 'terminal'
   | 'admin'
-  | 'support';
+  | 'admin';
 
-export type UserRole = 'user' | 'support' | 'admin' | 'super_admin';
+export type UserRole = 'user' | 'admin' | 'super_admin';
 
 export interface UserProfileData {
   uid: string;
@@ -164,19 +173,44 @@ export interface AdminCouponRecord {
 
 export type PaymentMethodType = 'CRYPTO';
 
+export interface AdminUploadedMediaItem {
+  id: string;
+  title: string;
+  category: 'QR_CODE' | 'PROMO_BANNER' | 'CERTIFICATE_SEAL' | 'GENERAL';
+  url: string;
+  uploadedAt: string;
+}
+
 export interface PaymentGatewaySettings {
   cryptoUsdtTrc20: string;
   cryptoUsdtErc20: string;
   cryptoUsdtBep20: string;
+  cryptoBnbBep20?: string;
   cryptoBtcAddress: string;
   cryptoEthAddress: string;
   cryptoSolAddress: string;
+  cryptoArbitrumAddress?: string;
+  cryptoAptosAddress?: string;
   cryptoUsdtTrc20Qr: string;
   cryptoUsdtErc20Qr: string;
   cryptoUsdtBep20Qr: string;
+  cryptoBnbBep20Qr?: string;
   cryptoBtcQr: string;
   cryptoEthQr: string;
   cryptoSolQr: string;
+  cryptoArbitrumQr?: string;
+  cryptoAptosQr?: string;
+  bankAccountName?: string;
+  bankAccountNumber?: string;
+  bankIbanSwift?: string;
+  bankName?: string;
+  upiId?: string;
+  upiQr?: string;
+  certificateSealImg?: string;
+  promoBannerImg?: string;
+  accountCertificates?: Record<string, string>;
+  challengeCertificates?: Partial<Record<ChallengeType, string>>;
+  adminGalleryImages?: AdminUploadedMediaItem[];
   cryptoNetworkNote: string;
   terminalUserId?: string;
   terminalPassword: string;
@@ -221,16 +255,28 @@ export const DEFAULT_PAYMENT_SETTINGS: PaymentGatewaySettings = {
   cryptoUsdtTrc20: 'TX9k8pApexPropFirmVault7729LmQ2WzB',
   cryptoUsdtErc20: '0x8F49aC7E219B40FundedApex7291E8823c91A421',
   cryptoUsdtBep20: '0x8F49aC7E219B40FundedApex7291E8823c91A421',
+  cryptoBnbBep20: '0x8F49aC7E219B40FundedApex7291E8823c91A421',
   cryptoBtcAddress: 'bc1qapex7729lmq2wzbfundedpropfirm9982k',
   cryptoEthAddress: '0x8F49aC7E219B40FundedApex7291E8823c91A421',
   cryptoSolAddress: 'APEX7729LmQ2WzBFundedPropFirmVaultSolanaKey',
-  cryptoUsdtTrc20Qr: 'https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=TX9k8pApexPropFirmVault7729LmQ2WzB',
-  cryptoUsdtErc20Qr: 'https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=0x8F49aC7E219B40FundedApex7291E8823c91A421',
-  cryptoUsdtBep20Qr: 'https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=0x8F49aC7E219B40FundedApex7291E8823c91A421',
-  cryptoBtcQr: 'https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=bc1qapex7729lmq2wzbfundedpropfirm9982k',
-  cryptoEthQr: 'https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=0x8F49aC7E219B40FundedApex7291E8823c91A421',
-  cryptoSolQr: 'https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=APEX7729LmQ2WzBFundedPropFirmVaultSolanaKey',
-  cryptoNetworkNote: 'Send exact amount via USDT (BEP-20 BNB Smart Chain), upload your payment screenshot image, and paste your Transaction Hash (TxID) below.',
+  cryptoArbitrumAddress: '0x8F49aC7E219B40FundedApex7291E8823c91A421',
+  cryptoAptosAddress: '0x8F49aC7E219B40FundedApex7291E8823c91A421',
+  cryptoUsdtTrc20Qr: 'https://api.qrserver.com/v1/create-qr-code/?size=400x400&color=00FFA3&bgcolor=030F0C&margin=0&qzone=1&data=TX9k8pApexPropFirmVault7729LmQ2WzB',
+  cryptoUsdtErc20Qr: 'https://api.qrserver.com/v1/create-qr-code/?size=400x400&color=00FFA3&bgcolor=030F0C&margin=0&qzone=1&data=0x8F49aC7E219B40FundedApex7291E8823c91A421',
+  cryptoUsdtBep20Qr: 'https://api.qrserver.com/v1/create-qr-code/?size=400x400&color=00FFA3&bgcolor=030F0C&margin=0&qzone=1&data=0x8F49aC7E219B40FundedApex7291E8823c91A421',
+  cryptoBnbBep20Qr: 'https://api.qrserver.com/v1/create-qr-code/?size=400x400&color=00FFA3&bgcolor=030F0C&margin=0&qzone=1&data=0x8F49aC7E219B40FundedApex7291E8823c91A421',
+  cryptoBtcQr: 'https://api.qrserver.com/v1/create-qr-code/?size=400x400&color=00FFA3&bgcolor=030F0C&margin=0&qzone=1&data=bc1qapex7729lmq2wzbfundedpropfirm9982k',
+  cryptoEthQr: 'https://api.qrserver.com/v1/create-qr-code/?size=400x400&color=00FFA3&bgcolor=030F0C&margin=0&qzone=1&data=0x8F49aC7E219B40FundedApex7291E8823c91A421',
+  cryptoSolQr: 'https://api.qrserver.com/v1/create-qr-code/?size=400x400&color=00FFA3&bgcolor=030F0C&margin=0&qzone=1&data=APEX7729LmQ2WzBFundedPropFirmVaultSolanaKey',
+  cryptoArbitrumQr: 'https://api.qrserver.com/v1/create-qr-code/?size=400x400&color=00FFA3&bgcolor=030F0C&margin=0&qzone=1&data=0x8F49aC7E219B40FundedApex7291E8823c91A421',
+  cryptoAptosQr: 'https://api.qrserver.com/v1/create-qr-code/?size=400x400&color=00FFA3&bgcolor=030F0C&margin=0&qzone=1&data=0x8F49aC7E219B40FundedApex7291E8823c91A421',
+  bankAccountName: 'FUNDED APEX PROPRIETARY CORP',
+  bankAccountNumber: '9840284019284',
+  bankIbanSwift: 'APEXUS33XXX',
+  bankName: 'JPMorgan Chase / Barclays Institutional',
+  upiId: 'fundedapex@icici',
+  upiQr: 'https://api.qrserver.com/v1/create-qr-code/?size=400x400&color=00FFA3&bgcolor=030F0C&margin=0&qzone=1&data=upi://pay?pa=fundedapex@icici&pn=FUNDED%20APEX',
+  cryptoNetworkNote: 'Send exact amount via USDT (BEP-20 BNB Smart Chain) or chosen coin, upload your payment screenshot image, and paste your Transaction Hash (TxID) below.',
   terminalUserId: 'APEX-MASTER',
   terminalPassword: 'APEX2026',
 };
@@ -293,7 +339,37 @@ export interface PlatformContextValue {
   paymentSettings: PaymentGatewaySettings;
   purchaseRequests: AccountPurchaseRequest[];
   userPurchaseRequests: AccountPurchaseRequest[];
-  emailNotifications: TerminalCredentialMailPayload[];
+  emailNotifications: FundedApexEmailPayload[];
+  userEmailNotifications: FundedApexEmailPayload[];
+  markEmailNotificationRead: (emailId: string) => void;
+  adminBroadcastPromotionalEmail: (input: {
+    recipientEmail?: string;
+    recipientName?: string;
+    offerTitle: string;
+    discountPct: number;
+    promoCode: string;
+    challengeId?: string;
+    challengeTitle?: string;
+    originalPriceUsd?: number;
+    discountedPriceUsd?: number;
+  }) => { ok: boolean; error?: string; email?: FundedApexEmailPayload };
+  adminSendEmailNotification: (input: {
+    eventType: EmailEventType;
+    recipientEmail: string;
+    recipientName: string;
+    challengeStatus?: ChallengeStatusEmailType;
+    accountNumber?: string;
+    challengeTitle?: string;
+    accountSize?: number;
+    breachOrStatusReason?: string;
+    promoCode?: string;
+    discountPct?: number;
+  }) => { ok: boolean; error?: string; email?: FundedApexEmailPayload };
+  adminSendManualEmail: (input: CustomManualEmailInput) => {
+    ok: boolean;
+    error?: string;
+    email?: FundedApexEmailPayload;
+  };
   payouts: PayoutRecordItem[];
   verifiedPayouts: PayoutRecordItem[];
   leaderboard: LeaderboardEntry[];
@@ -317,10 +393,7 @@ export interface PlatformContextValue {
   // Auth operations
   loginWithEmail: (email: string, password: string, requestAdminWorkspace?: boolean) => Promise<void>;
   registerWithEmail: (input: { fullName: string; email: string; country: string; password: string; referralCode?: string }) => Promise<void>;
-  loginWithGoogle: (
-    requestAdminWorkspace?: boolean,
-    customGoogleAccount?: { email: string; fullName: string }
-  ) => Promise<void>;
+  loginWithGoogle: (requestAdminWorkspace?: boolean) => Promise<void>;
   sendPasswordReset: (email: string) => Promise<void>;
   resendVerificationEmail: () => Promise<void>;
   logout: () => Promise<void>;
@@ -339,6 +412,8 @@ export interface PlatformContextValue {
     paymentScreenshotUrl?: string;
     finalAmountUsd: number;
     discountPct: number;
+    guestEmail?: string;
+    guestName?: string;
   }) => AccountPurchaseRequest;
   completeStripeCheckoutPayment: (params: {
     challengeId: string;
@@ -425,6 +500,8 @@ export interface PlatformContextValue {
   adminToggleCoupon: (couponId: string) => void;
   adminDeleteCoupon: (couponId: string) => void;
   adminSavePaymentSettings: (settings: PaymentGatewaySettings) => void;
+  uploadAccountCertificateImage: (accountId: string, imageUrl: string) => void;
+  uploadChallengeCertificateImage: (challengeType: ChallengeType, imageUrl: string) => void;
   adminApprovePurchaseRequest: (requestId: string) => {
     ok: boolean;
     error?: string;
@@ -498,7 +575,6 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         'leaderboard',
         'payouts',
         'faq',
-        'contact',
         'login',
         'register',
         'privacy',
@@ -508,7 +584,6 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         'dashboard',
         'terminal',
         'admin',
-        'support',
       ].includes(path)
     ) {
       return path === 'free-spin' ? 'challenges' : path;
@@ -602,7 +677,15 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   const [challenges, setChallenges] = useState<ChallengeTemplate[]>(() => {
     try {
       const saved = localStorage.getItem(STORAGE_KEYS.CHALLENGES);
-      return saved ? JSON.parse(saved) : INITIAL_CHALLENGES;
+      if (saved) {
+        const parsed: ChallengeTemplate[] = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          return parsed.map((ch) =>
+            ch.type === 'instant' ? { ...ch, profitTargetPct: 0 } : ch
+          );
+        }
+      }
+      return INITIAL_CHALLENGES;
     } catch {
       return INITIAL_CHALLENGES;
     }
@@ -614,24 +697,20 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       if (saved) {
         const parsed: TradingAccountRecord[] = JSON.parse(saved);
         if (Array.isArray(parsed)) {
-          const usedPasses = new Set<string>();
-          const usedIds = new Set<string>();
           return parsed.map((acc, idx) => {
-            let pass = acc.terminalPassword?.trim();
-            if (!pass || usedPasses.has(pass)) {
-              pass = `APEX-${1000 + ((idx * 317 + Math.floor(Math.random() * 8000)) % 8999)}`;
+            let pass = acc.terminalPassword?.trim() || '';
+            if (!pass && acc.status !== 'failed') {
+              const numDigits =
+                acc.accountNumber.replace(/[^0-9]/g, '').slice(-4) || String(1001 + idx);
+              pass = `APEX-${numDigits}`;
             }
-            usedPasses.add(pass);
 
-            let termId = acc.terminalUserId?.trim();
-            if (!termId || usedIds.has(termId)) {
-              const numDigits = acc.accountNumber.replace(/[^0-9]/g, '').slice(-4) || String(1001 + idx);
+            let termId = acc.terminalUserId?.trim() || '';
+            if (!termId) {
+              const numDigits =
+                acc.accountNumber.replace(/[^0-9]/g, '').slice(-4) || String(1001 + idx);
               termId = `APEX-ID-${numDigits}`;
-              if (usedIds.has(termId)) {
-                termId = `APEX-ID-${1000 + ((idx * 419 + Math.floor(Math.random() * 8000)) % 8999)}`;
-              }
             }
-            usedIds.add(termId);
 
             const resolvedRules = resolveChallengeRulesForAccount(acc);
 
@@ -647,6 +726,9 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
               minTradingDays: resolvedRules.minTradingDays,
               totalSteps: resolvedRules.totalSteps,
               currentStep: resolvedRules.currentStep,
+              peakEquity: acc.peakEquity || acc.equity || acc.startingBalance,
+              dailyStartingEquity: acc.dailyStartingEquity || acc.equity || acc.startingBalance,
+              lastDailyResetDate: acc.lastDailyResetDate || new Date().toISOString().split('T')[0],
             };
           });
         }
@@ -742,12 +824,51 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     }
   });
 
-  const [emailNotifications, setEmailNotifications] = useState<TerminalCredentialMailPayload[]>(() => {
+  const [emailNotifications, setEmailNotifications] = useState<FundedApexEmailPayload[]>(() => {
+    const defaultStarterEmails: FundedApexEmailPayload[] = [
+      buildPromotionalOfferEmailPayload({
+        recipientEmail: 'all@fundedapex.com',
+        recipientName: 'FUNDED APEX Trader Community',
+        offerTitle: '$5K Evaluation 30% OFF — $7.00 Only Flash Promo',
+        discountPct: 30,
+        promoCode: '5K30OFF',
+        challengeId: 'two-step-5000',
+        challengeTitle: '$5K Starter Two-Step Evaluation',
+        originalPriceUsd: 10,
+        discountedPriceUsd: 7,
+      }),
+      buildRegistrationWelcomeEmailPayload({
+        recipientEmail: 'kingritikx0343@gmail.com',
+        recipientName: 'Ritik Executive Admin',
+        referralCode: 'APEX-OWNER',
+        country: 'India',
+      }),
+      buildChallengeStatusUpdateEmailPayload({
+        recipientEmail: 'all@fundedapex.com',
+        recipientName: 'FUNDED APEX Trader',
+        accountNumber: 'FA-882410',
+        challengeId: 'two-step-50000',
+        challengeTitle: 'Two Step Challenge ($50,000)',
+        accountSize: 50000,
+        status: 'passed',
+        currentBalance: 54250,
+        currentEquity: 54250,
+        currentStep: 2,
+        totalSteps: 2,
+        profitSplitPct: 90,
+      }),
+    ];
     try {
       const saved = localStorage.getItem(STORAGE_KEYS.EMAIL_NOTIFICATIONS);
-      return saved ? JSON.parse(saved) : [];
+      if (saved) {
+        const parsed: FundedApexEmailPayload[] = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          return parsed;
+        }
+      }
+      return defaultStarterEmails;
     } catch {
-      return [];
+      return defaultStarterEmails;
     }
   });
 
@@ -817,15 +938,71 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     } catch {}
   }, [testimonials]);
 
-  const userCoupons = useMemo(
-    () => (user ? coupons.filter((c) => c.userId === user.uid) : []),
-    [coupons, user]
-  );
+  const userCoupons = useMemo(() => {
+    if (!user) return [];
+    const cleanEmail = user.email.toLowerCase();
+    const matchingUids = new Set(
+      allUsers.filter((u) => u.email.toLowerCase() === cleanEmail).map((u) => u.uid)
+    );
+    matchingUids.add(user.uid);
+    return coupons.filter((c) => matchingUids.has(c.userId));
+  }, [coupons, user, allUsers]);
 
-  const userPurchaseRequests = useMemo(
-    () => (user ? purchaseRequests.filter((r) => r.userId === user.uid) : []),
-    [purchaseRequests, user]
-  );
+  const userPurchaseRequests = useMemo(() => {
+    if (!user) return [];
+    const cleanEmail = user.email.toLowerCase();
+    const matchingUids = new Set(
+      allUsers.filter((u) => u.email.toLowerCase() === cleanEmail).map((u) => u.uid)
+    );
+    matchingUids.add(user.uid);
+    return purchaseRequests.filter(
+      (r) => matchingUids.has(r.userId) || (r.userEmail || '').toLowerCase() === cleanEmail
+    );
+  }, [purchaseRequests, user, allUsers]);
+
+  const userEmailNotifications = useMemo(() => {
+    if (!user) {
+      return emailNotifications.filter(
+        (m) => (m.to || '').toLowerCase() === 'all@fundedapex.com'
+      );
+    }
+    const cleanEmail = user.email.toLowerCase();
+    const matchingUids = new Set(
+      allUsers.filter((u) => u.email.toLowerCase() === cleanEmail).map((u) => u.uid)
+    );
+    matchingUids.add(user.uid);
+    const ownedAccountIds = new Set(
+      accounts
+        .filter(
+          (a) =>
+            matchingUids.has(a.userId) ||
+            (a.userEmail || '').toLowerCase() === cleanEmail
+        )
+        .map((a) => a.id)
+    );
+    const ownedAccountNumbers = new Set(
+      accounts
+        .filter(
+          (a) =>
+            matchingUids.has(a.userId) ||
+            (a.userEmail || '').toLowerCase() === cleanEmail
+        )
+        .map((a) => a.accountNumber)
+    );
+    return emailNotifications.filter((mail) => {
+      const toAddr = (mail.to || '').toLowerCase();
+      if (toAddr === cleanEmail || toAddr === 'all@fundedapex.com') return true;
+      if (mail.accountId && ownedAccountIds.has(mail.accountId)) return true;
+      if (mail.accountNumber && ownedAccountNumbers.has(mail.accountNumber)) return true;
+      return false;
+    });
+  }, [emailNotifications, user, allUsers, accounts]);
+
+  const markEmailNotificationRead = useCallback((emailId: string) => {
+    setEmailNotifications((prev) =>
+      prev.map((m) => (m.id === emailId ? { ...m, read: true } : m))
+    );
+  }, []);
 
   const verifiedPayouts = useMemo(() => filterVerifiedPayouts(payouts), [payouts]);
 
@@ -895,12 +1072,12 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
   const clearToast = useCallback(() => setToastMessage(null), []);
 
-  // Automatically dismiss all login, logout, and system popups after 5 seconds (5000ms)
+  // Automatically dismiss all login, logout, and system popups after 3 seconds (3000ms)
   useEffect(() => {
     if (!toastMessage) return;
     const timer = setTimeout(() => {
       setToastMessage(null);
-    }, 5000);
+    }, 3000);
     return () => clearTimeout(timer);
   }, [toastMessage]);
 
@@ -937,21 +1114,30 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   }, [user]);
 
   useEffect(() => {
-    try {
-      localStorage.setItem(STORAGE_KEYS.USERS_DIRECTORY, JSON.stringify(allUsers));
-    } catch {}
+    const t = setTimeout(() => {
+      try {
+        localStorage.setItem(STORAGE_KEYS.USERS_DIRECTORY, JSON.stringify(allUsers));
+      } catch {}
+    }, 120);
+    return () => clearTimeout(t);
   }, [allUsers]);
 
   useEffect(() => {
-    try {
-      localStorage.setItem(STORAGE_KEYS.ACCOUNTS, JSON.stringify(accounts));
-    } catch {}
+    const t = setTimeout(() => {
+      try {
+        localStorage.setItem(STORAGE_KEYS.ACCOUNTS, JSON.stringify(accounts));
+      } catch {}
+    }, 240);
+    return () => clearTimeout(t);
   }, [accounts]);
 
   useEffect(() => {
-    try {
-      localStorage.setItem(STORAGE_KEYS.ORDERS, JSON.stringify(orders));
-    } catch {}
+    const t = setTimeout(() => {
+      try {
+        localStorage.setItem(STORAGE_KEYS.ORDERS, JSON.stringify(orders));
+      } catch {}
+    }, 240);
+    return () => clearTimeout(t);
   }, [orders]);
 
   useEffect(() => {
@@ -965,6 +1151,128 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       localStorage.setItem(STORAGE_KEYS.ADMIN_LOGS, JSON.stringify(adminLogs));
     } catch {}
   }, [adminLogs]);
+
+  // Persistent Server Disk Vault Sync (Protects all user profiles, passwords, accounts, orders & purchases across Web updates)
+  const vaultLoadedRef = useRef(false);
+  useEffect(() => {
+    let active = true;
+    fetch('/api/vault/sync')
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (!active || !data?.vault) {
+          vaultLoadedRef.current = true;
+          return;
+        }
+        const v = data.vault;
+        if (Array.isArray(v.users) && v.users.length > 0) {
+          setAllUsers((prev) => {
+            const byKey = new Map<string, UserProfileData>();
+            v.users.forEach((u: UserProfileData) => {
+              if (u?.email) byKey.set(u.email.toLowerCase(), u);
+            });
+            prev.forEach((u) => {
+              if (u?.email) {
+                const key = u.email.toLowerCase();
+                const vaultUser = byKey.get(key);
+                byKey.set(key, {
+                  ...vaultUser,
+                  ...u,
+                  passwordHash: u.passwordHash || vaultUser?.passwordHash,
+                });
+              }
+            });
+            return Array.from(byKey.values());
+          });
+        }
+        if (Array.isArray(v.accounts) && v.accounts.length > 0) {
+          setAccounts((prev) => {
+            const byId = new Map<string, TradingAccountRecord>();
+            v.accounts.forEach((a: TradingAccountRecord) => {
+              if (a?.id) byId.set(a.id, a);
+            });
+            prev.forEach((a) => {
+              if (a?.id) {
+                const vaultAcc = byId.get(a.id);
+                byId.set(a.id, {
+                  ...vaultAcc,
+                  ...a,
+                  terminalPassword: a.terminalPassword || vaultAcc?.terminalPassword || '',
+                  terminalUserId: a.terminalUserId || vaultAcc?.terminalUserId || '',
+                });
+              }
+            });
+            return Array.from(byId.values());
+          });
+        }
+        if (Array.isArray(v.orders) && v.orders.length > 0) {
+          setOrders((prev) => {
+            const byId = new Map<string, TradeOrderRecord>();
+            v.orders.forEach((o: TradeOrderRecord) => {
+              if (o?.id) byId.set(o.id, o);
+            });
+            prev.forEach((o) => {
+              if (o?.id) byId.set(o.id, { ...byId.get(o.id), ...o });
+            });
+            return Array.from(byId.values());
+          });
+        }
+        if (Array.isArray(v.purchaseRequests) && v.purchaseRequests.length > 0) {
+          setPurchaseRequests((prev) => {
+            const byId = new Map<string, AccountPurchaseRequest>();
+            v.purchaseRequests.forEach((r: AccountPurchaseRequest) => {
+              if (r?.id) byId.set(r.id, r);
+            });
+            prev.forEach((r) => {
+              if (r?.id) byId.set(r.id, { ...byId.get(r.id), ...r });
+            });
+            return Array.from(byId.values());
+          });
+        }
+        if (Array.isArray(v.emailNotifications) && v.emailNotifications.length > 0) {
+          setEmailNotifications((prev) => {
+            const byId = new Map<string, FundedApexEmailPayload>();
+            v.emailNotifications.forEach((m: FundedApexEmailPayload) => {
+              if (m?.id) byId.set(m.id, m);
+            });
+            prev.forEach((m) => {
+              if (m?.id) byId.set(m.id, { ...byId.get(m.id), ...m });
+            });
+            return Array.from(byId.values()).sort((a, b) =>
+              (b.sentAt || '').localeCompare(a.sentAt || '')
+            );
+          });
+        }
+        vaultLoadedRef.current = true;
+      })
+      .catch(() => {
+        vaultLoadedRef.current = true;
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!vaultLoadedRef.current) return;
+    const syncTimer = setTimeout(() => {
+      fetch('/api/vault/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          users: allUsers,
+          accounts,
+          orders,
+          purchaseRequests,
+          coupons,
+          adminCoupons,
+          payouts,
+          paymentSettings,
+          emailNotifications,
+        }),
+      }).catch(() => {});
+    }, 450);
+    return () => clearTimeout(syncTimer);
+  }, [allUsers, accounts, orders, purchaseRequests, coupons, adminCoupons, payouts, paymentSettings, emailNotifications]);
 
   // Listen to Firebase Auth state changes (syncs real Firebase Google & Email sessions)
   useEffect(() => {
@@ -1030,7 +1338,13 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
             }
             return prev.map((u) =>
               u.uid === existing.uid || u.email.toLowerCase() === cleanEmail
-                ? { ...existing, ...loadedProfile, role: loadedProfile.role }
+                ? {
+                    ...existing,
+                    ...loadedProfile,
+                    passwordHash: existing.passwordHash,
+                    country: existing.country || loadedProfile.country,
+                    role: loadedProfile.role,
+                  }
                 : u
             );
           }
@@ -1041,6 +1355,7 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
           if (prev && prev.email.toLowerCase() === cleanEmail) {
             return {
               ...prev,
+              passwordHash: prev.passwordHash,
               avatarUrl: prev.avatarUrl || loadedProfile.avatarUrl,
               role: isBootstrapSuperAdmin ? 'super_admin' : prev.role,
             };
@@ -1063,8 +1378,65 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
   const userAccounts = useMemo(() => {
     if (!user) return [];
-    return accounts.filter((a) => a.userId === user.uid);
-  }, [accounts, user]);
+    const cleanEmail = user.email.toLowerCase();
+    const matchingUids = new Set(
+      allUsers.filter((u) => u.email.toLowerCase() === cleanEmail).map((u) => u.uid)
+    );
+    matchingUids.add(user.uid);
+    // Also include UIDs from approved purchase requests belonging to this user's email
+    purchaseRequests.forEach((r) => {
+      if ((r.userEmail || '').toLowerCase() === cleanEmail && r.userId) {
+        matchingUids.add(r.userId);
+      }
+    });
+    return accounts.filter(
+      (a) =>
+        matchingUids.has(a.userId) ||
+        (a.userEmail && a.userEmail.toLowerCase() === cleanEmail)
+    );
+  }, [accounts, user, allUsers, purchaseRequests]);
+
+  // Automatically heal/link any accounts or purchase requests matching the logged-in user's email
+  useEffect(() => {
+    if (!user) return;
+    const cleanEmail = user.email.toLowerCase();
+    const matchingUids = new Set(
+      allUsers.filter((u) => u.email.toLowerCase() === cleanEmail).map((u) => u.uid)
+    );
+    matchingUids.add(user.uid);
+    purchaseRequests.forEach((r) => {
+      if ((r.userEmail || '').toLowerCase() === cleanEmail && r.userId) {
+        matchingUids.add(r.userId);
+      }
+    });
+
+    const needsAccountHeal = accounts.some(
+      (a) =>
+        (matchingUids.has(a.userId) || (a.userEmail || '').toLowerCase() === cleanEmail) &&
+        (a.userId !== user.uid || a.userEmail !== cleanEmail)
+    );
+    if (needsAccountHeal) {
+      setAccounts((prev) =>
+        prev.map((a) => {
+          if (matchingUids.has(a.userId) || (a.userEmail || '').toLowerCase() === cleanEmail) {
+            return { ...a, userId: user.uid, userEmail: cleanEmail };
+          }
+          return a;
+        })
+      );
+    }
+
+    const needsReqHeal = purchaseRequests.some(
+      (r) => (r.userEmail || '').toLowerCase() === cleanEmail && r.userId !== user.uid
+    );
+    if (needsReqHeal) {
+      setPurchaseRequests((prev) =>
+        prev.map((r) =>
+          (r.userEmail || '').toLowerCase() === cleanEmail ? { ...r, userId: user.uid } : r
+        )
+      );
+    }
+  }, [user, allUsers, accounts, purchaseRequests]);
 
   useEffect(() => {
     if (userAccounts.length > 0 && !userAccounts.some((a) => a.id === activeAccountId)) {
@@ -1337,8 +1709,8 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         spotAnchors[tickUpdate.symbol] = tickUpdate.bid;
         pendingWsUpdates[tickUpdate.symbol] = tickUpdate;
 
-        // When user is scrolling non-terminal pages, throttle state flushes to once every 2.8s for 60fps smooth scrolling
-        const minFlushInterval = routeRef.current === 'terminal' ? 90 : 2800;
+        // Throttle state flushes for 60fps smooth UI: 320ms on terminal, 3000ms on website pages
+        const minFlushInterval = routeRef.current === 'terminal' ? 320 : 3000;
         if (nowTs - lastWsFlushTs < minFlushInterval) {
           return;
         }
@@ -1365,12 +1737,6 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
           });
           return next;
         });
-        setLiveFeedStatus((prev) => ({
-          ...prev,
-          connected: true,
-          lastUpdateTs: nowTs,
-          tickCount: prev.tickCount + 1,
-        }));
       },
       (connected, source) => {
         if (!active) return;
@@ -1395,8 +1761,8 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
               const existing = prev[sym];
               if (incoming) {
                 spotAnchors[sym] = incoming.bid;
-                // If direct exchange WebSocket ticked within the last 2.5 seconds, keep WS price authoritative
-                const recentWs = lastWsTickTs[sym] && nowTs - lastWsTickTs[sym]! < 2500;
+                // If direct exchange WebSocket ticked within the last 2.0 seconds, keep WS price authoritative
+                const recentWs = lastWsTickTs[sym] && nowTs - lastWsTickTs[sym]! < 2000;
                 if (recentWs && existing && isDirectExchangeSymbol(sym)) {
                   next[sym] = {
                     ...existing,
@@ -1425,49 +1791,45 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     }, 10000);
 
     let tickRafId: number | null = null;
-    let lastMicroFlushTs = 0;
     const microTickInterval = setInterval(() => {
-      const nowCheck = Date.now();
-      // Only run high-frequency 450ms micro-ticks when viewing the live terminal; on website pages update every 3s
-      if (routeRef.current !== 'terminal' && nowCheck - lastMicroFlushTs < 3000) {
+      // Only run high-frequency micro-ticks when viewing the live trading terminal so website pages scroll at 120fps with zero background re-renders
+      if (routeRef.current !== 'terminal') {
         return;
       }
-      lastMicroFlushTs = nowCheck;
 
       if (tickRafId !== null) cancelAnimationFrame(tickRafId);
       tickRafId = requestAnimationFrame(() => {
         const nowMs = Date.now();
-        let hasGlobalStateUpdates = false;
 
         setQuotes((prevQuotes) => {
           const nextQuotes = { ...prevQuotes };
-          const accountsToBreach: string[] = [];
 
           (Object.keys(INSTRUMENTS) as SymbolCode[]).forEach((sym, idx) => {
             const spec = INSTRUMENTS[sym];
             const curr = prevQuotes[sym];
             if (!curr) return;
 
-            // If real WebSocket stream is actively ticking this instrument, never overwrite with synthetic drift
+            // If real WebSocket stream is actively ticking this instrument within 650ms (or 1500ms for crypto), keep WS tick
             const wsAge = lastWsTickTs[sym] ? nowMs - lastWsTickTs[sym]! : Infinity;
-            if (isDirectExchangeSymbol(sym) && wsAge < 1500) {
+            const freshThreshold = sym === 'XAUUSD' ? 650 : 1500;
+            if (isDirectExchangeSymbol(sym) && wsAge < freshThreshold) {
               return;
             }
 
             // Tightly mean-revert around the verified live spot anchor so price never drifts away from live market
             const anchor = spotAnchors[sym] ?? curr.bid;
             const minPip = Math.pow(10, -spec.decimals);
-            const stepUnit = Math.max(minPip, spec.spread * 0.45);
+            const stepUnit = sym === 'XAUUSD' ? 0.14 : Math.max(minPip, spec.spread * 0.45);
             const driftFromAnchor = curr.bid - anchor;
-            const maxAllowedExcursion = Math.max(spec.spread * 2.5, minPip * 8);
+            const maxAllowedExcursion = sym === 'XAUUSD' ? 0.65 : Math.max(spec.spread * 2.5, minPip * 8);
             const reversionPull =
               Math.abs(driftFromAnchor) > maxAllowedExcursion
                 ? -driftFromAnchor * 0.55
-                : -driftFromAnchor * 0.2;
-            const waveBias = Math.sin(nowMs / 2600 + idx * 1.3) * 0.08 * stepUnit;
-            const jitter = (Math.random() - 0.5) * stepUnit + waveBias + reversionPull;
+                : -driftFromAnchor * 0.22;
+            const waveBias = Math.sin(nowMs / 2200 + idx * 1.3) * 0.12 * stepUnit;
+            const jitter = (Math.random() - 0.5) * stepUnit * 1.4 + waveBias + reversionPull;
             const sign = jitter >= 0 ? 1 : -1;
-            const microDelta = sign * Math.max(minPip, Math.min(spec.spread * 0.8, Math.abs(jitter)));
+            const microDelta = sign * Math.max(minPip, Math.min(spec.spread * 0.85, Math.abs(jitter)));
             const nextBid = roundPrice(Math.max(spec.spread * 2, curr.bid + microDelta), sym);
             const nextAsk = roundPrice(nextBid + spec.spread, sym);
 
@@ -1480,22 +1842,12 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
               low24h: curr.low24h > 0 ? Math.min(curr.low24h, nextBid) : nextBid,
               timestamp: nowMs,
             };
-            hasGlobalStateUpdates = true;
           });
 
           return nextQuotes;
         });
-
-        if (hasGlobalStateUpdates) {
-          setLiveFeedStatus((prev) => ({
-            ...prev,
-            connected: true,
-            lastUpdateTs: nowMs,
-            tickCount: prev.tickCount + 1,
-          }));
-        }
       });
-    }, 50); // High-frequency 50ms engine tick for 20 ticks/sec processing (rAF handles 60fps visual interpolation)
+    }, 360);
 
     return () => {
       active = false;
@@ -1506,20 +1858,39 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     };
   }, []);
 
-  // Synchronize open orders & pending triggers whenever quotes update + Immediate Breach on Maximum/Daily Drawdown
+  // Synchronize open orders & pending triggers whenever quotes update + Explicitly stop updating closed positions
   useEffect(() => {
     if (orders.length === 0) return;
 
+    // Explicitly stop updating if all positions are CLOSED or CANCELLED (static state)
+    const hasAnyActiveOrder = orders.some(
+      (o) =>
+        (o.status === 'OPEN' || o.status === 'PENDING') &&
+        String(o.status).toLowerCase() !== 'closed' &&
+        !o.closeTime
+    );
+    if (!hasAnyActiveOrder) return;
+
     let balanceAdjustments: Record<string, number> = {};
     let hasOrderUpdates = false;
-    const hasAnyOpenOrder = orders.some((o) => o.status === 'OPEN');
+    const hasAnyOpenOrder = orders.some(
+      (o) => o.status === 'OPEN' && String(o.status).toLowerCase() !== 'closed' && !o.closeTime
+    );
 
     const updatedOrders = orders.map((order) => {
-      if (order.status !== 'OPEN' && order.status !== 'PENDING') return order;
+      // Explicitly freeze and never update once marked CLOSED / closed
+      if (
+        order.status === 'CLOSED' ||
+        String(order.status).toLowerCase() === 'closed' ||
+        Boolean(order.closeTime) ||
+        (order.status !== 'OPEN' && order.status !== 'PENDING')
+      ) {
+        return order;
+      }
       const quote = quotes[order.symbol];
       if (!quote) return order;
 
-      // Guard against legacy orders opened against a stale fallback quote (>20% away from live spot)
+      // Guard against legacy orders opened against a stale fallback quote (>20% away from live spot) without wiping SL/TP
       if (
         order.status === 'OPEN' &&
         order.entryPrice > 0 &&
@@ -1533,14 +1904,13 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
           order.side,
           order.volume,
           reAnchoredEntry,
-          markPrice
+          markPrice,
+          'OPEN'
         );
         return {
           ...order,
           entryPrice: reAnchoredEntry,
           currentPrice: markPrice,
-          stopLoss: 0,
-          takeProfit: 0,
           grossPnl,
           commission,
           netPnl,
@@ -1555,7 +1925,8 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
           order.side,
           order.volume,
           trigger.fillPrice,
-          order.side === 'BUY' ? quote.bid : quote.ask
+          order.side === 'BUY' ? quote.bid : quote.ask,
+          'OPEN'
         );
         return {
           ...order,
@@ -1570,16 +1941,35 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       }
 
       if (trigger.action === 'CLOSE_SL' || trigger.action === 'CLOSE_TP') {
+        const openedMs = order.openTime ? new Date(order.openTime).getTime() : 0;
+        if (openedMs > 0 && Date.now() - openedMs < 900) {
+          return order;
+        }
         hasOrderUpdates = true;
         const { grossPnl, commission, netPnl } = calculatePositionPnl(
           order.symbol,
           order.side,
           order.volume,
           order.entryPrice,
-          trigger.fillPrice
+          trigger.fillPrice,
+          'OPEN'
         );
         balanceAdjustments[order.accountId] =
           (balanceAdjustments[order.accountId] || 0) + netPnl;
+
+        if (typeof window !== 'undefined') {
+          const isTp = trigger.action === 'CLOSE_TP';
+          window.dispatchEvent(
+            new CustomEvent('apex-terminal-banner', {
+              detail: {
+                title: isTp ? 'TAKE PROFIT HIT (TP)' : 'STOP LOSS TRIGGERED (SL)',
+                subtitle: `${order.symbol} ${order.side} ${order.volume.toFixed(2)} lots closed @ ${trigger.fillPrice} (${netPnl >= 0 ? '+' : ''}$${netPnl.toFixed(2)})`,
+                tone: isTp ? 'emerald' : 'red',
+              },
+            })
+          );
+        }
+
         return {
           ...order,
           status: 'CLOSED' as const,
@@ -1593,22 +1983,15 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       }
 
       if (order.status === 'OPEN') {
-        const markPrice = order.side === 'BUY' ? quote.bid : quote.ask;
-        if (markPrice !== order.currentPrice) {
+        const snapshot = calculateOrderPnlSnapshot(order, quote);
+        if (!snapshot.isStatic && snapshot.currentPrice !== order.currentPrice) {
           hasOrderUpdates = true;
-          const { grossPnl, commission, netPnl } = calculatePositionPnl(
-            order.symbol,
-            order.side,
-            order.volume,
-            order.entryPrice,
-            markPrice
-          );
           return {
             ...order,
-            currentPrice: markPrice,
-            grossPnl,
-            commission,
-            netPnl,
+            currentPrice: snapshot.currentPrice,
+            grossPnl: snapshot.grossPnl,
+            commission: snapshot.commission,
+            netPnl: snapshot.netPnl,
           };
         }
       }
@@ -1619,102 +2002,120 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     if (hasOrderUpdates || hasAnyOpenOrder) {
       const newlyBreachedIds = new Set<string>();
       const breachDetails: { id: string; accountNumber: string; reason: string; floatingLoss: number }[] = [];
+      let didMutateAccounts = false;
 
-      setAccounts((prevAccounts) =>
-        prevAccounts.map((acc) => {
-          const realizedDelta = balanceAdjustments[acc.id] || 0;
-          const openForAcc = updatedOrders.filter(
-            (o) => o.accountId === acc.id && o.status === 'OPEN'
-          );
-          if (realizedDelta === 0 && openForAcc.length === 0) return acc;
+      const nextAccounts = accounts.map((acc) => {
+        if (acc.status === 'failed') return acc;
+        const realizedDelta = balanceAdjustments[acc.id] || 0;
+        const openForAcc = updatedOrders.filter(
+          (o) => o.accountId === acc.id && o.status === 'OPEN'
+        );
+        const closedForAcc = updatedOrders.filter(
+          (o) => o.accountId === acc.id && o.status === 'CLOSED'
+        );
+        if (realizedDelta === 0 && openForAcc.length === 0 && closedForAcc.length === 0) {
+          return acc;
+        }
 
-          const nextBalance = Math.round((acc.balance + realizedDelta) * 100) / 100;
-          const tempAcc = { ...acc, balance: nextBalance };
-          const metrics = evaluateAccountRiskMetrics(tempAcc, openForAcc);
+        const rules = resolveChallengeRulesForAccount(acc);
+        const withdrawnGross = payouts
+          .filter((p) => p.accountId === acc.id)
+          .reduce((s, p) => s + p.amountUsd / ((rules.profitSplitPct || 80) / 100), 0);
+        const nextBalance =
+          closedForAcc.length > 0
+            ? Math.round(
+                (acc.startingBalance +
+                  closedForAcc.reduce((s, o) => s + (o.netPnl || 0), 0) -
+                  withdrawnGross) *
+                  100
+              ) / 100
+            : Math.round((acc.balance + realizedDelta) * 100) / 100;
+        const tempAcc = { ...acc, balance: nextBalance };
+        const metrics = evaluateAccountRiskMetrics(tempAcc, openForAcc);
 
-          if (metrics.nextStatus === 'failed' && acc.status !== 'failed') {
-            newlyBreachedIds.add(acc.id);
-            breachDetails.push({
-              id: acc.id,
-              accountNumber: acc.accountNumber,
-              reason: metrics.breachReason || 'Maximum or Daily Drawdown Limit Breached',
-              floatingLoss: metrics.floatingPnl,
+        if (metrics.nextStatus === 'failed') {
+          newlyBreachedIds.add(acc.id);
+          breachDetails.push({
+            id: acc.id,
+            accountNumber: acc.accountNumber,
+            reason: metrics.breachReason || 'Maximum or Daily Drawdown Limit Breached',
+            floatingLoss: metrics.floatingPnl,
+          });
+        }
+
+        let nextStatus = metrics.nextStatus;
+        let nextCurrentStep = acc.currentStep ?? 1;
+        const totalSteps =
+          acc.totalSteps ??
+          (acc.challengeType === 'instant'
+            ? 0
+            : acc.challengeType === 'one_step'
+            ? 1
+            : acc.challengeType === 'two_step'
+            ? 2
+            : 3);
+
+        let nextProfitTargetPct = metrics.profitTargetPct;
+        if (metrics.stepCompleted && acc.status === 'active') {
+          if (totalSteps > 1 && nextCurrentStep < totalSteps) {
+            nextCurrentStep += 1;
+            nextStatus = 'active';
+            const stepRules = resolveChallengeRulesForAccount({
+              ...tempAcc,
+              currentStep: nextCurrentStep,
+              totalSteps,
             });
+            nextProfitTargetPct = stepRules.profitTargetPct;
+          } else {
+            nextStatus = 'passed';
+            nextCurrentStep = totalSteps;
           }
+        }
 
-          // 15% Consistency Hidden Rule Breach for Instant Accounts
-          if (acc.challengeType === 'instant' && acc.status === 'active' && !newlyBreachedIds.has(acc.id)) {
-            const closedForAcc = updatedOrders.filter(o => o.accountId === acc.id && o.status === 'CLOSED');
-            const totalProfit = closedForAcc.filter(o => o.netPnl > 0).reduce((sum, o) => sum + o.netPnl, 0);
-            const maxSingleProfit = closedForAcc.length > 0 ? Math.max(...closedForAcc.map(o => o.netPnl), 0) : 0;
-            
-            // Breach if highest single trade profit exceeds 15% of total profit (once there's meaningful profit)
-            if (totalProfit > (acc.startingBalance * 0.05) && maxSingleProfit > (totalProfit * 0.15)) {
-              newlyBreachedIds.add(acc.id);
-              metrics.nextStatus = 'failed';
-              metrics.breachReason = `15% Consistency Rule Violated: Single trade profit ($${maxSingleProfit.toFixed(2)}) exceeds 15% of total profit ($${totalProfit.toFixed(2)}).`;
-              breachDetails.push({
-                id: acc.id,
-                accountNumber: acc.accountNumber,
-                reason: metrics.breachReason,
-                floatingLoss: metrics.floatingPnl,
-              });
-            }
-          }
+        const isBreachedNow = nextStatus === 'failed';
+        const settledBreachBalance = isBreachedNow
+          ? Math.round((nextBalance + metrics.floatingPnl) * 100) / 100
+          : nextBalance;
 
-          let nextStatus = metrics.nextStatus;
-          let nextCurrentStep = acc.currentStep ?? 1;
-          const totalSteps =
-            acc.totalSteps ??
-            (acc.challengeType === 'instant'
-              ? 0
-              : acc.challengeType === 'one_step'
-              ? 1
-              : acc.challengeType === 'two_step'
-              ? 2
-              : 3);
+        const today = new Date().toISOString().split('T')[0];
+        const needsDailyReset = acc.lastDailyResetDate !== today;
+        const currentDailyStart = needsDailyReset ? metrics.equity : metrics.dailyStartingEquity;
 
-          let nextProfitTargetPct = metrics.profitTargetPct;
-          if (metrics.stepCompleted && acc.status === 'active') {
-            if (totalSteps > 1 && nextCurrentStep < totalSteps) {
-              nextCurrentStep += 1;
-              nextStatus = 'active';
-              const stepRules = resolveChallengeRulesForAccount({
-                ...tempAcc,
-                currentStep: nextCurrentStep,
-                totalSteps,
-              });
-              nextProfitTargetPct = stepRules.profitTargetPct;
-            } else {
-              nextStatus = 'passed';
-              nextCurrentStep = totalSteps;
-            }
-          }
+        const nextEquity = isBreachedNow ? settledBreachBalance : metrics.equity;
+        if (
+          acc.balance !== settledBreachBalance ||
+          acc.equity !== nextEquity ||
+          acc.status !== nextStatus ||
+          acc.currentStep !== nextCurrentStep ||
+          acc.peakEquity !== metrics.peakEquity
+        ) {
+          didMutateAccounts = true;
+        }
 
-          const isBreachedNow = nextStatus === 'failed';
-          const settledBreachBalance = isBreachedNow
-            ? Math.round((nextBalance + metrics.floatingPnl) * 100) / 100
-            : nextBalance;
+        return {
+          ...tempAcc,
+          balance: settledBreachBalance,
+          equity: nextEquity,
+          usedMargin: isBreachedNow ? 0 : metrics.usedMargin,
+          freeMargin: isBreachedNow ? settledBreachBalance : metrics.freeMargin,
+          profitTargetPct: nextProfitTargetPct,
+          dailyDrawdownPct: metrics.dailyDrawdownPct,
+          maxDrawdownPct: metrics.maxDrawdownPct,
+          peakEquity: metrics.peakEquity,
+          dailyStartingEquity: currentDailyStart,
+          lastDailyResetDate: today,
+          status: nextStatus,
+          currentStep: nextCurrentStep,
+          totalSteps,
+          terminalPassword: isBreachedNow ? '' : tempAcc.terminalPassword,
+          breachReason: metrics.breachReason || acc.breachReason,
+          updatedAt: new Date().toISOString(),
+        };
+      });
 
-          return {
-            ...tempAcc,
-            balance: settledBreachBalance,
-            equity: isBreachedNow ? settledBreachBalance : metrics.equity,
-            usedMargin: isBreachedNow ? 0 : metrics.usedMargin,
-            freeMargin: isBreachedNow ? settledBreachBalance : metrics.freeMargin,
-            profitTargetPct: nextProfitTargetPct,
-            dailyDrawdownPct: metrics.dailyDrawdownPct,
-            maxDrawdownPct: metrics.maxDrawdownPct,
-            status: nextStatus,
-            currentStep: nextCurrentStep,
-            totalSteps,
-            // Remove terminal password immediately upon account breach
-            terminalPassword: isBreachedNow ? '' : tempAcc.terminalPassword,
-            breachReason: metrics.breachReason || acc.breachReason,
-            updatedAt: new Date().toISOString(),
-          };
-        })
-      );
+      if (didMutateAccounts || newlyBreachedIds.size > 0) {
+        setAccounts(nextAccounts);
+      }
 
       if (newlyBreachedIds.size > 0) {
         const liquidatedOrders = updatedOrders.map((o) => {
@@ -1738,12 +2139,44 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         });
         setOrders(liquidatedOrders);
 
-        // Immediately lock terminal if the breached account is active, and notify trader
+        // Immediately lock terminal if the breached account is active, and notify trader + send email
         setIsTerminalUnlocked(false);
         breachDetails.forEach((b) => {
+          const breachedAcc = nextAccounts.find((a) => a.id === b.id);
+          const owner = breachedAcc
+            ? allUsers.find(
+                (u) =>
+                  u.uid === breachedAcc.userId ||
+                  (breachedAcc.userEmail && u.email.toLowerCase() === breachedAcc.userEmail.toLowerCase())
+              )
+            : null;
+          if (breachedAcc) {
+            const breachMail = buildChallengeStatusUpdateEmailPayload({
+              recipientEmail: owner?.email || breachedAcc.userEmail || user?.email || 'trader@fundedapex.com',
+              recipientName: owner?.fullName || user?.fullName || 'FUNDED APEX Trader',
+              accountId: breachedAcc.id,
+              accountNumber: breachedAcc.accountNumber,
+              challengeId: breachedAcc.challengeId,
+              challengeTitle: breachedAcc.challengeTitle,
+              accountSize: breachedAcc.accountSize,
+              status: 'failed',
+              reason: b.reason,
+              currentBalance: breachedAcc.balance,
+              currentEquity: breachedAcc.equity,
+              currentStep: breachedAcc.currentStep,
+              totalSteps: breachedAcc.totalSteps,
+              profitSplitPct: breachedAcc.profitSplitPct,
+            });
+            setEmailNotifications((prev) => [breachMail, ...prev.slice(0, 149)]);
+            fetch('/api/email/dispatch', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(breachMail),
+            }).catch(() => {});
+          }
           pushNotification(
-            `Account #${b.accountNumber} Breached — Password Removed`,
-            `${b.reason}. All open positions were immediately closed and your Terminal Password has been removed.`,
+            `Account #${b.accountNumber} Breached — Email Sent`,
+            `${b.reason}. All open positions were closed, Terminal Password removed, and breach notification emailed.`,
             'error'
           );
         });
@@ -1751,22 +2184,22 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         setOrders(updatedOrders);
       }
     }
-  }, [quotes]);
+  }, [quotes, orders, accounts, payouts, allUsers, user, pushNotification]);
 
   // Guard protected routes so they only open when a client is logged in
   useEffect(() => {
-    if (!user && ['dashboard', 'terminal', 'admin', 'support'].includes(route)) {
+    if (!user && ['dashboard', 'admin'].includes(route)) {
       setRoute('login');
     }
   }, [user, route]);
 
   const navigate = useCallback(
     (nextPage: PageRoute) => {
-      const targetPage = nextPage === 'free-spin' ? 'challenges' : nextPage;
-      if (['dashboard', 'terminal', 'admin', 'support'].includes(targetPage) && !user) {
+      const targetPage = nextPage;
+      if (['dashboard', 'admin'].includes(targetPage) && !user) {
         pushNotification(
           'Client Login Required',
-          'Please log in to your trader account to access the Live Trading Terminal & Dashboard.',
+          'Please log in to your trader account to access your Trader Dashboard.',
           'info'
         );
         setRoute('login');
@@ -1777,15 +2210,6 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         pushNotification(
           'Access Denied',
           'Administrator privileges are required to access /admin.',
-          'error'
-        );
-        setRoute('dashboard');
-        return;
-      }
-      if (targetPage === 'support' && user && !['support', 'admin', 'super_admin'].includes(user.role)) {
-        pushNotification(
-          'Access Denied',
-          'Authorized Support Agent role required.',
           'error'
         );
         setRoute('dashboard');
@@ -1835,6 +2259,21 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     []
   );
 
+  const dispatchFundedApexEmail = useCallback(
+    (payload: FundedApexEmailPayload) => {
+      setEmailNotifications((prev) => [payload, ...prev.slice(0, 149)]);
+      const mailDocId = payload.id || `mail-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+      void safeFirestoreWrite('mail_notifications', mailDocId, payload);
+      fetch('/api/email/dispatch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      }).catch(() => {});
+      return payload;
+    },
+    [safeFirestoreWrite]
+  );
+
   const dispatchTerminalCredentialsEmail = useCallback(
     (params: {
       recipientEmail: string;
@@ -1848,12 +2287,9 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       triggeredBy: 'admin_account_update' | 'admin_challenge_update' | 'account_allocation';
     }) => {
       const payload = buildTerminalCredentialsEmailPayload(params);
-      setEmailNotifications((prev) => [payload, ...prev.slice(0, 99)]);
-      const mailDocId = `mail-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
-      void safeFirestoreWrite('mail_notifications', mailDocId, payload);
-      return payload;
+      return dispatchFundedApexEmail(payload);
     },
-    [safeFirestoreWrite]
+    [dispatchFundedApexEmail]
   );
 
   const createInitialEvaluationForUser = useCallback(
@@ -1878,6 +2314,7 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         id: `acc-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
         accountNumber: acctNum,
         userId: owner.uid,
+        userEmail: owner.email.toLowerCase(),
         challengeId: challengeTemplate.id,
         challengeTitle: challengeTemplate.title,
         challengeType: challengeTemplate.type,
@@ -1896,6 +2333,9 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         profitSplitPct: challengeTemplate.profitSplitPct,
         currentStep: 1,
         totalSteps,
+        peakEquity: challengeTemplate.startingBalance,
+        dailyStartingEquity: challengeTemplate.startingBalance,
+        lastDailyResetDate: new Date().toISOString().split('T')[0],
         status: 'active',
         terminalUserId: termUserId,
         terminalPassword: termPassword,
@@ -2020,9 +2460,32 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         });
         setUser(newProfile);
 
+        // Dispatch branded FUNDED APEX Welcome Registration Email + Starter Promo Offer Email
+        dispatchFundedApexEmail(
+          buildRegistrationWelcomeEmailPayload({
+            recipientEmail: newProfile.email,
+            recipientName: newProfile.fullName,
+            referralCode: newProfile.referralCode,
+            country: newProfile.country,
+          })
+        );
+        dispatchFundedApexEmail(
+          buildPromotionalOfferEmailPayload({
+            recipientEmail: newProfile.email,
+            recipientName: newProfile.fullName,
+            offerTitle: 'New Trader Welcome Offer — 30% OFF $5K Challenge ($7.00 Only)',
+            discountPct: 30,
+            promoCode: '5K30OFF',
+            challengeId: 'two-step-5000',
+            challengeTitle: '$5K Starter Two-Step Evaluation',
+            originalPriceUsd: 10,
+            discountedPriceUsd: 7,
+          })
+        );
+
         pushNotification(
-          'Welcome to FUNDED APEX ✓',
-          `Account registered for ${newProfile.fullName} (${newProfile.email}).`,
+          'Welcome to FUNDED APEX ✓ — Confirmation Email Sent',
+          `Account registered for ${newProfile.fullName} (${newProfile.email}). Check your Email Inbox for welcome details & 30% OFF promo code!`,
           'success'
         );
 
@@ -2037,7 +2500,7 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         setAuthLoading(false);
       }
     },
-    [allUsers, pendingCheckoutChallengeId, pushNotification]
+    [allUsers, pendingCheckoutChallengeId, dispatchFundedApexEmail, pushNotification]
   );
 
   const loginWithEmail = useCallback(
@@ -2142,11 +2605,7 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
           return;
         }
 
-        if (updatedProfile.role === 'support') {
-          setRoute('support');
-        } else {
-          setRoute('dashboard');
-        }
+        setRoute('dashboard');
         pushNotification(
           'Signed In Successfully',
           `Welcome back, ${updatedProfile.fullName}!`,
@@ -2159,54 +2618,24 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     [allUsers, pendingCheckoutChallengeId, pushNotification, recordAdminLog]
   );
 
-  // Real Firebase Google Sign-In with Popup Resolver & Interactive Account Chooser Fallback
+  // Real Firebase Google Sign-In with Popup Resolver
   const loginWithGoogle = useCallback(
-    async (
-      requestAdminWorkspace?: boolean,
-      customGoogleAccount?: { email: string; fullName: string }
-    ) => {
+    async (requestAdminWorkspace?: boolean) => {
       setAuthLoading(true);
       try {
-        let fbUid = '';
-        let fbEmail = '';
-        let fbDisplayName = '';
-        let fbEmailVerified = false;
-        let fbPhotoUrl: string | undefined = undefined;
-
-        if (customGoogleAccount) {
-          const clean = customGoogleAccount.email.trim().toLowerCase();
-          if (!clean || !clean.includes('@')) {
-            throw new Error('Please enter a valid Google email address.');
-          }
-          fbUid = `google-${clean.replace(/[^a-z0-9]/g, '')}`;
-          fbEmail = clean;
-          fbDisplayName =
-            customGoogleAccount.fullName.trim() ||
-            clean.split('@')[0].replace(/[._-]/g, ' ');
-          fbEmailVerified = true;
-        } else {
-          try {
-            const cred = await signInWithPopup(auth, googleProvider, popupResolver);
-            const oauthCred = GoogleAuthProvider.credentialFromResult(cred);
-            if (oauthCred) {
-              // Validated OAuth token resolution
-            }
-            const fbUser = cred.user;
-            fbUid = fbUser.uid;
-            fbEmail = (fbUser.email || '').toLowerCase();
-            fbDisplayName =
-              fbUser.displayName ||
-              (fbEmail ? fbEmail.split('@')[0].replace(/[._-]/g, ' ') : 'FUNDED APEX Trader');
-            fbEmailVerified = Boolean(fbUser.emailVerified);
-            fbPhotoUrl = fbUser.photoURL || undefined;
-          } catch (popupErr: any) {
-            const fallbackErr = new Error(
-              popupErr?.message || 'Google popup could not open in this preview window.'
-            ) as Error & { code?: string };
-            fallbackErr.code = 'GOOGLE_POPUP_FALLBACK';
-            throw fallbackErr;
-          }
+        const cred = await signInWithPopup(auth, googleProvider, popupResolver);
+        const oauthCred = GoogleAuthProvider.credentialFromResult(cred);
+        if (oauthCred) {
+          // Validated OAuth token resolution
         }
+        const fbUser = cred.user;
+        const fbUid = fbUser.uid;
+        const fbEmail = (fbUser.email || '').toLowerCase();
+        const fbDisplayName =
+          fbUser.displayName ||
+          (fbEmail ? fbEmail.split('@')[0].replace(/[._-]/g, ' ') : 'FUNDED APEX Trader');
+        const fbEmailVerified = Boolean(fbUser.emailVerified);
+        const fbPhotoUrl = fbUser.photoURL || undefined;
 
         if (!fbEmail) {
           throw new Error('Google sign-in did not return a valid email address.');
@@ -2244,6 +2673,14 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
         if (!existing) {
           setAllUsers((prev) => [profile, ...prev]);
+          dispatchFundedApexEmail(
+            buildRegistrationWelcomeEmailPayload({
+              recipientEmail: profile.email,
+              recipientName: profile.fullName,
+              referralCode: profile.referralCode,
+              country: profile.country,
+            })
+          );
         } else {
           setAllUsers((prev) =>
             prev.map((u) =>
@@ -2294,8 +2731,6 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         ) {
           recordAdminLog('GOOGLE_ADMIN_LOGIN', profile.uid, 'Admin authenticated via Google Firebase OAuth', profile);
           setRoute('admin');
-        } else if (profile.role === 'support') {
-          setRoute('support');
         } else {
           setRoute('dashboard');
         }
@@ -2308,22 +2743,33 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         setAuthLoading(false);
       }
     },
-    [allUsers, pendingCheckoutChallengeId, pushNotification, recordAdminLog]
+    [allUsers, pendingCheckoutChallengeId, dispatchFundedApexEmail, pushNotification, recordAdminLog]
   );
 
   const sendPasswordReset = useCallback(
     async (email: string) => {
-      if (!email.trim()) throw new Error('Please enter your registered email address.');
+      const cleanEmail = email.trim().toLowerCase();
+      if (!cleanEmail) throw new Error('Please enter your registered email address.');
       try {
-        await sendPasswordResetEmail(auth, email.trim());
+        await sendPasswordResetEmail(auth, cleanEmail);
       } catch {}
+      const matchedUser = allUsers.find((u) => u.email.toLowerCase() === cleanEmail);
+      const resetToken = `APEX-RST-${Math.floor(100000 + Math.random() * 900000)}`;
+      dispatchFundedApexEmail(
+        buildPasswordResetEmailPayload({
+          recipientEmail: cleanEmail,
+          recipientName: matchedUser?.fullName || cleanEmail.split('@')[0],
+          resetCodeOrPassword: resetToken,
+          initiatedBy: 'user_self_service',
+        })
+      );
       pushNotification(
-        'Password Reset Dispatched',
-        `Password reset instructions have been sent to ${email.trim()}.`,
+        'Password Reset Email Dispatched ✓',
+        `Branded FUNDED APEX password reset instructions (Code: ${resetToken}) have been sent to ${cleanEmail}.`,
         'info'
       );
     },
-    [pushNotification]
+    [allUsers, dispatchFundedApexEmail, pushNotification]
   );
 
   const resendVerificationEmail = useCallback(async () => {
@@ -2399,31 +2845,27 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         const updatedUser = { ...user, passwordHash: nextHash };
         setUser(updatedUser);
         setAllUsers((prev) => prev.map((u) => (u.uid === user.uid ? updatedUser : u)));
+        dispatchFundedApexEmail(
+          buildPasswordResetEmailPayload({
+            recipientEmail: user.email,
+            recipientName: user.fullName,
+            initiatedBy: 'password_changed',
+          })
+        );
       }
       if (auth.currentUser) {
         await updatePassword(auth.currentUser, newPassword).catch(() => {});
       }
-      pushNotification('Password Updated', 'Your account password has been changed.', 'success');
+      pushNotification('Password Updated & Security Email Sent ✓', 'Your account password has been changed and confirmation emailed.', 'success');
     },
-    [user, pushNotification]
+    [user, dispatchFundedApexEmail, pushNotification]
   );
 
   const openStripeCheckout = useCallback(
     (challengeId: string, initialCouponCode?: string) => {
-      if (!user) {
-        setPendingCheckoutChallengeId(challengeId);
-        pushNotification(
-          'Sign In Required to Purchase Account',
-          'Please sign in or create your trader account to purchase this evaluation.',
-          'info'
-        );
-        setRoute('login');
-        window.scrollTo({ top: 0, behavior: 'smooth' });
-        return;
-      }
       setStripeCheckoutSession({ challengeId, initialCouponCode });
     },
-    [user, pushNotification]
+    []
   );
 
   const closeStripeCheckout = useCallback(() => {
@@ -2448,7 +2890,7 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     [user, challenges, createInitialEvaluationForUser, pushNotification]
   );
 
-  // Submit Account Purchase Request -> Requires Admin Confirmation before account activation!
+  // Submit Account Purchase Request -> Supports Guest Checkout (capture email/name if not logged in)
   const submitAccountPurchaseRequest = useCallback(
     (params: {
       challengeId: string;
@@ -2459,22 +2901,53 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       paymentScreenshotUrl?: string;
       finalAmountUsd: number;
       discountPct: number;
+      guestEmail?: string;
+      guestName?: string;
     }): AccountPurchaseRequest => {
-      if (!user) {
-        throw new Error('Please sign in to submit an evaluation purchase request.');
-      }
       const template =
         challenges.find((c) => c.id === params.challengeId) ||
         INITIAL_CHALLENGES.find((c) => c.id === params.challengeId) ||
         INITIAL_CHALLENGES[0];
 
+      const effectiveEmail = (user?.email || params.guestEmail || '').trim().toLowerCase();
+      const effectiveName = (user?.fullName || params.guestName || 'Guest Trader').trim();
+
+      if (!effectiveEmail) {
+        throw new Error('Email address is required for checkout verification.');
+      }
+
+      const existingDirectoryUser = allUsers.find(
+        (u) => u.email.toLowerCase() === effectiveEmail
+      );
+      const effectiveUid =
+        user?.uid ||
+        existingDirectoryUser?.uid ||
+        `usr-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+
+      if (!existingDirectoryUser) {
+        const guestProfile: UserProfileData = {
+          uid: effectiveUid,
+          fullName: effectiveName,
+          email: effectiveEmail,
+          country: 'United States',
+          referralCode: `APEX-${effectiveUid.slice(-6).toUpperCase()}`,
+          role: 'user',
+          rewardPoints: 0,
+          mfaEnabled: false,
+          deletionRequested: false,
+          createdAt: new Date().toISOString(),
+        };
+        setAllUsers((prev) => [guestProfile, ...prev]);
+        void safeFirestoreWrite('users', effectiveUid, guestProfile);
+      }
+
       const orderNum = `ORD-${Math.floor(100000 + Math.random() * 900000)}`;
       const newRequest: AccountPurchaseRequest = {
         id: `req-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
         orderNumber: orderNum,
-        userId: user.uid,
-        userFullName: user.fullName,
-        userEmail: user.email,
+        userId: effectiveUid,
+        userFullName: effectiveName,
+        userEmail: effectiveEmail,
         challengeId: template.id,
         challengeTitle: template.title,
         accountSize: template.accountSize,
@@ -2497,17 +2970,14 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       recordAdminLog(
         'PURCHASE_CONFIRMATION_REQUESTED',
         newRequest.id,
-        `Order ${orderNum}: ${user.email} requested ${template.title} ($${params.finalAmountUsd.toFixed(
+        `Order ${orderNum}: ${effectiveEmail} (${user ? 'User' : 'Guest'}) requested ${template.title} ($${params.finalAmountUsd.toFixed(
           2
-        )} via ${params.paymentMethod}, Ref: ${params.transactionRef.trim()}) — Awaiting Admin Approval`
+        )} via ${params.paymentMethod}) — Awaiting Admin Approval`
       );
 
       pushNotification(
         'Confirmation Sent to Admin ✓',
-        `Order #${orderNum} (${template.title} via ${params.paymentMethod.replace(
-          '_',
-          ' '
-        )}) has been sent to Admin for confirmation. Your account will activate upon Admin approval.`,
+        `Order #${orderNum} (${template.title}) submitted. Our team will verify your BEP-20 payment and activate your account.`,
         'success'
       );
 
@@ -2609,6 +3079,9 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
           profitSplitPct: resolvedRules.profitSplitPct,
           currentStep: resolvedRules.currentStep,
           totalSteps: resolvedRules.totalSteps,
+          peakEquity: parsedSize,
+          dailyStartingEquity: parsedSize,
+          lastDailyResetDate: new Date().toISOString().split('T')[0],
           status: 'active',
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString(),
@@ -2687,6 +3160,10 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
           ? Math.round((account.balance + metrics.floatingPnl) * 100) / 100
           : account.balance;
 
+        const today = new Date().toISOString().split('T')[0];
+        const needsDailyReset = account.lastDailyResetDate !== today;
+        const currentDailyStart = needsDailyReset ? metrics.equity : account.dailyStartingEquity;
+
         setAccounts((prev) =>
           prev.map((a) =>
             a.id === account.id
@@ -2696,6 +3173,9 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
                   equity: isBreachedOnEntry ? settledEntryBal : metrics.equity,
                   usedMargin: isBreachedOnEntry ? 0 : metrics.usedMargin,
                   freeMargin: isBreachedOnEntry ? settledEntryBal : metrics.freeMargin,
+                  peakEquity: metrics.peakEquity,
+                  dailyStartingEquity: currentDailyStart,
+                  lastDailyResetDate: today,
                   status: metrics.nextStatus,
                   terminalPassword: isBreachedOnEntry ? '' : a.terminalPassword,
                   breachReason: metrics.breachReason || a.breachReason,
@@ -2719,9 +3199,27 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
             })
           );
           setIsTerminalUnlocked(false);
+          dispatchFundedApexEmail(
+            buildChallengeStatusUpdateEmailPayload({
+              recipientEmail: user.email,
+              recipientName: user.fullName,
+              accountId: account.id,
+              accountNumber: account.accountNumber,
+              challengeId: account.challengeId,
+              challengeTitle: account.challengeTitle,
+              accountSize: account.accountSize,
+              status: 'failed',
+              reason: metrics.breachReason || 'Drawdown limit violated on trade entry',
+              currentBalance: settledEntryBal,
+              currentEquity: settledEntryBal,
+              currentStep: account.currentStep,
+              totalSteps: account.totalSteps,
+              profitSplitPct: account.profitSplitPct,
+            })
+          );
           pushNotification(
-            `Account #${account.accountNumber} Breached — Password Removed`,
-            `${metrics.breachReason || 'Drawdown limit violated'}. Terminal password has been removed.`,
+            `Account #${account.accountNumber} Breached — Email Sent`,
+            `${metrics.breachReason || 'Drawdown limit violated'}. Terminal password removed & breach email dispatched.`,
             'error'
           );
           return { ok: false, error: metrics.breachReason || 'Account breached.' };
@@ -2736,7 +3234,7 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
       return { ok: true, order: newOrder };
     },
-    [user, accounts, challenges, quotes, orders, openStripeCheckout, pushNotification]
+    [user, accounts, challenges, quotes, orders, openStripeCheckout, dispatchFundedApexEmail, pushNotification]
   );
 
   const modifyOrder = useCallback(
@@ -2744,8 +3242,39 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       const target = orders.find((o) => o.id === orderId);
       if (!target) return { ok: false, error: 'Order not found.' };
 
-      const sl = updates.stopLoss > 0 ? roundPrice(updates.stopLoss, target.symbol) : 0;
-      const tp = updates.takeProfit > 0 ? roundPrice(updates.takeProfit, target.symbol) : 0;
+      const spec = INSTRUMENTS[target.symbol];
+      const quote = quotes[target.symbol];
+      const minPip = Math.pow(10, -(spec?.decimals || 2));
+      const minDist = Math.max(minPip * 2, (spec?.spread || minPip) * 0.5);
+
+      let sl =
+        Number.isFinite(updates.stopLoss) && updates.stopLoss > 0
+          ? roundPrice(updates.stopLoss, target.symbol)
+          : 0;
+      let tp =
+        Number.isFinite(updates.takeProfit) && updates.takeProfit > 0
+          ? roundPrice(updates.takeProfit, target.symbol)
+          : 0;
+
+      // For OPEN positions, ensure SL & TP sit on the valid side of live market price by at least 2 pips so editing never glitches or self-closes immediately
+      if (target.status === 'OPEN' && quote) {
+        const markPrice = target.side === 'BUY' ? quote.bid : quote.ask;
+        if (target.side === 'BUY') {
+          if (sl > 0 && sl >= markPrice - minDist) {
+            sl = roundPrice(markPrice - minDist, target.symbol);
+          }
+          if (tp > 0 && tp <= markPrice + minDist) {
+            tp = roundPrice(markPrice + minDist, target.symbol);
+          }
+        } else {
+          if (sl > 0 && sl <= markPrice + minDist) {
+            sl = roundPrice(markPrice + minDist, target.symbol);
+          }
+          if (tp > 0 && tp >= markPrice - minDist) {
+            tp = roundPrice(markPrice - minDist, target.symbol);
+          }
+        }
+      }
 
       setOrders((prev) =>
         prev.map((o) =>
@@ -2762,9 +3291,22 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
             : o
         )
       );
+
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(
+          new CustomEvent('apex-terminal-banner', {
+            detail: {
+              title: 'SL / TP PROTECTION UPDATED',
+              subtitle: `${target.symbol} ${target.side} · SL: ${sl > 0 ? sl : 'OFF'} · TP: ${tp > 0 ? tp : 'OFF'}`,
+              tone: 'emerald',
+            },
+          })
+        );
+      }
+
       return { ok: true };
     },
-    [orders]
+    [orders, quotes]
   );
 
   const closePosition = useCallback(
@@ -2845,66 +3387,98 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       let breachMsg = '';
       let promotedPhaseMsg = '';
 
-      setAccounts((prev) =>
-        prev.map((acc) => {
-          if (acc.id !== target.accountId) return acc;
-          const nextBal = Math.round((acc.balance + closedPnl.netPnl) * 100) / 100;
-          const openForAcc = nextOrders.filter((o) => o.accountId === acc.id && o.status === 'OPEN');
-          const tempAcc = { ...acc, balance: nextBal };
-          const metrics = evaluateAccountRiskMetrics(tempAcc, openForAcc);
+      const nextAccounts = accounts.map((acc) => {
+        if (acc.id !== target.accountId) return acc;
+        const closedForAcc = nextOrders.filter(
+          (o) => o.accountId === acc.id && o.status === 'CLOSED'
+        );
+        const rules = resolveChallengeRulesForAccount(acc);
+        const withdrawnGross = payouts
+          .filter((p) => p.accountId === acc.id)
+          .reduce((s, p) => s + p.amountUsd / ((rules.profitSplitPct || 80) / 100), 0);
+        const nextBal =
+          closedForAcc.length > 0
+            ? Math.round(
+                (acc.startingBalance +
+                  closedForAcc.reduce((s, o) => s + (o.netPnl || 0), 0) -
+                  withdrawnGross) *
+                  100
+              ) / 100
+            : Math.round((acc.balance + closedPnl.netPnl) * 100) / 100;
+        const openForAcc = nextOrders.filter((o) => o.accountId === acc.id && o.status === 'OPEN');
+        const tempAcc = { ...acc, balance: nextBal };
+        const metrics = evaluateAccountRiskMetrics(tempAcc, openForAcc);
 
-          let nextStatus = metrics.nextStatus;
-          let nextCurrentStep = acc.currentStep ?? 1;
-          const totalSteps =
-            acc.totalSteps ??
-            (acc.challengeType === 'instant'
-              ? 0
-              : acc.challengeType === 'one_step'
-              ? 1
-              : acc.challengeType === 'two_step'
-              ? 2
-              : 3);
+        let nextStatus = metrics.nextStatus;
+        let nextCurrentStep = acc.currentStep ?? 1;
+        const totalSteps =
+          acc.totalSteps ??
+          (acc.challengeType === 'instant'
+            ? 0
+            : acc.challengeType === 'one_step'
+            ? 1
+            : acc.challengeType === 'two_step'
+            ? 2
+            : 3);
 
-          let nextProfitTargetPct = metrics.profitTargetPct;
-          if (metrics.nextStatus === 'failed' && acc.status !== 'failed') {
-            breachedAccountNum = acc.accountNumber;
-            breachMsg = metrics.breachReason || 'Drawdown limit violated.';
-          } else if (metrics.stepCompleted && acc.status === 'active') {
-            if (totalSteps > 1 && nextCurrentStep < totalSteps) {
-              nextCurrentStep += 1;
-              nextStatus = 'active';
-              const stepRules = resolveChallengeRulesForAccount({
-                ...tempAcc,
-                currentStep: nextCurrentStep,
-                totalSteps,
-              });
-              nextProfitTargetPct = stepRules.profitTargetPct;
-              promotedPhaseMsg = `Account #${acc.accountNumber} passed Phase ${nextCurrentStep - 1} and advanced to Phase ${nextCurrentStep} of ${totalSteps}!`;
-            } else {
-              nextStatus = 'passed';
-              nextCurrentStep = totalSteps;
-              promotedPhaseMsg = `Congratulations! Account #${acc.accountNumber} passed all evaluation steps and is now FUNDED & Payout-Eligible!`;
-            }
+        let nextProfitTargetPct = metrics.profitTargetPct;
+        if (nextStatus === 'failed' && acc.status !== 'failed') {
+          breachedAccountNum = acc.accountNumber;
+          breachMsg = metrics.breachReason || 'Drawdown limit violated.';
+        } else if (metrics.stepCompleted && acc.status === 'active') {
+          if (totalSteps > 1 && nextCurrentStep < totalSteps) {
+            nextCurrentStep += 1;
+            nextStatus = 'active';
+            const stepRules = resolveChallengeRulesForAccount({
+              ...tempAcc,
+              currentStep: nextCurrentStep,
+              totalSteps,
+            });
+            nextProfitTargetPct = stepRules.profitTargetPct;
+            promotedPhaseMsg = `Account #${acc.accountNumber} passed Phase ${nextCurrentStep - 1} and advanced to Phase ${nextCurrentStep} of ${totalSteps}!`;
+          } else {
+            nextStatus = 'passed';
+            nextCurrentStep = totalSteps;
+            promotedPhaseMsg = `Congratulations! Account #${acc.accountNumber} passed all evaluation steps and is now FUNDED & Payout-Eligible!`;
           }
+        }
 
-          const isBreachedNow = nextStatus === 'failed';
-          return {
-            ...tempAcc,
-            equity: isBreachedNow ? nextBal : metrics.equity,
-            usedMargin: isBreachedNow ? 0 : metrics.usedMargin,
-            freeMargin: isBreachedNow ? nextBal : metrics.freeMargin,
-            profitTargetPct: nextProfitTargetPct,
-            dailyDrawdownPct: metrics.dailyDrawdownPct,
-            maxDrawdownPct: metrics.maxDrawdownPct,
-            status: nextStatus,
-            currentStep: nextCurrentStep,
-            totalSteps,
-            terminalPassword: isBreachedNow ? '' : tempAcc.terminalPassword,
-            breachReason: metrics.breachReason || acc.breachReason,
-            updatedAt: new Date().toISOString(),
-          };
-        })
-      );
+        const isBreachedNow = nextStatus === 'failed';
+        const today = new Date().toISOString().split('T')[0];
+        const needsDailyReset = acc.lastDailyResetDate !== today;
+        const currentDailyStart = needsDailyReset ? metrics.equity : acc.dailyStartingEquity;
+
+        return {
+          ...tempAcc,
+          equity: isBreachedNow ? nextBal : metrics.equity,
+          usedMargin: isBreachedNow ? 0 : metrics.usedMargin,
+          freeMargin: isBreachedNow ? nextBal : metrics.freeMargin,
+          profitTargetPct: nextProfitTargetPct,
+          dailyDrawdownPct: metrics.dailyDrawdownPct,
+          maxDrawdownPct: metrics.maxDrawdownPct,
+          peakEquity: metrics.peakEquity,
+          dailyStartingEquity: currentDailyStart,
+          lastDailyResetDate: today,
+          status: nextStatus,
+          currentStep: nextCurrentStep,
+          totalSteps,
+          terminalPassword: isBreachedNow ? '' : tempAcc.terminalPassword,
+          breachReason: metrics.breachReason || acc.breachReason,
+          updatedAt: new Date().toISOString(),
+        };
+      });
+
+      setAccounts(nextAccounts);
+
+      const updatedTargetAcc = nextAccounts.find((a) => a.id === target.accountId);
+      const targetAccOwner = updatedTargetAcc
+        ? allUsers.find(
+            (u) =>
+              u.uid === updatedTargetAcc.userId ||
+              (updatedTargetAcc.userEmail &&
+                u.email.toLowerCase() === updatedTargetAcc.userEmail.toLowerCase())
+          )
+        : null;
 
       if (breachedAccountNum) {
         setOrders((prev) =>
@@ -2920,13 +3494,55 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
           })
         );
         setIsTerminalUnlocked(false);
+        if (updatedTargetAcc) {
+          dispatchFundedApexEmail(
+            buildChallengeStatusUpdateEmailPayload({
+              recipientEmail:
+                targetAccOwner?.email || updatedTargetAcc.userEmail || user?.email || 'trader@fundedapex.com',
+              recipientName: targetAccOwner?.fullName || user?.fullName || 'FUNDED APEX Trader',
+              accountId: updatedTargetAcc.id,
+              accountNumber: updatedTargetAcc.accountNumber,
+              challengeId: updatedTargetAcc.challengeId,
+              challengeTitle: updatedTargetAcc.challengeTitle,
+              accountSize: updatedTargetAcc.accountSize,
+              status: 'failed',
+              reason: breachMsg,
+              currentBalance: updatedTargetAcc.balance,
+              currentEquity: updatedTargetAcc.equity,
+              currentStep: updatedTargetAcc.currentStep,
+              totalSteps: updatedTargetAcc.totalSteps,
+              profitSplitPct: updatedTargetAcc.profitSplitPct,
+            })
+          );
+        }
         pushNotification(
-          `Account #${breachedAccountNum} Breached — Password Removed`,
-          `${breachMsg}. All open positions have been liquidated and your Terminal Password has been removed.`,
+          `Account #${breachedAccountNum} Breached — Email Sent`,
+          `${breachMsg}. All open positions have been liquidated, Terminal Password removed, and breach email sent.`,
           'error'
         );
       } else if (promotedPhaseMsg) {
-        pushNotification('Evaluation Milestone Reached ✓', promotedPhaseMsg, 'success');
+        if (updatedTargetAcc) {
+          dispatchFundedApexEmail(
+            buildChallengeStatusUpdateEmailPayload({
+              recipientEmail:
+                targetAccOwner?.email || updatedTargetAcc.userEmail || user?.email || 'trader@fundedapex.com',
+              recipientName: targetAccOwner?.fullName || user?.fullName || 'FUNDED APEX Trader',
+              accountId: updatedTargetAcc.id,
+              accountNumber: updatedTargetAcc.accountNumber,
+              challengeId: updatedTargetAcc.challengeId,
+              challengeTitle: updatedTargetAcc.challengeTitle,
+              accountSize: updatedTargetAcc.accountSize,
+              status: updatedTargetAcc.status === 'passed' ? 'passed' : 'active',
+              reason: promotedPhaseMsg,
+              currentBalance: updatedTargetAcc.balance,
+              currentEquity: updatedTargetAcc.equity,
+              currentStep: updatedTargetAcc.currentStep,
+              totalSteps: updatedTargetAcc.totalSteps,
+              profitSplitPct: updatedTargetAcc.profitSplitPct,
+            })
+          );
+        }
+        pushNotification('Evaluation Milestone Reached & Email Sent ✓', promotedPhaseMsg, 'success');
       } else {
         pushNotification(
           isPartial ? 'Position Partially Closed' : 'Position Closed',
@@ -2939,7 +3555,7 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
       return { ok: true };
     },
-    [user, orders, quotes, pushNotification]
+    [user, accounts, allUsers, payouts, orders, quotes, dispatchFundedApexEmail, pushNotification]
   );
 
   const requestAccountPayout = useCallback(
@@ -3204,6 +3820,7 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   const adminUpdateAccountStatus = useCallback(
     (accountId: string, status: AccountStatus) => {
       if (!user || !['admin', 'super_admin', 'support'].includes(user.role)) return;
+      const targetAcc = accounts.find((a) => a.id === accountId);
       setAccounts((prev) =>
         prev.map((a) =>
           a.id === accountId
@@ -3214,31 +3831,71 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
                   status === 'passed'
                     ? a.totalSteps ?? (a.challengeType === 'three_step' ? 3 : a.challengeType === 'two_step' ? 2 : 1)
                     : a.currentStep,
-                 terminalUserId:
+                terminalUserId:
                   a.terminalUserId || `APEX-ID-${(a.accountNumber || '1001').replace(/[^0-9]/g, '').slice(-4) || '2026'}`,
                 terminalPassword:
-                  status === 'failed'
+                  status === 'failed' || status === 'suspended'
                     ? ''
                     : a.terminalPassword || `APEX-${Math.floor(1000 + Math.random() * 9000)}`,
-                breachReason: status === 'failed' ? a.breachReason || 'Marked Breached by Administrator' : undefined,
+                breachReason:
+                  status === 'failed'
+                    ? a.breachReason || 'Marked Breached by Administrator'
+                    : status === 'suspended'
+                    ? 'Account Suspended by Compliance & Risk Desk'
+                    : undefined,
                 updatedAt: new Date().toISOString(),
               }
             : a
         )
       );
-      if (status === 'failed' && activeAccountId === accountId) {
+      if ((status === 'failed' || status === 'suspended') && activeAccountId === accountId) {
         setIsTerminalUnlocked(false);
       } else if ((status === 'active' || status === 'passed') && activeAccountId === accountId) {
         setIsTerminalUnlocked(true);
       }
-      recordAdminLog('UPDATE_ACCOUNT_STATUS', accountId, `Changed account status to ${status.toUpperCase()}`);
+      if (targetAcc) {
+        const owner = allUsers.find(
+          (u) =>
+            u.uid === targetAcc.userId ||
+            (targetAcc.userEmail && u.email.toLowerCase() === targetAcc.userEmail.toLowerCase())
+        );
+        dispatchFundedApexEmail(
+          buildChallengeStatusUpdateEmailPayload({
+            recipientEmail: owner?.email || targetAcc.userEmail || 'trader@fundedapex.com',
+            recipientName: owner?.fullName || 'FUNDED APEX Trader',
+            accountId: targetAcc.id,
+            accountNumber: targetAcc.accountNumber,
+            challengeId: targetAcc.challengeId,
+            challengeTitle: targetAcc.challengeTitle,
+            accountSize: targetAcc.accountSize,
+            status: status as ChallengeStatusEmailType,
+            reason:
+              status === 'passed'
+                ? 'Evaluation verified and promoted to Funded Trader status by FUNDED APEX Risk Desk.'
+                : status === 'failed'
+                ? targetAcc.breachReason || 'Evaluation marked failed due to rule breach.'
+                : status === 'suspended'
+                ? 'Account temporarily suspended pending Risk & Compliance review.'
+                : 'Account reactivated and ready for live market execution.',
+            currentBalance: targetAcc.balance,
+            currentEquity: targetAcc.equity,
+            currentStep:
+              status === 'passed'
+                ? targetAcc.totalSteps ?? 2
+                : targetAcc.currentStep,
+            totalSteps: targetAcc.totalSteps,
+            profitSplitPct: targetAcc.profitSplitPct,
+          })
+        );
+      }
+      recordAdminLog('UPDATE_ACCOUNT_STATUS', accountId, `Changed account status to ${status.toUpperCase()} and emailed trader`);
       pushNotification(
-        'Account Status Updated',
-        `Set account status to ${status.toUpperCase()}${status === 'failed' ? ' and removed Terminal Password' : ' and activated Terminal Password'}.`,
-        'info'
+        'Account Status Updated & Email Dispatched ✓',
+        `Set account status to ${status.toUpperCase()} and sent branded FUNDED APEX status notification email.`,
+        status === 'passed' || status === 'active' ? 'success' : 'warning'
       );
     },
-    [user, activeAccountId, recordAdminLog, pushNotification]
+    [user, accounts, allUsers, activeAccountId, dispatchFundedApexEmail, recordAdminLog, pushNotification]
   );
 
   const adminUpdateAccountTerminalPassword = useCallback(
@@ -3453,6 +4110,15 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
       void safeFirestoreWrite('users', uid, newProfile);
 
+      dispatchFundedApexEmail(
+        buildRegistrationWelcomeEmailPayload({
+          recipientEmail: cleanEmail,
+          recipientName: cleanName,
+          referralCode: newProfile.referralCode,
+          country: newProfile.country,
+        })
+      );
+
       let createdAccount: TradingAccountRecord | undefined = undefined;
       const shouldCreateAccount = input.createAccount !== false;
       if (shouldCreateAccount) {
@@ -3471,6 +4137,7 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
           id: `acc-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
           accountNumber: acctNum,
           userId: uid,
+          userEmail: cleanEmail,
           challengeId: `${chType.replace('_', '-')}-${initialBal}`,
           challengeTitle: `${typeLabels[chType]} ($${initialBal.toLocaleString()})`,
           challengeType: chType,
@@ -3480,7 +4147,7 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
           equity: initialBal,
           usedMargin: 0,
           freeMargin: initialBal,
-          profitTargetPct: chType === 'instant' ? 6 : chType === 'one_step' ? 10 : 8,
+          profitTargetPct: chType === 'instant' ? 0 : chType === 'one_step' ? 10 : 8,
           dailyDrawdownPct: chType === 'instant' ? 3 : chType === 'one_step' ? 4 : 5,
           maxDrawdownPct: chType === 'instant' ? 6 : chType === 'three_step' ? 12 : 10,
           minTradingDays: chType === 'instant' ? 5 : 3,
@@ -3489,6 +4156,9 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
           profitSplitPct: chType === 'instant' ? 80 : chType === 'one_step' ? 85 : 90,
           currentStep: 1,
           totalSteps: chType === 'instant' ? 0 : chType === 'one_step' ? 1 : chType === 'two_step' ? 2 : 3,
+          peakEquity: initialBal,
+          dailyStartingEquity: initialBal,
+          lastDailyResetDate: new Date().toISOString().split('T')[0],
           status: 'active',
           terminalUserId: termUserId,
           terminalPassword: termPassword,
@@ -3535,7 +4205,7 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         plainPassword: cleanPass,
       };
     },
-    [user, allUsers, safeFirestoreWrite, dispatchTerminalCredentialsEmail, recordAdminLog, pushNotification]
+    [user, allUsers, safeFirestoreWrite, dispatchFundedApexEmail, dispatchTerminalCredentialsEmail, recordAdminLog, pushNotification]
   );
 
   // Manual Account Allocation to any existing user by Admin
@@ -3562,6 +4232,7 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         id: `acc-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
         accountNumber: acctNum,
         userId: targetUser.uid,
+        userEmail: targetUser.email.toLowerCase(),
         challengeId: template.id,
         challengeTitle: template.title,
         challengeType: template.type,
@@ -3580,6 +4251,9 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         profitSplitPct: template.profitSplitPct,
         currentStep: 1,
         totalSteps: template.type === 'instant' ? 0 : template.type === 'one_step' ? 1 : template.type === 'two_step' ? 2 : 3,
+        peakEquity: template.startingBalance,
+        dailyStartingEquity: template.startingBalance,
+        lastDailyResetDate: new Date().toISOString().split('T')[0],
         status: 'active',
         terminalUserId: termUserId,
         terminalPassword: termPassword,
@@ -3643,16 +4317,25 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
       void safeFirestoreWrite('users', targetUid, { passwordHash: newHash });
 
-      recordAdminLog('ADMIN_RESET_PASSWORD', targetUid, `Admin reset password for ${target.email}`);
+      dispatchFundedApexEmail(
+        buildPasswordResetEmailPayload({
+          recipientEmail: target.email,
+          recipientName: target.fullName,
+          resetCodeOrPassword: cleanPass,
+          initiatedBy: 'admin_reset',
+        })
+      );
+
+      recordAdminLog('ADMIN_RESET_PASSWORD', targetUid, `Admin reset password for ${target.email} and dispatched email`);
       pushNotification(
-        'Password Reset Successful',
-        `Updated login password for ${target.email}.`,
+        'Password Reset & Email Dispatched ✓',
+        `Updated login password for ${target.email} and emailed new credentials.`,
         'success'
       );
 
-      return { ok: true, message: `Password for ${target.email} has been updated.` };
+      return { ok: true, message: `Password for ${target.email} has been updated and emailed.` };
     },
-    [user, allUsers, safeFirestoreWrite, recordAdminLog, pushNotification]
+    [user, allUsers, safeFirestoreWrite, dispatchFundedApexEmail, recordAdminLog, pushNotification]
   );
 
   const adminDeleteUser = useCallback(
@@ -3696,11 +4379,200 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         createdAt: new Date().toISOString(),
       };
       setAdminCoupons((prev) => [newCoupon, ...prev]);
-      recordAdminLog('CREATE_COUPON', newCoupon.id, `Created coupon ${cleanCode} (${pct}% OFF)`);
-      pushNotification('Coupon Code Created ✓', `Coupon ${cleanCode} (${pct}% OFF) is now live for checkout.`, 'success');
+      dispatchFundedApexEmail(
+        buildPromotionalOfferEmailPayload({
+          recipientEmail: 'all@fundedapex.com',
+          recipientName: 'FUNDED APEX Traders',
+          offerTitle: newCoupon.description,
+          discountPct: pct,
+          promoCode: cleanCode,
+          challengeId: 'two-step-5000',
+          challengeTitle: '$5K – $200K Evaluation Programs',
+        })
+      );
+      recordAdminLog('CREATE_COUPON', newCoupon.id, `Created coupon ${cleanCode} (${pct}% OFF) and broadcast promotional email`);
+      pushNotification('Coupon Created & Promo Email Broadcast ✓', `Coupon ${cleanCode} (${pct}% OFF) is now live and emailed to traders.`, 'success');
       return { ok: true, coupon: newCoupon };
     },
-    [user, adminCoupons, recordAdminLog, pushNotification]
+    [user, adminCoupons, dispatchFundedApexEmail, recordAdminLog, pushNotification]
+  );
+
+  const adminBroadcastPromotionalEmail = useCallback(
+    (input: {
+      recipientEmail?: string;
+      recipientName?: string;
+      offerTitle: string;
+      discountPct: number;
+      promoCode: string;
+      challengeId?: string;
+      challengeTitle?: string;
+      originalPriceUsd?: number;
+      discountedPriceUsd?: number;
+    }) => {
+      if (!user || !['admin', 'super_admin'].includes(user.role)) {
+        return { ok: false, error: 'Unauthorized: Admin role required.' };
+      }
+      const cleanPromo = input.promoCode.trim().toUpperCase() || '5K30OFF';
+      const cleanTitle = input.offerTitle.trim() || `${input.discountPct}% OFF Evaluation Flash Promo`;
+      const targetEmail = (input.recipientEmail || 'all@fundedapex.com').trim().toLowerCase();
+      const targetName = (input.recipientName || (targetEmail === 'all@fundedapex.com' ? 'FUNDED APEX Traders' : targetEmail.split('@')[0])).trim();
+
+      const mail = dispatchFundedApexEmail(
+        buildPromotionalOfferEmailPayload({
+          recipientEmail: targetEmail,
+          recipientName: targetName,
+          offerTitle: cleanTitle,
+          discountPct: Math.min(100, Math.max(1, Math.round(input.discountPct || 30))),
+          promoCode: cleanPromo,
+          challengeId: input.challengeId || 'two-step-5000',
+          challengeTitle: input.challengeTitle || '$5K Starter Two-Step Evaluation',
+          originalPriceUsd: input.originalPriceUsd,
+          discountedPriceUsd: input.discountedPriceUsd,
+        })
+      );
+
+      recordAdminLog(
+        'BROADCAST_PROMO_EMAIL',
+        mail.id,
+        `Dispatched promotional offer "${cleanTitle}" (Code: ${cleanPromo}) to ${targetEmail}`
+      );
+      pushNotification(
+        'Promotional Offer Email Dispatched ✓',
+        `Sent "${cleanTitle}" (Code: ${cleanPromo}) to ${targetEmail}.`,
+        'success'
+      );
+      return { ok: true, email: mail };
+    },
+    [user, dispatchFundedApexEmail, recordAdminLog, pushNotification]
+  );
+
+  const adminSendEmailNotification = useCallback(
+    (input: {
+      eventType: EmailEventType;
+      recipientEmail: string;
+      recipientName: string;
+      challengeStatus?: ChallengeStatusEmailType;
+      accountNumber?: string;
+      challengeTitle?: string;
+      accountSize?: number;
+      breachOrStatusReason?: string;
+      promoCode?: string;
+      discountPct?: number;
+    }) => {
+      if (!user || !['admin', 'super_admin'].includes(user.role)) {
+        return { ok: false, error: 'Unauthorized: Admin role required.' };
+      }
+      const cleanEmail = input.recipientEmail.trim().toLowerCase() || 'all@fundedapex.com';
+      const cleanName = input.recipientName.trim() || 'FUNDED APEX Trader';
+
+      let payload: FundedApexEmailPayload;
+      if (input.eventType === 'registration_welcome') {
+        payload = buildRegistrationWelcomeEmailPayload({
+          recipientEmail: cleanEmail,
+          recipientName: cleanName,
+          referralCode: 'APEX-VIP',
+          country: 'Global',
+        });
+      } else if (input.eventType === 'password_reset') {
+        payload = buildPasswordResetEmailPayload({
+          recipientEmail: cleanEmail,
+          recipientName: cleanName,
+          resetCodeOrPassword: `APEX-RST-${Math.floor(100000 + Math.random() * 900000)}`,
+          initiatedBy: 'admin_reset',
+        });
+      } else if (input.eventType === 'challenge_status_update') {
+        payload = buildChallengeStatusUpdateEmailPayload({
+          recipientEmail: cleanEmail,
+          recipientName: cleanName,
+          accountNumber: input.accountNumber || 'FA-882410',
+          challengeId: 'two-step-50000',
+          challengeTitle: input.challengeTitle || 'Two Step Challenge ($50,000)',
+          accountSize: input.accountSize || 50000,
+          status: input.challengeStatus || 'passed',
+          reason: input.breachOrStatusReason,
+          currentBalance: input.accountSize || 50000,
+          currentEquity: input.accountSize || 50000,
+          currentStep: 1,
+          totalSteps: 2,
+          profitSplitPct: 90,
+        });
+      } else if (input.eventType === 'promotional_offer') {
+        payload = buildPromotionalOfferEmailPayload({
+          recipientEmail: cleanEmail,
+          recipientName: cleanName,
+          offerTitle: `${input.discountPct || 30}% OFF Exclusive Prop Firm Evaluation Offer`,
+          discountPct: input.discountPct || 30,
+          promoCode: (input.promoCode || '5K30OFF').toUpperCase(),
+          challengeId: 'two-step-5000',
+          challengeTitle: input.challengeTitle || '$5K Starter Two-Step Evaluation',
+          originalPriceUsd: 10,
+          discountedPriceUsd: 7,
+        });
+      } else {
+        payload = buildTerminalCredentialsEmailPayload({
+          recipientEmail: cleanEmail,
+          recipientName: cleanName,
+          accountId: 'acc-manual',
+          accountNumber: input.accountNumber || 'FA-882410',
+          challengeId: 'two-step-50000',
+          challengeTitle: input.challengeTitle || 'Two Step Challenge ($50,000)',
+          terminalUserId: 'APEX-ID-8410',
+          terminalPassword: 'APEX-2026',
+          triggeredBy: 'admin_account_update',
+        });
+      }
+
+      dispatchFundedApexEmail(payload);
+      recordAdminLog(
+        'DISPATCH_EMAIL_NOTIFICATION',
+        payload.id,
+        `Sent ${input.eventType.toUpperCase()} email to ${cleanEmail}`
+      );
+      pushNotification(
+        'Branded Email Dispatched ✓',
+        `Sent ${payload.subject} to ${cleanEmail}.`,
+        'success'
+      );
+      return { ok: true, email: payload };
+    },
+    [user, dispatchFundedApexEmail, recordAdminLog, pushNotification]
+  );
+
+  const adminSendManualEmail = useCallback(
+    (input: CustomManualEmailInput) => {
+      if (!user || !['admin', 'super_admin'].includes(user.role)) {
+        return { ok: false, error: 'Unauthorized: Admin role required.' };
+      }
+      const cleanEmail = (input.recipientEmail || '').trim();
+      if (!cleanEmail) {
+        return { ok: false, error: 'Recipient email address is required.' };
+      }
+      if (!input.subject || !input.subject.trim()) {
+        return { ok: false, error: 'Email subject line is required.' };
+      }
+      if (!input.bodyTextOrHtml || !input.bodyTextOrHtml.trim()) {
+        return { ok: false, error: 'Email message body cannot be empty.' };
+      }
+
+      const payload = buildCustomManualEmailPayload({
+        ...input,
+        adminSenderEmail: user.email || FUNDED_APEX_SUPPORT_EMAIL,
+      });
+
+      dispatchFundedApexEmail(payload);
+      recordAdminLog(
+        'DISPATCH_MANUAL_EMAIL',
+        payload.id,
+        `Sent manual professional email "${payload.subject}" to ${cleanEmail}`
+      );
+      pushNotification(
+        'Professional Email Dispatched ✓',
+        `Delivered "${payload.subject}" to ${cleanEmail}.`,
+        'success'
+      );
+      return { ok: true, email: payload };
+    },
+    [user, dispatchFundedApexEmail, recordAdminLog, pushNotification]
   );
 
   const adminToggleCoupon = useCallback(
@@ -3761,6 +4633,29 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         INITIAL_CHALLENGES.find((c) => c.id === req.challengeId) ||
         INITIAL_CHALLENGES[0];
 
+      const cleanReqEmail = (req.userEmail || '').trim().toLowerCase();
+      const matchedDirectoryUser = allUsers.find(
+        (u) => u.uid === req.userId || (cleanReqEmail && u.email.toLowerCase() === cleanReqEmail)
+      );
+      const effectiveOwnerUid = matchedDirectoryUser?.uid || req.userId;
+
+      if (!matchedDirectoryUser && cleanReqEmail) {
+        const autoProfile: UserProfileData = {
+          uid: effectiveOwnerUid,
+          fullName: req.userFullName || 'FUNDED APEX Trader',
+          email: cleanReqEmail,
+          country: 'United States',
+          referralCode: `APEX-${effectiveOwnerUid.slice(-6).toUpperCase()}`,
+          role: 'user',
+          rewardPoints: 0,
+          mfaEnabled: false,
+          deletionRequested: false,
+          createdAt: new Date().toISOString(),
+        };
+        setAllUsers((prev) => [autoProfile, ...prev]);
+        void safeFirestoreWrite('users', effectiveOwnerUid, autoProfile);
+      }
+
       const acctNum = `FA-${Math.floor(100000 + Math.random() * 900000)}`;
       const termUserId =
         template.terminalUserId || `APEX-ID-${Math.floor(1000 + Math.random() * 9000)}`;
@@ -3769,7 +4664,8 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       const newAcc: TradingAccountRecord = {
         id: `acc-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
         accountNumber: acctNum,
-        userId: req.userId,
+        userId: effectiveOwnerUid,
+        userEmail: cleanReqEmail || matchedDirectoryUser?.email.toLowerCase(),
         challengeId: template.id,
         challengeTitle: template.title,
         challengeType: template.type,
@@ -3788,6 +4684,9 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         profitSplitPct: template.profitSplitPct,
         currentStep: 1,
         totalSteps: template.type === 'instant' ? 0 : template.type === 'one_step' ? 1 : template.type === 'two_step' ? 2 : 3,
+        peakEquity: template.startingBalance,
+        dailyStartingEquity: template.startingBalance,
+        lastDailyResetDate: new Date().toISOString().split('T')[0],
         status: 'active',
         terminalUserId: termUserId,
         terminalPassword: termPassword,
@@ -3796,7 +4695,8 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       };
 
       setAccounts((prev) => [newAcc, ...prev]);
-      if (req.userId === user.uid) {
+      void safeFirestoreWrite('trading_accounts', newAcc.id, newAcc);
+      if (effectiveOwnerUid === user.uid || cleanReqEmail === user.email.toLowerCase()) {
         setActiveAccountId(newAcc.id);
         setIsTerminalUnlocked(true);
       }
@@ -3874,6 +4774,72 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     [user, purchaseRequests, recordAdminLog, pushNotification]
   );
 
+  const uploadAccountCertificateImage = useCallback(
+    (accountId: string, imageUrl: string) => {
+      setAccounts((prev) =>
+        prev.map((acc) => {
+          if (acc.id !== accountId) return acc;
+          const updated = {
+            ...acc,
+            certificateImageUrl: imageUrl,
+            updatedAt: new Date().toISOString(),
+          };
+          void safeFirestoreWrite('trading_accounts', acc.id, updated);
+          return updated;
+        })
+      );
+      setPaymentSettings((prev) => {
+        const nextAccountCerts = { ...(prev.accountCertificates || {}) };
+        if (imageUrl) {
+          nextAccountCerts[accountId] = imageUrl;
+        } else {
+          delete nextAccountCerts[accountId];
+        }
+        const nextSettings: PaymentGatewaySettings = {
+          ...prev,
+          accountCertificates: nextAccountCerts,
+        };
+        void safeFirestoreWrite('platform_config', 'payment_settings', nextSettings);
+        return nextSettings;
+      });
+      pushNotification(
+        imageUrl ? 'Account Certificate Image Uploaded ✓' : 'Account Certificate Reset',
+        imageUrl
+          ? 'Custom certificate image saved for this specific trading account.'
+          : 'Reverted to default certificate template for this account.',
+        'success'
+      );
+    },
+    [pushNotification]
+  );
+
+  const uploadChallengeCertificateImage = useCallback(
+    (challengeType: ChallengeType, imageUrl: string) => {
+      setPaymentSettings((prev) => {
+        const nextChallengeCerts = { ...(prev.challengeCertificates || {}) };
+        if (imageUrl) {
+          nextChallengeCerts[challengeType] = imageUrl;
+        } else {
+          delete nextChallengeCerts[challengeType];
+        }
+        const nextSettings: PaymentGatewaySettings = {
+          ...prev,
+          challengeCertificates: nextChallengeCerts,
+        };
+        void safeFirestoreWrite('platform_config', 'payment_settings', nextSettings);
+        return nextSettings;
+      });
+      pushNotification(
+        imageUrl ? 'Challenge Certificate Image Uploaded ✓' : 'Challenge Certificate Reset',
+        imageUrl
+          ? `Custom certificate image saved for ${challengeType.replace('_', ' ').toUpperCase()} challenge.`
+          : `Reverted ${challengeType.replace('_', ' ').toUpperCase()} certificate template to default.`,
+        'success'
+      );
+    },
+    [pushNotification]
+  );
+
   return (
     <PlatformContext.Provider
       value={{
@@ -3900,6 +4866,11 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         purchaseRequests,
         userPurchaseRequests,
         emailNotifications,
+        userEmailNotifications,
+        markEmailNotificationRead,
+        adminBroadcastPromotionalEmail,
+        adminSendEmailNotification,
+        adminSendManualEmail,
         payouts,
         verifiedPayouts,
         leaderboard,
@@ -3947,6 +4918,8 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         adminToggleCoupon,
         adminDeleteCoupon,
         adminSavePaymentSettings,
+        uploadAccountCertificateImage,
+        uploadChallengeCertificateImage,
         adminApprovePurchaseRequest,
         adminRejectPurchaseRequest,
         isTerminalUnlocked,

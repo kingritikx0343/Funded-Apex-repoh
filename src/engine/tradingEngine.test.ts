@@ -31,6 +31,9 @@ const sampleAccount: TradingAccountRecord = {
   tradingDaysCount: 3,
   leverage: 100,
   status: 'active',
+  peakEquity: 50000,
+  dailyStartingEquity: 50000,
+  lastDailyResetDate: '2026-10-30',
   createdAt: '2026-10-30T00:00:00Z',
   updatedAt: '2026-10-30T00:00:00Z',
 };
@@ -253,18 +256,26 @@ test('parseBinance24hrTicker and parseForexRatesToQuotes normalize real market A
   assert.equal(btcTick.bid, 89420.5);
   assert.equal(btcTick.change24hPct, 3.42);
 
-  const xauTick = parseBinance24hrTicker({
-    symbol: 'PAXGUSDT',
-    bidPrice: '2864.20',
-    askPrice: '2864.80',
-    lastPrice: '2864.50',
-    priceChangePercent: '1.15',
-    highPrice: '2879.00',
-    lowPrice: '2831.00',
+  const ethTick = parseBinance24hrTicker({
+    symbol: 'ETHUSDT',
+    bidPrice: '3120.40',
+    askPrice: '3120.80',
+    lastPrice: '3120.60',
+    priceChangePercent: '1.85',
+    highPrice: '3180.00',
+    lowPrice: '3050.00',
   });
-  assert.ok(xauTick);
-  assert.equal(xauTick.symbol, 'XAUUSD');
-  assert.equal(xauTick.bid, 2864.2);
+  assert.ok(ethTick);
+  assert.equal(ethTick.symbol, 'ETHUSD');
+  assert.equal(ethTick.bid, 3120.4);
+
+  // PAXGUSDT must NOT overwrite XAUUSD directly so Spot Gold never lags 100 pips behind XAU/USD
+  const paxgIgnored = parseBinance24hrTicker({
+    symbol: 'PAXGUSDT',
+    bidPrice: '4105.80',
+    askPrice: '4106.20',
+  });
+  assert.equal(paxgIgnored, null);
 
   const fxQuotes = parseForexRatesToQuotes(
     { EUR: 0.9225, GBP: 0.7712, JPY: 153.42 },
@@ -457,6 +468,9 @@ test('evaluateAccountPayoutEligibility enforces Instant vs 2-Step/3-Step complet
     balance: 52000,
     equity: 52000,
     profitSplitPct: 90,
+    peakEquity: 50000,
+    dailyStartingEquity: 50000,
+    lastDailyResetDate: '2026-10-30',
     status: 'active',
   };
   const instantElig = evaluateAccountPayoutEligibility(instantProfitable, []);
@@ -560,14 +574,14 @@ test('resolveChallengeRulesForAccount and evaluateAccountRiskMetrics enforce acc
     './tradingEngine'
   );
 
-  // 1. Instant Funding: 3% Daily DD, 6% Max DD, 6% Profit Target, 1:30 Leverage
+  // 1. Instant Funding: 3% Daily DD, 6% Max DD, 0% Profit Target (Direct Funded), 1:30 Leverage
   const instantRules = resolveChallengeRulesForAccount({
     challengeId: 'instant-10000',
     challengeType: 'instant',
   });
   assert.equal(instantRules.dailyDrawdownPct, 3);
   assert.equal(instantRules.maxDrawdownPct, 6);
-  assert.equal(instantRules.profitTargetPct, 6);
+  assert.equal(instantRules.profitTargetPct, 0);
   assert.equal(instantRules.leverage, 30);
 
   // 2. 1-Step Evaluation: 4% Daily DD, 6% Max DD, 10% Profit Target, 1:50 Leverage
@@ -634,7 +648,7 @@ test('resolveChallengeRulesForAccount and evaluateAccountRiskMetrics enforce acc
   assert.equal(previewMetrics.profitProgressPct, 50); // +$200 of +$400 target = 50%
 });
 
-test('profitable accounts never breach and Instant accounts exclusively enforce 15% consistency hidden rule', async () => {
+test('profitable accounts never breach and Instant accounts enforce 15% consistency rule in payout eligibility', async () => {
   const {
     resolveChallengeRulesForAccount,
     evaluateAccountRiskMetrics,
@@ -648,6 +662,9 @@ test('profitable accounts never breach and Instant accounts exclusively enforce 
     startingBalance: 5000,
     balance: 5600,
     equity: 5250,
+    peakEquity: 5600,
+    dailyStartingEquity: 5000,
+    lastDailyResetDate: '2026-11-07',
     dailyDrawdownPct: 5,
     maxDrawdownPct: 10,
     status: 'active',
@@ -679,7 +696,7 @@ test('profitable accounts never breach and Instant accounts exclusively enforce 
   assert.equal(profMetrics.dailyDropUsd, 0);
   assert.notEqual(profMetrics.nextStatus, 'failed');
 
-  // 2. 15% Consistency Hidden Rule is 15% ONLY on 'instant' and 0% on 'one_step', 'two_step', 'three_step'
+  // 2. 15% Consistency Rule is 15% on 'instant' and 0% on 'one_step', 'two_step', 'three_step'
   assert.equal(resolveChallengeRulesForAccount({ challengeType: 'instant' }).consistencyRulePct, 15);
   assert.equal(resolveChallengeRulesForAccount({ challengeType: 'one_step' }).consistencyRulePct, 0);
   assert.equal(resolveChallengeRulesForAccount({ challengeType: 'two_step' }).consistencyRulePct, 0);
@@ -693,6 +710,9 @@ test('profitable accounts never breach and Instant accounts exclusively enforce 
     startingBalance: 10000,
     balance: 10500,
     equity: 10500,
+    peakEquity: 10500,
+    dailyStartingEquity: 10000,
+    lastDailyResetDate: '2026-11-07',
     status: 'active',
   };
   const bigClosedTrade: TradeOrderRecord = {
@@ -748,5 +768,304 @@ test('buildSpotAnchoredCandles and alignCandlesToSpot preserve natural live and 
   }
 });
 
+test('evaluateAccountRiskMetrics attaches Evaluation P&L directly to Max Drawdown, Daily Drawdown, and Profit Target', () => {
+  // Case 1: Evaluation P&L is in profit (+$420 realized, -$70 floating => +$350 net evaluation P&L on $10,000 start)
+  // Max Drawdown and Daily Drawdown MUST be $0.00 (0%), and Profit Target progress reflects +$350.00
+  const inProfitAcc: TradingAccountRecord = {
+    ...sampleAccount,
+    accountSize: 10000,
+    startingBalance: 10000,
+    balance: 10420,
+    equity: 10350,
+    peakEquity: 10500,
+    dailyStartingEquity: 10420,
+    profitTargetPct: 8,
+    dailyDrawdownPct: 5,
+    maxDrawdownPct: 10,
+    status: 'active',
+  };
+  const openOrderLoss70: TradeOrderRecord = {
+    id: 'ord-dd-1',
+    ticketId: 'TKT-7701',
+    accountId: inProfitAcc.id,
+    userId: inProfitAcc.userId,
+    symbol: 'XAUUSD',
+    side: 'BUY',
+    orderType: 'MARKET',
+    volume: 0.5,
+    entryPrice: 4050,
+    currentPrice: 4048.6,
+    exitPrice: 0,
+    stopLoss: 0,
+    takeProfit: 0,
+    grossPnl: -67.5,
+    commission: 2.5,
+    netPnl: -70,
+    status: 'OPEN',
+    openTime: '2026-11-09T00:00:00Z',
+    closeTime: '',
+  };
+  const profitMetrics = evaluateAccountRiskMetrics(inProfitAcc, [openOrderLoss70]);
+  assert.equal(profitMetrics.equity, 10350);
+  assert.equal(profitMetrics.netGainUsd, 350);
+  assert.equal(profitMetrics.profitTargetUsd, 800);
+  assert.equal(profitMetrics.profitProgressPct, 43.75);
+  assert.equal(profitMetrics.overallDropUsd, 0);
+  assert.equal(profitMetrics.maxDrawdownUsedPct, 0);
+  assert.equal(profitMetrics.dailyDropUsd, 0);
+  assert.equal(profitMetrics.dailyDrawdownUsedPct, 0);
 
+  // Case 2: Evaluation P&L is in loss (-$250 realized, -$150 floating => -$400 net evaluation P&L on $10,000 start)
+  // Max Drawdown and Daily Drawdown MUST equal $400.00 (40% of $1,000 Max DD limit, 80% of $500 Daily DD limit)
+  const inLossAcc: TradingAccountRecord = {
+    ...inProfitAcc,
+    balance: 9750,
+    equity: 9600,
+    peakEquity: 10000,
+    dailyStartingEquity: 10000,
+  };
+  const openOrderLoss150: TradeOrderRecord = {
+    ...openOrderLoss70,
+    netPnl: -150,
+  };
+  const lossMetrics = evaluateAccountRiskMetrics(inLossAcc, [openOrderLoss150]);
+  assert.equal(lossMetrics.equity, 9600);
+  assert.equal(lossMetrics.netGainUsd, 0);
+  assert.equal(lossMetrics.profitProgressPct, 0);
+  assert.equal(lossMetrics.overallDropUsd, 400);
+  assert.equal(lossMetrics.maxLossLimitUsd, 1000);
+  assert.equal(lossMetrics.maxDrawdownUsedPct, 40);
+  assert.equal(lossMetrics.dailyDropUsd, 400);
+  assert.equal(lossMetrics.dailyLossLimitUsd, 500);
+  assert.equal(lossMetrics.dailyDrawdownUsedPct, 80);
+});
+
+test('FUNDED APEX email notification builders generate branded emails with clear CTAs for registration, password reset, challenge status updates, and promotions', async () => {
+  const {
+    buildRegistrationWelcomeEmailPayload,
+    buildPasswordResetEmailPayload,
+    buildChallengeStatusUpdateEmailPayload,
+    buildPromotionalOfferEmailPayload,
+  } = await import('./cloudFunctionsEmail');
+
+  // 1. Registration Welcome Email
+  const regMail = buildRegistrationWelcomeEmailPayload({
+    recipientEmail: 'newtrader@fundedapex.com',
+    recipientName: 'Aarav Sharma',
+    referralCode: 'APEX-AARAV',
+    country: 'India',
+  });
+  assert.equal(regMail.eventType, 'registration_welcome');
+  assert.equal(regMail.to, 'newtrader@fundedapex.com');
+  assert.ok(regMail.subject.includes('FUNDED APEX'));
+  assert.ok(regMail.html.includes('FUNDED'));
+  assert.ok(regMail.html.includes('Aarav Sharma'));
+  assert.ok(regMail.ctaLabel.length > 0);
+  assert.ok(regMail.ctaUrl.startsWith('https://fundedapex.com'));
+
+  // 2. Password Reset Email
+  const resetMail = buildPasswordResetEmailPayload({
+    recipientEmail: 'newtrader@fundedapex.com',
+    recipientName: 'Aarav Sharma',
+    resetCodeOrPassword: 'APEX-RST-889900',
+    initiatedBy: 'user_self_service',
+  });
+  assert.equal(resetMail.eventType, 'password_reset');
+  assert.ok(resetMail.subject.includes('FUNDED APEX'));
+  assert.ok(resetMail.html.includes('APEX-RST-889900'));
+  assert.ok(resetMail.ctaLabel.includes('Password') || resetMail.ctaLabel.includes('Account'));
+
+  // 3. Challenge Status Updates: passed, failed, suspended
+  const passedMail = buildChallengeStatusUpdateEmailPayload({
+    recipientEmail: 'newtrader@fundedapex.com',
+    recipientName: 'Aarav Sharma',
+    accountNumber: 'FA-501122',
+    challengeId: 'two-step-50000',
+    challengeTitle: 'Two Step Challenge ($50,000)',
+    accountSize: 50000,
+    status: 'passed',
+    currentBalance: 54200,
+    currentEquity: 54200,
+    profitSplitPct: 90,
+  });
+  assert.equal(passedMail.eventType, 'challenge_status_update');
+  assert.equal(passedMail.challengeStatus, 'passed');
+  assert.ok(passedMail.subject.includes('PASSED'));
+  assert.ok(passedMail.ctaLabel.includes('Payout') || passedMail.ctaLabel.includes('Dashboard'));
+
+  const failedMail = buildChallengeStatusUpdateEmailPayload({
+    recipientEmail: 'newtrader@fundedapex.com',
+    recipientName: 'Aarav Sharma',
+    accountNumber: 'FA-501122',
+    challengeId: 'two-step-50000',
+    challengeTitle: 'Two Step Challenge ($50,000)',
+    accountSize: 50000,
+    status: 'failed',
+    reason: 'Maximum Drawdown Limit Breached (-10.2%)',
+    currentBalance: 44900,
+    currentEquity: 44900,
+  });
+  assert.equal(failedMail.challengeStatus, 'failed');
+  assert.ok(failedMail.subject.includes('Update'));
+  assert.ok(failedMail.html.includes('Maximum Drawdown Limit Breached'));
+  assert.ok(failedMail.ctaLabel.includes('20% OFF') || failedMail.ctaLabel.includes('Evaluation'));
+
+  const suspendedMail = buildChallengeStatusUpdateEmailPayload({
+    recipientEmail: 'newtrader@fundedapex.com',
+    recipientName: 'Aarav Sharma',
+    accountNumber: 'FA-501122',
+    challengeId: 'two-step-50000',
+    challengeTitle: 'Two Step Challenge ($50,000)',
+    accountSize: 50000,
+    status: 'suspended',
+    reason: 'Account suspended pending Compliance & Risk review.',
+  });
+  assert.equal(suspendedMail.challengeStatus, 'suspended');
+  assert.ok(suspendedMail.subject.includes('Suspended'));
+  assert.ok(suspendedMail.ctaLabel.includes('Compliance') || suspendedMail.ctaLabel.includes('Review'));
+
+  // 4. Promotional Offer Email
+  const promoMail = buildPromotionalOfferEmailPayload({
+    recipientEmail: 'all@fundedapex.com',
+    recipientName: 'FUNDED APEX Traders',
+    offerTitle: '$5K Starter 30% OFF Flash Sale',
+    discountPct: 30,
+    promoCode: '5K30OFF',
+    challengeId: 'two-step-5000',
+    challengeTitle: '$5K Two-Step Evaluation',
+    originalPriceUsd: 10,
+    discountedPriceUsd: 7,
+  });
+  assert.equal(promoMail.eventType, 'promotional_offer');
+  assert.equal(promoMail.promoCode, '5K30OFF');
+  assert.ok(promoMail.html.includes('5K30OFF'));
+  assert.ok(promoMail.ctaLabel.includes('30% OFF'));
+});
+
+test('buildCustomManualEmailPayload formats institutional HTML with custom badge, body, highlights, and CTA button', async () => {
+  const { buildCustomManualEmailPayload } = await import('./cloudFunctionsEmail');
+
+  const manualEmail = buildCustomManualEmailPayload({
+    recipientEmail: 'vip.trader@fundedapex.com',
+    recipientName: 'Vikram Mehta',
+    subject: 'Urgent: Institutional Risk Review for Account #FA-992104',
+    headline: 'Executive Account Assessment',
+    subheadline: 'Review of risk compliance and profit allocation metrics',
+    badgeText: 'RISK AUDIT PASSED',
+    badgeColor: '#00FFA3',
+    bodyText: `Dear Vikram,\n\nWe have reviewed your recent trading metrics on Account #FA-992104. All daily drawdown, max drawdown, and risk exposure parameters comply strictly with institutional rules.\n\nPlease proceed to submit your payout request via the Trader Dashboard.`,
+    highlights: [
+      { label: 'Account Number', value: 'FA-992104' },
+      { label: 'Audit Status', value: '100% Compliant' },
+      { label: 'Calculated Profit Split', value: '$12,450.00 (90%)' },
+      { label: 'Eligible Payout Date', value: 'Immediate' },
+    ],
+    ctaLabel: 'Open Payout Request in Dashboard',
+    ctaUrl: 'https://fundedapex.com/dashboard?tab=payouts',
+    ctaColor: '#00FFA3',
+    adminNotes: 'Manual risk assessment verified by Lead Risk Officer.',
+  });
+
+  assert.equal(manualEmail.eventType, 'custom_manual');
+  assert.equal(manualEmail.to, 'vip.trader@fundedapex.com');
+  assert.equal(manualEmail.subject, 'Urgent: Institutional Risk Review for Account #FA-992104');
+  assert.ok(manualEmail.html.includes('Executive Account Assessment'));
+  assert.ok(manualEmail.html.includes('RISK AUDIT PASSED'));
+  assert.ok(manualEmail.html.includes('FA-992104'));
+  assert.ok(manualEmail.html.includes('$12,450.00 (90%)'));
+  assert.ok(manualEmail.html.includes('Open Payout Request in Dashboard'));
+  assert.ok(manualEmail.html.includes('https://fundedapex.com/dashboard?tab=payouts'));
+  assert.ok(manualEmail.html.includes('fundedapexsupport@gmail.com'));
+});
+
+test('getTimeframeSeconds and live market feed supports 1W and 1M candlestick charts up to 1 Month', async () => {
+  const { getTimeframeSeconds, getTimeframeStepMultiplier } = await import('./liveMarketFeed');
+
+  assert.equal(getTimeframeSeconds('1m'), 60);
+  assert.equal(getTimeframeSeconds('5m'), 300);
+  assert.equal(getTimeframeSeconds('1h'), 3600);
+  assert.equal(getTimeframeSeconds('1d'), 86400);
+  assert.equal(getTimeframeSeconds('1W'), 604800);
+  assert.equal(getTimeframeSeconds('1M'), 2592000);
+
+  assert.ok(getTimeframeStepMultiplier('1W') > 5);
+  assert.ok(getTimeframeStepMultiplier('1M') > 10);
+});
+
+test('calculateOrderPnlSnapshot and evaluateAccountRiskMetrics explicitly stop updating PnL once position state is marked closed', async () => {
+  const { calculateOrderPnlSnapshot, evaluateAccountRiskMetrics } = await import('./tradingEngine');
+
+  const closedOrder = {
+    id: 'ord-closed-1',
+    ticketId: '900101',
+    accountId: 'acc-1',
+    userId: 'usr-1',
+    symbol: 'XAUUSD' as const,
+    side: 'BUY' as const,
+    orderType: 'MARKET' as const,
+    volume: 1,
+    entryPrice: 4700,
+    currentPrice: 4725,
+    exitPrice: 4725,
+    stopLoss: 0,
+    takeProfit: 0,
+    status: 'CLOSED' as const,
+    grossPnl: 2500,
+    commission: 7,
+    netPnl: 2493,
+    openTime: '2026-11-10T01:00:00.000Z',
+    closeTime: '2026-11-10T02:00:00.000Z',
+  };
+
+  // Even when live market quote moves drastically to 4950, closed position PnL remains frozen at 2493
+  const movedQuote = {
+    symbol: 'XAUUSD' as const,
+    bid: 4950,
+    ask: 4950.35,
+    last: 4950.17,
+    change24hPct: 1.5,
+    high24h: 4960,
+    low24h: 4680,
+    timestamp: Date.now(),
+  };
+
+  const snap = calculateOrderPnlSnapshot(closedOrder, movedQuote);
+  assert.equal(snap.isStatic, true);
+  assert.equal(snap.currentPrice, 4725);
+  assert.equal(snap.netPnl, 2493);
+
+  // Also test evaluateAccountRiskMetrics ignores any closed order passed in openOrders array
+  const acc = {
+    id: 'acc-1',
+    accountNumber: 'FA-100001',
+    userId: 'usr-1',
+    challengeId: 'two-step-50000',
+    challengeTitle: '2-Step $50K',
+    challengeType: 'two_step' as const,
+    accountSize: 50000,
+    startingBalance: 50000,
+    balance: 52493,
+    equity: 52493,
+    usedMargin: 0,
+    freeMargin: 52493,
+    profitTargetPct: 8,
+    dailyDrawdownPct: 5,
+    maxDrawdownPct: 10,
+    minTradingDays: 3,
+    tradingDaysCount: 3,
+    leverage: 100,
+    profitSplitPct: 90,
+    currentStep: 1,
+    totalSteps: 2,
+    peakEquity: 52493,
+    dailyStartingEquity: 50000,
+    lastDailyResetDate: '2026-11-10',
+    status: 'active' as const,
+    createdAt: '2026-11-01T00:00:00.000Z',
+    updatedAt: '2026-11-10T00:00:00.000Z',
+  };
+  const metrics = evaluateAccountRiskMetrics(acc, [closedOrder]);
+  assert.equal(metrics.floatingPnl, 0);
+  assert.equal(metrics.equity, 52493);
+});
 

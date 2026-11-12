@@ -6,3 +6,17 @@ coverage/
 *.log
 .env*
 !.env.example
+
+# Local server database vault
+.data/
+.aistudio/
+
+# Credentials & secrets (prevents GitHub Push Protection blocks)
+*client_secret*.json
+*.pem
+*.key
+
+# Temporary media & testing captures
+*.mp4
+verify-*.png
+bun.lock

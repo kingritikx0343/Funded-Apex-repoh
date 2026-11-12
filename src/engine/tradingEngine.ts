@@ -63,6 +63,7 @@ export interface TradingAccountRecord {
   id: string;
   accountNumber: string;
   userId: string;
+  userEmail?: string;
   challengeId: string;
   challengeTitle: string;
   challengeType: ChallengeType;
@@ -81,10 +82,14 @@ export interface TradingAccountRecord {
   profitSplitPct?: number;
   currentStep?: number;
   totalSteps?: number;
+  peakEquity: number;
+  dailyStartingEquity: number;
+  lastDailyResetDate: string;
   status: AccountStatus;
   breachReason?: string;
   terminalUserId?: string;
   terminalPassword?: string;
+  certificateImageUrl?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -140,12 +145,12 @@ export const INSTRUMENTS: Record<SymbolCode, InstrumentSpec> = {
     shortName: 'GOLD',
     category: 'Metals',
     tvSymbol: 'OANDA:XAUUSD',
-    basePrice: 2748.50,
-    spread: 0.24,
+    basePrice: 4094.00,
+    spread: 0.45,
     decimals: 2,
     contractSize: 100,
     commissionPerLot: 5.0,
-    volatility: 0.85,
+    volatility: 1.25,
   },
   XAGUSD: {
     symbol: 'XAGUSD',
@@ -153,12 +158,12 @@ export const INSTRUMENTS: Record<SymbolCode, InstrumentSpec> = {
     shortName: 'SILVER',
     category: 'Metals',
     tvSymbol: 'OANDA:XAGUSD',
-    basePrice: 32.40,
-    spread: 0.02,
+    basePrice: 53.25,
+    spread: 0.04,
     decimals: 3,
     contractSize: 5000,
     commissionPerLot: 5.0,
-    volatility: 0.08,
+    volatility: 0.12,
   },
   USOIL: {
     symbol: 'USOIL',
@@ -166,7 +171,7 @@ export const INSTRUMENTS: Record<SymbolCode, InstrumentSpec> = {
     shortName: 'CRUDE',
     category: 'Commodities',
     tvSymbol: 'FX:USOIL',
-    basePrice: 71.40,
+    basePrice: 84.40,
     spread: 0.04,
     decimals: 2,
     contractSize: 1000,
@@ -179,7 +184,7 @@ export const INSTRUMENTS: Record<SymbolCode, InstrumentSpec> = {
     shortName: 'BRENT',
     category: 'Commodities',
     tvSymbol: 'FX:UKOIL',
-    basePrice: 75.20,
+    basePrice: 88.20,
     spread: 0.04,
     decimals: 2,
     contractSize: 1000,
@@ -194,7 +199,7 @@ export const INSTRUMENTS: Record<SymbolCode, InstrumentSpec> = {
     shortName: 'EUR/USD',
     category: 'Forex',
     tvSymbol: 'FX:EURUSD',
-    basePrice: 1.08420,
+    basePrice: 1.1186,
     spread: 0.00012,
     decimals: 5,
     contractSize: 100000,
@@ -207,7 +212,7 @@ export const INSTRUMENTS: Record<SymbolCode, InstrumentSpec> = {
     shortName: 'GBP/USD',
     category: 'Forex',
     tvSymbol: 'FX:GBPUSD',
-    basePrice: 1.29840,
+    basePrice: 1.3416,
     spread: 0.00015,
     decimals: 5,
     contractSize: 100000,
@@ -220,7 +225,7 @@ export const INSTRUMENTS: Record<SymbolCode, InstrumentSpec> = {
     shortName: 'USD/JPY',
     category: 'Forex',
     tvSymbol: 'FX:USDJPY',
-    basePrice: 152.640,
+    basePrice: 158.030,
     spread: 0.014,
     decimals: 3,
     contractSize: 100000,
@@ -233,7 +238,7 @@ export const INSTRUMENTS: Record<SymbolCode, InstrumentSpec> = {
     shortName: 'USD/CHF',
     category: 'Forex',
     tvSymbol: 'FX:USDCHF',
-    basePrice: 0.86520,
+    basePrice: 0.81900,
     spread: 0.00014,
     decimals: 5,
     contractSize: 100000,
@@ -246,7 +251,7 @@ export const INSTRUMENTS: Record<SymbolCode, InstrumentSpec> = {
     shortName: 'AUD/USD',
     category: 'Forex',
     tvSymbol: 'FX:AUDUSD',
-    basePrice: 0.65820,
+    basePrice: 0.68950,
     spread: 0.00014,
     decimals: 5,
     contractSize: 100000,
@@ -259,7 +264,7 @@ export const INSTRUMENTS: Record<SymbolCode, InstrumentSpec> = {
     shortName: 'USD/CAD',
     category: 'Forex',
     tvSymbol: 'FX:USDCAD',
-    basePrice: 1.38950,
+    basePrice: 1.40990,
     spread: 0.00016,
     decimals: 5,
     contractSize: 100000,
@@ -272,7 +277,7 @@ export const INSTRUMENTS: Record<SymbolCode, InstrumentSpec> = {
     shortName: 'NZD/USD',
     category: 'Forex',
     tvSymbol: 'FX:NZDUSD',
-    basePrice: 0.59840,
+    basePrice: 0.56110,
     spread: 0.00018,
     decimals: 5,
     contractSize: 100000,
@@ -285,7 +290,7 @@ export const INSTRUMENTS: Record<SymbolCode, InstrumentSpec> = {
     shortName: 'EUR/GBP',
     category: 'Forex',
     tvSymbol: 'FX:EURGBP',
-    basePrice: 0.83510,
+    basePrice: 0.83380,
     spread: 0.00015,
     decimals: 5,
     contractSize: 100000,
@@ -298,7 +303,7 @@ export const INSTRUMENTS: Record<SymbolCode, InstrumentSpec> = {
     shortName: 'EUR/JPY',
     category: 'Forex',
     tvSymbol: 'FX:EURJPY',
-    basePrice: 165.480,
+    basePrice: 176.790,
     spread: 0.018,
     decimals: 3,
     contractSize: 100000,
@@ -311,7 +316,7 @@ export const INSTRUMENTS: Record<SymbolCode, InstrumentSpec> = {
     shortName: 'GBP/JPY',
     category: 'Forex',
     tvSymbol: 'FX:GBPJPY',
-    basePrice: 198.180,
+    basePrice: 212.020,
     spread: 0.022,
     decimals: 3,
     contractSize: 100000,
@@ -326,12 +331,12 @@ export const INSTRUMENTS: Record<SymbolCode, InstrumentSpec> = {
     shortName: 'NAS100',
     category: 'Indices',
     tvSymbol: 'FOREXCOM:NSXUSD',
-    basePrice: 21485.50,
-    spread: 1.20,
+    basePrice: 28375.00,
+    spread: 2.20,
     decimals: 2,
     contractSize: 10,
     commissionPerLot: 3.5,
-    volatility: 8.5,
+    volatility: 12.5,
   },
   US30: {
     symbol: 'US30',
@@ -339,12 +344,12 @@ export const INSTRUMENTS: Record<SymbolCode, InstrumentSpec> = {
     shortName: 'US30',
     category: 'Indices',
     tvSymbol: 'FOREXCOM:DJI',
-    basePrice: 43890.00,
-    spread: 1.80,
+    basePrice: 51525.00,
+    spread: 3.80,
     decimals: 2,
     contractSize: 10,
     commissionPerLot: 3.5,
-    volatility: 12.0,
+    volatility: 18.0,
   },
   US500: {
     symbol: 'US500',
@@ -352,12 +357,12 @@ export const INSTRUMENTS: Record<SymbolCode, InstrumentSpec> = {
     shortName: 'US500',
     category: 'Indices',
     tvSymbol: 'FOREXCOM:SPXUSD',
-    basePrice: 6012.25,
-    spread: 0.50,
+    basePrice: 7212.25,
+    spread: 0.80,
     decimals: 2,
     contractSize: 10,
     commissionPerLot: 3.5,
-    volatility: 2.4,
+    volatility: 4.4,
   },
   GER40: {
     symbol: 'GER40',
@@ -365,7 +370,7 @@ export const INSTRUMENTS: Record<SymbolCode, InstrumentSpec> = {
     shortName: 'GER40',
     category: 'Indices',
     tvSymbol: 'FOREXCOM:GER40',
-    basePrice: 19450.00,
+    basePrice: 21450.00,
     spread: 1.50,
     decimals: 2,
     contractSize: 10,
@@ -378,7 +383,7 @@ export const INSTRUMENTS: Record<SymbolCode, InstrumentSpec> = {
     shortName: 'UK100',
     category: 'Indices',
     tvSymbol: 'FOREXCOM:UK100',
-    basePrice: 8240.00,
+    basePrice: 8840.00,
     spread: 1.20,
     decimals: 2,
     contractSize: 10,
@@ -393,12 +398,12 @@ export const INSTRUMENTS: Record<SymbolCode, InstrumentSpec> = {
     shortName: 'BTC/USD',
     category: 'Crypto',
     tvSymbol: 'BINANCE:BTCUSDT',
-    basePrice: 89420.00,
-    spread: 12.50,
+    basePrice: 75870.00,
+    spread: 18.50,
     decimals: 2,
     contractSize: 1,
     commissionPerLot: 8.0,
-    volatility: 45.0,
+    volatility: 55.0,
   },
   ETHUSD: {
     symbol: 'ETHUSD',
@@ -406,7 +411,7 @@ export const INSTRUMENTS: Record<SymbolCode, InstrumentSpec> = {
     shortName: 'ETH/USD',
     category: 'Crypto',
     tvSymbol: 'BINANCE:ETHUSDT',
-    basePrice: 2945.80,
+    basePrice: 2105.00,
     spread: 1.20,
     decimals: 2,
     contractSize: 10,
@@ -419,7 +424,7 @@ export const INSTRUMENTS: Record<SymbolCode, InstrumentSpec> = {
     shortName: 'SOL/USD',
     category: 'Crypto',
     tvSymbol: 'BINANCE:SOLUSDT',
-    basePrice: 184.50,
+    basePrice: 194.50,
     spread: 0.25,
     decimals: 2,
     contractSize: 10,
@@ -432,7 +437,7 @@ export const INSTRUMENTS: Record<SymbolCode, InstrumentSpec> = {
     shortName: 'XRP/USD',
     category: 'Crypto',
     tvSymbol: 'BINANCE:XRPUSDT',
-    basePrice: 0.5840,
+    basePrice: 0.6240,
     spread: 0.0012,
     decimals: 4,
     contractSize: 1000,
@@ -445,7 +450,7 @@ export const INSTRUMENTS: Record<SymbolCode, InstrumentSpec> = {
     shortName: 'BNB/USD',
     category: 'Crypto',
     tvSymbol: 'BINANCE:BNBUSDT',
-    basePrice: 594.00,
+    basePrice: 624.00,
     spread: 0.40,
     decimals: 2,
     contractSize: 10,
@@ -481,14 +486,87 @@ export function calculatePositionPnl(
   side: OrderSide,
   volume: number,
   entryPrice: number,
-  currentPrice: number
+  currentPrice: number,
+  status?: OrderStatus | 'closed' | 'open',
+  frozenPnl?: { grossPnl: number; commission: number; netPnl: number }
 ): { grossPnl: number; commission: number; netPnl: number } {
+  if (
+    status &&
+    (status === 'CLOSED' ||
+      status === 'CANCELLED' ||
+      String(status).toLowerCase() === 'closed') &&
+    frozenPnl
+  ) {
+    return {
+      grossPnl: frozenPnl.grossPnl,
+      commission: frozenPnl.commission,
+      netPnl: frozenPnl.netPnl,
+    };
+  }
   const spec = INSTRUMENTS[symbol];
   const priceDiff = side === 'BUY' ? currentPrice - entryPrice : entryPrice - currentPrice;
   const grossPnl = Math.round(priceDiff * spec.contractSize * volume * 100) / 100;
   const commission = Math.round(spec.commissionPerLot * volume * 100) / 100;
   const netPnl = Math.round((grossPnl - commission) * 100) / 100;
   return { grossPnl, commission, netPnl };
+}
+
+/**
+ * Evaluates a position's PnL and explicitly stops updating once the position state
+ * is marked as 'CLOSED' / 'closed', returning its static frozen values.
+ */
+export function calculateOrderPnlSnapshot(
+  order: TradeOrderRecord,
+  liveQuote?: MarketQuote
+): {
+  currentPrice: number;
+  grossPnl: number;
+  commission: number;
+  netPnl: number;
+  isStatic: boolean;
+} {
+  const isClosedState =
+    order.status === 'CLOSED' ||
+    order.status === 'CANCELLED' ||
+    String(order.status).toLowerCase() === 'closed' ||
+    Boolean(order.closeTime);
+
+  if (isClosedState || order.status !== 'OPEN') {
+    const frozenPrice = order.exitPrice > 0 ? order.exitPrice : order.currentPrice;
+    return {
+      currentPrice: frozenPrice,
+      grossPnl: order.grossPnl,
+      commission: order.commission,
+      netPnl: order.netPnl,
+      isStatic: true,
+    };
+  }
+
+  if (!liveQuote) {
+    return {
+      currentPrice: order.currentPrice,
+      grossPnl: order.grossPnl,
+      commission: order.commission,
+      netPnl: order.netPnl,
+      isStatic: false,
+    };
+  }
+
+  const markPrice = order.side === 'BUY' ? liveQuote.bid : liveQuote.ask;
+  const pnl = calculatePositionPnl(
+    order.symbol,
+    order.side,
+    order.volume,
+    order.entryPrice,
+    markPrice
+  );
+  return {
+    currentPrice: markPrice,
+    grossPnl: pnl.grossPnl,
+    commission: pnl.commission,
+    netPnl: pnl.netPnl,
+    isStatic: false,
+  };
 }
 
 export function calculateOrderRisk(
@@ -813,7 +891,7 @@ export function resolveChallengeRulesForAccount(
 
   let defaultTargetPct = 8;
   if (chType === 'instant') {
-    defaultTargetPct = 6;
+    defaultTargetPct = 0;
   } else if (chType === 'one_step') {
     defaultTargetPct = 10;
   } else if (chType === 'two_step') {
@@ -831,9 +909,11 @@ export function resolveChallengeRulesForAccount(
       ? account.maxDrawdownPct
       : defaultMaxDd;
 
-  // For two_step phase 2, ensure 5% target is used unless custom configured
+  // Instant Funding is direct-funded from Day 1 and has NO profit target (0%)
   const profitTargetPct =
-    chType === 'two_step' && currentStep === 2
+    chType === 'instant'
+      ? 0
+      : chType === 'two_step' && currentStep === 2
       ? 5
       : account.profitTargetPct && account.profitTargetPct > 0
       ? account.profitTargetPct
@@ -864,7 +944,7 @@ export function resolveChallengeRulesForAccount(
       ? 85
       : 90;
 
-  // 15% Consistency Hidden Rule applies strictly and exclusively to Instant accounts
+  // 15% Consistency Rule applies to payout eligibility
   const consistencyRulePct = chType === 'instant' ? 15 : 0;
 
   return {
@@ -909,6 +989,8 @@ export interface AccountRiskMetrics {
   dailyDrawdownUsedPct: number;
   maxDrawdownUsedPct: number;
   profitProgressPct: number;
+  peakEquity: number;
+  dailyStartingEquity: number;
   nextStatus: AccountStatus;
   breachReason?: string;
   stepCompleted?: boolean;
@@ -948,11 +1030,19 @@ export function evaluateAccountRiskMetrics(
 ): AccountRiskMetrics {
   const rules = resolveChallengeRulesForAccount(account);
 
+  // Explicitly exclude any order marked as 'CLOSED' / 'closed' so closed positions never contribute to live floating PnL
+  const strictlyOpenOrders = openOrders.filter(
+    (o) =>
+      o.status === 'OPEN' &&
+      String(o.status).toLowerCase() !== 'closed' &&
+      !o.closeTime
+  );
+
   const floatingPnl =
-    Math.round(openOrders.reduce((sum, o) => sum + o.netPnl, 0) * 100) / 100;
+    Math.round(strictlyOpenOrders.reduce((sum, o) => sum + o.netPnl, 0) * 100) / 100;
   const usedMargin =
     Math.round(
-      openOrders.reduce(
+      strictlyOpenOrders.reduce(
         (sum, o) =>
           sum + calculateRequiredMargin(o.symbol, o.volume, o.entryPrice, rules.leverage),
         0
@@ -973,15 +1063,30 @@ export function evaluateAccountRiskMetrics(
   const profitTargetUsd =
     Math.round(account.startingBalance * (rules.profitTargetPct / 100) * 100) / 100;
 
-  // Strictly measure drawdown from startingBalance so an account in net profit (equity >= startingBalance) NEVER gets falsely breached
-  const isAccountInProfitOrBreakEven = equity >= account.startingBalance;
-  const lossFromStartingBalanceUsd = isAccountInProfitOrBreakEven
-    ? 0
-    : Math.max(0, Math.round((account.startingBalance - equity) * 100) / 100);
+  const currentPeak = Math.max(account.peakEquity || account.startingBalance, equity);
+  const currentDailyStart = account.dailyStartingEquity || account.startingBalance;
 
-  const overallDropUsd = lossFromStartingBalanceUsd;
-  const dailyDropUsd = lossFromStartingBalanceUsd;
-  const currentDrawdownUsd = lossFromStartingBalanceUsd;
+  // Directly attach Max Drawdown to Evaluation P&L relative to Starting Balance:
+  // When evaluation P&L is in profit (equity >= startingBalance), Max Drawdown used is $0.00 (0%).
+  // When evaluation P&L is negative (equity < startingBalance), Max Drawdown used equals exact loss (startingBalance - equity).
+  const overallDropUsd =
+    equity < account.startingBalance
+      ? Math.max(0, Math.round((account.startingBalance - equity) * 100) / 100)
+      : 0;
+
+  // Daily Drawdown checks both loss below startingBalance AND intraday loss from dailyStartingEquity
+  const intradayDropFromDailyStart =
+    currentDailyStart > equity
+      ? Math.max(0, Math.round((currentDailyStart - equity) * 100) / 100)
+      : 0;
+  const dailyDropUsd =
+    equity < account.startingBalance
+      ? Math.max(overallDropUsd, intradayDropFromDailyStart)
+      : intradayDropFromDailyStart >= dailyLossLimitUsd
+      ? intradayDropFromDailyStart
+      : 0;
+
+  const currentDrawdownUsd = overallDropUsd;
   const currentDrawdownPct =
     Math.round((currentDrawdownUsd / Math.max(1, account.startingBalance)) * 10000) / 100;
 
@@ -1021,15 +1126,15 @@ export function evaluateAccountRiskMetrics(
   let stepCompleted = false;
 
   const isInstant = rules.challengeType === 'instant';
-  
+
   if (account.status === 'active' || account.status === 'passed' || account.status === 'completed') {
-    // Profitable accounts (equity >= startingBalance) can NEVER breach by drawdown
-    if (!isAccountInProfitOrBreakEven && overallDropUsd >= maxLossLimitUsd) {
+    // Strictly enforce Max Drawdown and Daily Drawdown rules on live floating equity & balance
+    if (overallDropUsd >= maxLossLimitUsd) {
       nextStatus = 'failed';
-      breachReason = `Maximum Drawdown Limit Breached (-$${overallDropUsd.toFixed(2)} / -$${maxLossLimitUsd.toFixed(2)})`;
-    } else if (!isAccountInProfitOrBreakEven && dailyDropUsd >= dailyLossLimitUsd) {
+      breachReason = `Maximum Drawdown Limit Breached (${rules.maxDrawdownPct}% | Loss: -$${overallDropUsd.toFixed(2)} | Max Limit: -$${maxLossLimitUsd.toFixed(2)})`;
+    } else if (dailyDropUsd >= dailyLossLimitUsd) {
       nextStatus = 'failed';
-      breachReason = `Daily Drawdown Limit Breached (-$${dailyDropUsd.toFixed(2)} / -$${dailyLossLimitUsd.toFixed(2)})`;
+      breachReason = `Daily Drawdown Limit Breached (${rules.dailyDrawdownPct}% | Daily Loss: -$${dailyDropUsd.toFixed(2)} | Daily Limit: -$${dailyLossLimitUsd.toFixed(2)})`;
     } else if (
       account.status === 'active' &&
       !isInstant &&
@@ -1069,6 +1174,8 @@ export function evaluateAccountRiskMetrics(
     dailyDrawdownUsedPct,
     maxDrawdownUsedPct,
     profitProgressPct,
+    peakEquity: currentPeak,
+    dailyStartingEquity: currentDailyStart,
     nextStatus,
     breachReason,
     stepCompleted,
@@ -1114,23 +1221,21 @@ export function evaluateAccountPayoutEligibility(
   const isEvaluationPassed =
     account.status === 'passed' || account.status === 'completed';
 
-  // 15% Consistency Hidden Rule applies ONLY to Instant accounts (never 1-Step, 2-Step, or 3-Step)
+  // 15% Consistency Rule in Payout Section
   const consistencyRulePct = isInstant ? 15 : 0;
-  const winningClosedForAcc = isInstant
-    ? closedOrders.filter(
-        (o) => o.accountId === account.id && o.status === 'CLOSED' && o.netPnl > 0
-      )
-    : [];
+  const winningClosedForAcc = closedOrders.filter(
+    (o) => o.accountId === account.id && o.status === 'CLOSED' && o.netPnl > 0
+  );
   const maxSingleTradeProfitUsd =
     winningClosedForAcc.length > 0
       ? Math.round(Math.max(...winningClosedForAcc.map((o) => o.netPnl)) * 100) / 100
       : 0;
   const requiredConsistentProfitUsd =
-    isInstant && maxSingleTradeProfitUsd > 0
-      ? Math.round((maxSingleTradeProfitUsd / (consistencyRulePct / 100)) * 100) / 100
+    maxSingleTradeProfitUsd > 0
+      ? Math.round((maxSingleTradeProfitUsd / 0.15) * 100) / 100
       : 0;
   const highestTradeSharePct =
-    isInstant && netProfitUsd > 0 && maxSingleTradeProfitUsd > 0
+    netProfitUsd > 0 && maxSingleTradeProfitUsd > 0
       ? Math.round((maxSingleTradeProfitUsd / netProfitUsd) * 10000) / 100
       : 0;
   const isConsistencyViolated =
@@ -1164,7 +1269,7 @@ export function evaluateAccountPayoutEligibility(
   } else if (!hasPositiveProfit) {
     reason = `No positive P&L available to withdraw (Current Realized P&L: ${realizedProfitUsd >= 0 ? '+' : ''}$${realizedProfitUsd.toFixed(2)}). Generate trading profit above $${account.startingBalance.toLocaleString()} starting capital to request a payout.`;
   } else if (isConsistencyViolated) {
-    reason = `Instant Account 15% Consistency Hidden Rule: Highest single trade profit (+$${maxSingleTradeProfitUsd.toFixed(2)}) is ${highestTradeSharePct.toFixed(1)}% of total profit (+$${netProfitUsd.toFixed(2)}), exceeding the 15% consistency limit. Required total profit to unlock payout: +$${requiredConsistentProfitUsd.toFixed(2)}.`;
+    reason = `15% Consistency Rule: Highest single trade profit (+$${maxSingleTradeProfitUsd.toFixed(2)}) is ${highestTradeSharePct.toFixed(1)}% of total profit (+$${netProfitUsd.toFixed(2)}), exceeding the 15% consistency limit. Required total profit to unlock payout: +$${requiredConsistentProfitUsd.toFixed(2)}.`;
   }
 
   return {

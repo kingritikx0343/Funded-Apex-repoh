@@ -1,24 +1,29 @@
-import React, { useState } from 'react';
+import React from 'react';
 
-interface FundedApexLogoProps {
+export interface FundedApexLogoProps {
   className?: string;
   size?: 'sm' | 'md' | 'lg' | 'xl';
   showText?: boolean;
   textVariant?: 'horizontal' | 'stacked';
+  variant?: 'main' | 'compact' | 'mobile' | 'loading' | 'dashboard';
+  subtitle?: string;
 }
 
 /**
- * Official FUNDED APEX Brand Logo:
- * Featuring the official metallic crown & cyan candlestick circular emblem
- * from the user's authentic brand image with liquid glow aura and wordmark.
+ * Official FUNDED APEX White Metallic Crowned-Shield 'FA' Sticker Logo
+ * - Exact match to uploaded reference: White brushed-platinum crowned shield monogram (F + A)
+ * - Unframed sticker style (no surrounding box or border frame)
+ * - Bold geometric all-caps white FUNDED APEX wordmark
  */
 export const FundedApexLogo: React.FC<FundedApexLogoProps> = ({
   className = '',
   size = 'md',
   showText = true,
   textVariant = 'horizontal',
+  variant = 'main',
 }) => {
-  const [imgError, setImgError] = useState(false);
+  const effectiveShowText =
+    variant === 'compact' || variant === 'mobile' ? false : showText;
 
   const iconDimensions =
     size === 'sm'
@@ -27,51 +32,122 @@ export const FundedApexLogo: React.FC<FundedApexLogoProps> = ({
       ? 'w-12 h-12'
       : size === 'xl'
       ? 'w-16 h-16 sm:w-20 sm:h-20'
-      : 'w-10 h-10';
+      : 'w-9 h-9';
 
   const textSize =
     size === 'sm'
-      ? 'text-lg'
+      ? 'text-[15px]'
       : size === 'lg'
-      ? 'text-2xl sm:text-3xl'
+      ? 'text-[21px] sm:text-[24px]'
       : size === 'xl'
-      ? 'text-3xl sm:text-4xl'
-      : 'text-xl sm:text-[22px]';
+      ? 'text-[25px] sm:text-[30px]'
+      : 'text-[17px] sm:text-[19px]';
+
+  const uid = React.useId().replace(/:/g, '');
 
   return (
-    <div className={`inline-flex items-center gap-2.5 select-none group ${className}`}>
-      {/* Official Emblem Container with Liquid Glow Aura */}
-      <div className={`relative ${iconDimensions} shrink-0`}>
-        {/* Ambient liquid glow behind logo */}
-        <div
-          aria-hidden="true"
-          className="absolute -inset-1 rounded-full bg-gradient-to-r from-[#00FFA3]/40 via-[#06B6D4]/30 to-[#00FFA3]/40 blur-md opacity-75 group-hover:opacity-100 transition duration-300 pointer-events-none"
-        />
+    <div
+      className={`inline-flex items-center gap-2.5 select-none group ${
+        textVariant === 'stacked' ? 'flex-col text-center gap-2' : ''
+      } ${className}`}
+    >
+      {/* Pure Unframed White Metallic Crowned-Shield 'FA' Sticker Emblem */}
+      <div
+        className={`relative ${iconDimensions} shrink-0 flex items-center justify-center transition-transform duration-300 ease-out group-hover:scale-105`}
+      >
+        <svg
+          viewBox="0 0 100 112"
+          fill="none"
+          xmlns="http://www.w3.org/2000/svg"
+          className={`w-full h-full drop-shadow-[0_4px_14px_rgba(255,255,255,0.18)] ${
+            variant === 'loading' ? 'animate-pulse' : ''
+          }`}
+          aria-label="FUNDED APEX Emblem"
+        >
+          <defs>
+            {/* Brushed White-Platinum Left Facet Gradient */}
+            <linearGradient
+              id={`faWhiteMain-${uid}`}
+              x1="14"
+              y1="6"
+              x2="84"
+              y2="104"
+              gradientUnits="userSpaceOnUse"
+            >
+              <stop offset="0%" stopColor="#FFFFFF" />
+              <stop offset="45%" stopColor="#F1F5F9" />
+              <stop offset="78%" stopColor="#CBD5E1" />
+              <stop offset="100%" stopColor="#FFFFFF" />
+            </linearGradient>
 
-        {!imgError ? (
-          <img
-            src="/assets/aistudio/IMG_20261108_140853_727c5a1e.png"
-            alt="FUNDED APEX Emblem"
-            onError={() => setImgError(true)}
-            className="relative z-10 w-full h-full object-cover object-center rounded-full shadow-[0_0_20px_rgba(0,255,163,0.35)] group-hover:scale-105 group-hover:shadow-[0_0_28px_rgba(0,255,163,0.65)] transition-transform duration-300"
+            {/* Subtle Silver-White Right Bevel Shading */}
+            <linearGradient
+              id={`faWhiteShade-${uid}`}
+              x1="50"
+              y1="6"
+              x2="88"
+              y2="98"
+              gradientUnits="userSpaceOnUse"
+            >
+              <stop offset="0%" stopColor="#E2E8F0" />
+              <stop offset="50%" stopColor="#F8FAFC" />
+              <stop offset="100%" stopColor="#94A3B8" />
+            </linearGradient>
+          </defs>
+
+          {/* 1. TOP CROWN / CASTLE CREST (3 battlements + horizontal base bar) */}
+          {/* Left half of crown */}
+          <path
+            d="M 14 21 L 32 14 L 32 23 L 41 19.5 L 41 11 L 50 6 L 50 31 L 14 31 Z"
+            fill={`url(#faWhiteMain-${uid})`}
           />
-        ) : (
-          <div className="w-full h-full rounded-full p-[2px] bg-gradient-to-br from-[#00FFA3] via-[#10B981] to-[#06B6D4] flex items-center justify-center relative overflow-hidden">
-            <span className="text-[#00FFA3] font-black text-sm">FA</span>
-          </div>
-        )}
+          {/* Right half of crown (subtle dimensional bevel) */}
+          <path
+            d="M 50 6 L 59 11 L 59 19.5 L 68 23 L 68 14 L 86 21 L 86 31 L 50 31 Z"
+            fill={`url(#faWhiteShade-${uid})`}
+          />
+
+          {/* 2. LEFT SHIELD PILLAR ('F' MONOGRAM) */}
+          <path
+            d="M 14 35.5 H 65.5 L 57.5 47 H 26.5 V 55.5 H 52 L 44 67 H 26.5 V 83.5 L 14 73.5 V 35.5 Z"
+            fill={`url(#faWhiteMain-${uid})`}
+          />
+
+          {/* 3. RIGHT SHIELD & DIAGONAL ('A' MONOGRAM + BARBED SHIELD POINT) */}
+          <path
+            fillRule="evenodd"
+            clipRule="evenodd"
+            d="M 70.5 35.5 H 86 V 73.5 L 74 83.5 V 66.5 L 54 71.5 L 48.5 79.5 V 106 L 32 88.5 L 38 90.5 V 80.5 L 70.5 35.5 Z M 74 44.5 L 59.5 63.5 L 74 59.5 V 44.5 Z"
+            fill={`url(#faWhiteMain-${uid})`}
+          />
+
+          {/* 4. LOWER RIGHT INNER SHIELD SPEAR / BARB */}
+          <path
+            d="M 51.5 82.5 L 63 74.5 V 90.5 L 69 88.5 L 51.5 106 V 82.5 Z"
+            fill={`url(#faWhiteShade-${uid})`}
+          />
+        </svg>
       </div>
 
-      {/* Clean Single-Line High-Contrast Wordmark: FUNDED (White) + APEX (Aqua-Green) */}
-      {showText && (
+      {/* Crisp Geometric White Wordmark: FUNDED APEX */}
+      {effectiveShowText && (
         <div
-          className={`${textSize} font-display font-extrabold tracking-tight leading-none flex ${
-            textVariant === 'stacked' ? 'flex-col gap-0.5' : 'items-center gap-1.5'
+          className={`${textSize} font-display font-black uppercase tracking-[0.04em] leading-none flex ${
+            textVariant === 'stacked'
+              ? 'flex-col items-center gap-0.5'
+              : 'items-center gap-1.5'
           }`}
         >
-          <span className="text-[#FFFFFF]">FUNDED</span>
-          <span className="bg-gradient-to-r from-[#00FFA3] via-[#34D399] to-[#2DD4BF] bg-clip-text text-transparent drop-shadow-[0_0_14px_rgba(0,255,163,0.35)]">
+          <span className="text-[#FFFFFF] drop-shadow-[0_2px_10px_rgba(255,255,255,0.12)]">
+            FUNDED
+          </span>
+          <span className="text-[#FFFFFF] relative inline-flex items-center">
             APEX
+            {variant === 'dashboard' && (
+              <span className="ml-2 px-2 py-0.5 text-[9px] font-mono font-bold uppercase tracking-widest bg-[#0A181C] text-[#00E5B0] border border-[#00E5B0]/30 rounded-full">
+                PRO
+              </span>
+            )}
           </span>
         </div>
       )}

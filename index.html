@@ -3,18 +3,78 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>FUNDED APEX — Institutional Prop Trading Simulation & Evaluation Platform</title>
-    <meta name="description" content="Trade Smart. Prove Your Skills. Complete One-Step, Two-Step, and Instant Funding prop trading evaluations on the custom FUNDED APEX Trading Terminal." />
-    <meta property="og:title" content="FUNDED APEX — Institutional Prop Trading Simulation Platform" />
-    <meta property="og:description" content="Trade Smart. Prove Your Skills. Complete One-Step, Two-Step, and Instant Funding prop trading evaluations on the custom FUNDED APEX Trading Terminal." />
+    <title>FUNDED APEX — Institutional Prop Trading Simulation &amp; Evaluation Platform</title>
+    <meta name="description" content="Trade Big. Think Smart. Get Funded. Unlock professional trading opportunities with structured challenges, transparent rules, and a modern trading environment at FUNDED APEX." />
+    <meta property="og:title" content="FUNDED APEX — Institutional Prop Trading Platform" />
+    <meta property="og:description" content="Trade Big. Think Smart. Get Funded. Unlock professional trading opportunities with structured challenges, transparent rules, and a modern trading environment." />
     <meta property="og:type" content="website" />
     <meta name="twitter:card" content="summary_large_image" />
-    <link rel="icon" type="image/png" href="/assets/aistudio/IMG_20261108_140853_727c5a1e.png" />
+    <link
+      rel="icon"
+      type="image/svg+xml"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%23000000'/%3E%3Crect x='2' y='2' width='60' height='60' rx='10' fill='%23070B08' stroke='%2300E676' stroke-opacity='0.35' stroke-width='1.5'/%3E%3Cpath d='M32 10L52 52H41.5L32 31L22.5 52H12L32 10Z' fill='%23FFFFFF'/%3E%3Cpath d='M32 10L42 31H22L32 10Z' fill='%23A7B1AA' fill-opacity='0.4'/%3E%3Cpolygon points='23,41 41,41 44,47 20,47' fill='%2300E676'/%3E%3C/svg%3E"
+    />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800;900&family=Inter:wght@400;500;600;700&family=Manrope:wght@600;700;800&family=Space+Grotesk:wght@500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <script type="text/javascript">
+      // Restore path from 404.html redirect when deployed on GitHub Pages
+      (function(l) {
+        if (l.search[1] === '/' ) {
+          var decoded = l.search.slice(1).split('&').map(function(s) { 
+            return s.replace(/~and~/g, '&');
+          }).join('?');
+          window.history.replaceState(null, null,
+              l.pathname.slice(0, -1) + decoded + l.hash
+          );
+        }
+      }(window.location));
+    </script>
+    <script>
+      // Guard against FedCM NotAllowedError and GSI logger notices when embedded in iframes
+      (function() {
+        if (typeof navigator !== 'undefined' && navigator.credentials) {
+          const _origGet = navigator.credentials.get ? navigator.credentials.get.bind(navigator.credentials) : null;
+          if (_origGet) {
+            navigator.credentials.get = function(options) {
+              if (options && options.identity) {
+                return Promise.resolve(null);
+              }
+              return _origGet(options);
+            };
+          }
+        }
+        const filterGsi = function(args) {
+          return args.some(a => {
+            const str = typeof a === 'string' ? a : ((a && a.message) || String(a || ''));
+            return str.includes('GSI_LOGGER') ||
+                   str.includes('identity-credentials-get') ||
+                   str.includes('FedCM get()') ||
+                   str.includes('Failed to open popup window');
+          });
+        };
+        ['error', 'warn', 'log', 'info'].forEach(function(method) {
+          const orig = console[method];
+          console[method] = function(...args) {
+            if (filterGsi(args)) return;
+            return orig.apply(console, args);
+          };
+        });
+        window.addEventListener('error', function(event) {
+          const msg = (event && (event.message || '')) || '';
+          if (msg.includes('GSI_LOGGER') || msg.includes('identity-credentials-get') || msg.includes('Failed to open popup window')) {
+            event.stopImmediatePropagation();
+            event.preventDefault();
+          }
+        }, true);
+      })();
+    </script>
+    <script src="https://accounts.google.com/gsi/client" async defer></script>
   </head>
-  <body class="bg-[#030A07] text-[#F8FAFC] antialiased selection:bg-[#00FFA3]/30 selection:text-[#00FFA3]">
+  <body class="bg-transparent text-[#FFFFFF] antialiased selection:bg-[#00E676]/25 selection:text-[#00E676]">
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>

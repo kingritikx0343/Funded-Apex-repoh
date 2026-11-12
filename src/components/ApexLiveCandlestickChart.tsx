@@ -14,6 +14,33 @@ import {
   getTimeframeStepMultiplier,
 } from '../engine/liveMarketFeed';
 
+export type ChartTypeMode = 'candles' | 'hollow' | 'bars' | 'line' | 'area' | 'heikin_ashi';
+export type DrawingToolMode =
+  | 'cursor'
+  | 'trendline'
+  | 'hline'
+  | 'vline'
+  | 'ray'
+  | 'rect'
+  | 'fib'
+  | 'long_rr'
+  | 'short_rr'
+  | 'measure';
+
+export type OscillatorMode = 'none' | 'rsi' | 'macd' | 'atr';
+
+export interface ChartDrawingObject {
+  id: string;
+  symbol: SymbolCode;
+  tool: Exclude<DrawingToolMode, 'cursor'>;
+  t1: number;
+  p1: number;
+  t2: number;
+  p2: number;
+  color: string;
+  label?: string;
+}
+
 export interface ChartPositionLine {
   id: string;
   ticketId: string;
@@ -36,7 +63,7 @@ export interface ExecutedTradeNotice {
 
 interface ApexLiveCandlestickChartProps {
   symbol: SymbolCode;
-  timeframeLabel: string; // '1m' | '5m' | '15m' | '30m' | '1h' | '4h' | '1d'
+  timeframeLabel: string;
   timeframeSeconds: number;
   bid?: number;
   ask?: number;
@@ -45,14 +72,19 @@ interface ApexLiveCandlestickChartProps {
   openPositions?: TradeOrderRecord[];
   pendingOrders?: TradeOrderRecord[];
   lastExecutedTrade?: ExecutedTradeNotice | null;
+  chartType?: ChartTypeMode;
+  onChartTypeChange?: (next: ChartTypeMode) => void;
+  showDrawingToolbar?: boolean;
   onClosePosition?: (orderId: string) => void;
   onCancelPendingOrder?: (orderId: string) => void;
   onModifyPositionSlTp?: (orderId: string, nextSl: number, nextTp: number) => void;
   onEditPositionModal?: (pos: TradeOrderRecord) => void;
+  onQuickCreateAlert?: (price: number) => void;
 }
 
-const PRICE_AXIS_WIDTH = 68;
+const PRICE_AXIS_WIDTH = 72;
 const TIME_AXIS_HEIGHT = 24;
+const DRAWINGS_STORAGE_KEY = 'funded_apex_chart_drawings_v2';
 
 interface DraggingSlTpState {
   orderId: string;
@@ -69,15 +101,19 @@ export const ApexLiveCandlestickChart: React.FC<ApexLiveCandlestickChartProps> =
   currentBid,
   currentAsk,
   openPositions = [],
+  chartType: externalChartType,
+  onChartTypeChange,
+  showDrawingToolbar = true,
   onClosePosition,
   onModifyPositionSlTp,
   onEditPositionModal,
+  onQuickCreateAlert,
 }) => {
   const spec = INSTRUMENTS[symbol] || INSTRUMENTS.XAUUSD;
   const effectiveBid = currentBid ?? bid ?? 0;
   const effectiveAsk = currentAsk ?? ask ?? 0;
   const activePrice =
-    effectiveBid > 0 ? effectiveBid : effectiveAsk > 0 ? effectiveAsk - spec.spread : 4045.0;
+    effectiveBid > 0 ? effectiveBid : effectiveAsk > 0 ? effectiveAsk - spec.spread : spec.basePrice;
 
   const containerRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -87,19 +123,59 @@ export const ApexLiveCandlestickChart: React.FC<ApexLiveCandlestickChartProps> =
     height: 460,
   });
 
+  // Chart Type state (synced with optional parent prop)
+  const [internalChartType, setInternalChartType] = useState<ChartTypeMode>('candles');
+  const activeChartType = externalChartType ?? internalChartType;
+  const setChartType = (next: ChartTypeMode) => {
+    setInternalChartType(next);
+    if (onChartTypeChange) onChartTypeChange(next);
+  };
+
   // Historical + live candle series
   const [candles, setCandles] = useState<LiveCandle[]>(() =>
     buildSpotAnchoredCandles(symbol, timeframeLabel, activePrice)
   );
 
-  // Smooth zoom & horizontal pan state
+  // Smooth zoom, horizontal pan, vertical price pan & price-axis scale state
   const [visibleCount, setVisibleCount] = useState<number>(48);
   const [panOffset, setPanOffset] = useState<number>(0);
+  const [pricePanOffset, setPricePanOffset] = useState<number>(0);
+  const [priceScaleFactor, setPriceScaleFactor] = useState<number>(1);
 
-  // Interactive Analysis Overlays (EMA 20, EMA 50, Bollinger Bands)
+  // Interactive Analysis Overlays (EMA 20, EMA 50, SMA 200, VWAP, Bollinger Bands, Supertrend)
   const [showEma20, setShowEma20] = useState<boolean>(true);
   const [showEma50, setShowEma50] = useState<boolean>(false);
+  const [showSma200, setShowSma200] = useState<boolean>(false);
+  const [showVwap, setShowVwap] = useState<boolean>(false);
   const [showBBands, setShowBBands] = useState<boolean>(false);
+  const [showSupertrend, setShowSupertrend] = useState<boolean>(false);
+  const [showVolume, setShowVolume] = useState<boolean>(true);
+  const [oscillator, setOscillator] = useState<OscillatorMode>('none');
+  const [showIndicatorsMenu, setShowIndicatorsMenu] = useState<boolean>(false);
+
+  // Interactive Chart Drawing Tools state
+  const [activeTool, setActiveTool] = useState<DrawingToolMode>('cursor');
+  const [drawings, setDrawings] = useState<ChartDrawingObject[]>(() => {
+    try {
+      const raw = localStorage.getItem(DRAWINGS_STORAGE_KEY);
+      return raw ? JSON.parse(raw) : [];
+    } catch {
+      return [];
+    }
+  });
+  const [redoStack, setRedoStack] = useState<ChartDrawingObject[]>([]);
+  const [draftDrawing, setDraftDrawing] = useState<ChartDrawingObject | null>(null);
+  const [lockDrawings, setLockDrawings] = useState<boolean>(false);
+  const [hideDrawings, setHideDrawings] = useState<boolean>(false);
+
+  // Context menu state
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; price: number } | null>(null);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(DRAWINGS_STORAGE_KEY, JSON.stringify(drawings));
+    } catch {}
+  }, [drawings]);
 
   // Crosshair & Hovered Candle Analysis
   const [crosshair, setCrosshair] = useState<{ x: number; y: number } | null>(null);
@@ -108,15 +184,20 @@ export const ApexLiveCandlestickChart: React.FC<ApexLiveCandlestickChartProps> =
   const [draggingSlTp, setDraggingSlTp] = useState<DraggingSlTpState | null>(null);
   const draggingSlTpRef = useRef<DraggingSlTpState | null>(null);
 
-  // Panning & Pinch state refs
+  // Panning, Vertical Price Dragging & Pinch state refs
   const isDraggingRef = useRef<boolean>(false);
+  const isPriceAxisDraggingRef = useRef<boolean>(false);
+  const isLivePillDraggingRef = useRef<boolean>(false);
   const dragStartXRef = useRef<number>(0);
+  const dragStartYRef = useRef<number>(0);
   const dragStartPanRef = useRef<number>(0);
+  const dragStartPricePanRef = useRef<number>(0);
+  const dragStartPriceScaleRef = useRef<number>(1);
+  const dragStartSpanRef = useRef<number>(1);
   const pinchStartDistRef = useRef<number | null>(null);
   const pinchStartCountRef = useRef<number>(48);
   const rafPanRef = useRef<number | null>(null);
 
-  // Keep latest activePrice in a ref so async kline loads always anchor to the newest live tick
   const latestPriceRef = useRef<number>(activePrice);
   latestPriceRef.current = activePrice;
 
@@ -129,35 +210,41 @@ export const ApexLiveCandlestickChart: React.FC<ApexLiveCandlestickChartProps> =
     if (!el) return;
 
     const updateSize = () => {
+      if (!el) return;
       const rect = el.getBoundingClientRect();
-      if (rect.width > 20 && rect.height > 20) {
-        setDimensions({ width: Math.floor(rect.width), height: Math.floor(rect.height) });
+      if (rect.width > 5 && rect.height > 5) {
+        setDimensions({ width: rect.width, height: rect.height });
       }
     };
 
     updateSize();
-    const observer = new ResizeObserver(() => {
-      requestAnimationFrame(updateSize);
+    const timer = setTimeout(() => updateSize(), 400);
+
+    const observer = new ResizeObserver((entries) => {
+      if (!entries.length) return;
+      const entry = entries[0];
+      const { width, height } = entry.contentRect;
+      if (width > 0 && height > 0) {
+        requestAnimationFrame(() => {
+          setDimensions({ width, height });
+        });
+      }
     });
     observer.observe(el);
     window.addEventListener('resize', updateSize, { passive: true });
     return () => {
+      clearTimeout(timer);
       observer.disconnect();
       window.removeEventListener('resize', updateSize);
     };
   }, []);
 
-  const showEma20Ref = useRef(showEma20);
-  useEffect(() => { showEma20Ref.current = showEma20; }, [showEma20]);
-  const showEma50Ref = useRef(showEma50);
-  useEffect(() => { showEma50Ref.current = showEma50; }, [showEma50]);
-  const showBBandsRef = useRef(showBBands);
-  useEffect(() => { showBBandsRef.current = showBBands; }, [showBBands]);
-
   // Load real multi-timeframe OHLCV candles whenever symbol or timeframe changes
   useEffect(() => {
     let cancelled = false;
     setPanOffset(0);
+    setPricePanOffset(0);
+    setPriceScaleFactor(1);
     setCrosshair(null);
 
     const immediate = buildSpotAnchoredCandles(symbol, timeframeLabel, latestPriceRef.current);
@@ -172,7 +259,6 @@ export const ApexLiveCandlestickChart: React.FC<ApexLiveCandlestickChartProps> =
         );
         if (!cancelled && fetched.length > 0) {
           setCandles((prev) => {
-            // Preserve live intra-bar high/low excursion accumulated on the current candle
             const prevLast = prev[prev.length - 1];
             const next = [...fetched];
             const lastIdx = next.length - 1;
@@ -210,7 +296,7 @@ export const ApexLiveCandlestickChart: React.FC<ApexLiveCandlestickChartProps> =
     };
   }, [symbol, timeframeLabel, timeframeSeconds]);
 
-  // Real-time tick update on the active (right-most) candle — preserves live upper & lower wicks!
+  // Real-time tick update on the active (right-most) candle
   useEffect(() => {
     if (!activePrice || activePrice <= 0) return;
 
@@ -244,11 +330,10 @@ export const ApexLiveCandlestickChart: React.FC<ApexLiveCandlestickChartProps> =
           volume: 14,
           isExchangeKline: last.isExchangeKline,
         });
-        if (next.length > 130) next.shift();
+        if (next.length > 500) next.shift();
       } else {
-        // If series was anchored to a stale spot level (>6x step away), smoothly shift entire series
-        const jump = Math.abs(activePrice - last.close);
-        if (jump > step * 6) {
+        const pctDiff = Math.abs(activePrice - last.close) / (last.close || 1);
+        if (pctDiff > 0.05) {
           const delta = activePrice - last.close;
           for (let i = 0; i < next.length; i++) {
             const c = next[i];
@@ -269,18 +354,10 @@ export const ApexLiveCandlestickChart: React.FC<ApexLiveCandlestickChartProps> =
           return next;
         }
 
-        // True live candle update: track real intra-candle high and low so live wicks remain visible!
         const nextClose = roundPrice(activePrice, symbol);
-        const bodyTop = Math.max(last.open, nextClose);
-        const bodyBot = Math.min(last.open, nextClose);
-        const maxLiveWick = Math.max(step * 1.85, (bodyTop - bodyBot) * 2.1);
-
-        const candidateHigh = Math.max(last.high, nextClose, bodyTop + minPip);
-        const candidateLow = Math.min(last.low, nextClose, bodyBot - minPip);
-
         last.close = nextClose;
-        last.high = roundPrice(Math.min(candidateHigh, bodyTop + maxLiveWick), symbol);
-        last.low = roundPrice(Math.max(candidateLow, bodyBot - maxLiveWick), symbol);
+        last.high = roundPrice(Math.max(last.high, last.open, nextClose), symbol);
+        last.low = roundPrice(Math.min(last.low, last.open, nextClose), symbol);
         last.volume = (last.volume || 20) + 1;
         next[lastIdx] = last;
       }
@@ -289,22 +366,56 @@ export const ApexLiveCandlestickChart: React.FC<ApexLiveCandlestickChartProps> =
     });
   }, [activePrice, symbol, timeframeLabel, timeframeSeconds, spec.decimals, spec.spread, spec.volatility]);
 
-  // Precompute technical indicators (EMA 20, EMA 50, Bollinger Bands 20,2)
+  // Precompute technical indicators (EMA 20, EMA 50, SMA 200, VWAP, Bollinger Bands, Supertrend, RSI 14, MACD, ATR 14)
   const indicators = useMemo(() => {
     const len = candles.length;
     const ema20: number[] = new Array(len);
     const ema50: number[] = new Array(len);
+    const sma200: number[] = new Array(len);
+    const vwap: number[] = new Array(len);
     const bbUpper: number[] = new Array(len);
     const bbLower: number[] = new Array(len);
+    const supertrend: number[] = new Array(len);
+    const supertrendDir: (1 | -1)[] = new Array(len);
+    const rsi14: number[] = new Array(len);
+    const atr14: number[] = new Array(len);
+    const macdLine: number[] = new Array(len);
+    const macdSignal: number[] = new Array(len);
+    const macdHist: number[] = new Array(len);
 
     const k20 = 2 / (20 + 1);
     const k50 = 2 / (50 + 1);
+    const k12 = 2 / (12 + 1);
+    const k26 = 2 / (26 + 1);
+    const k9 = 2 / (9 + 1);
+
+    let cumPV = 0;
+    let cumV = 0;
+    let ema12 = 0;
+    let ema26 = 0;
+    let avgGain = 0;
+    let avgLoss = 0;
 
     for (let i = 0; i < len; i++) {
-      const close = candles[i].close;
+      const c = candles[i];
+      const close = c.close;
       ema20[i] = i === 0 ? close : close * k20 + ema20[i - 1] * (1 - k20);
       ema50[i] = i === 0 ? close : close * k50 + ema50[i - 1] * (1 - k50);
 
+      // SMA 200
+      const sStart = Math.max(0, i - 199);
+      let sSum = 0;
+      for (let j = sStart; j <= i; j++) sSum += candles[j].close;
+      sma200[i] = sSum / (i - sStart + 1);
+
+      // VWAP
+      const typPrice = (c.high + c.low + c.close) / 3;
+      const vol = Math.max(1, c.volume || 15);
+      cumPV += typPrice * vol;
+      cumV += vol;
+      vwap[i] = cumPV / cumV;
+
+      // Bollinger Bands (20, 2)
       const start = Math.max(0, i - 19);
       const count = i - start + 1;
       let sum = 0;
@@ -318,28 +429,111 @@ export const ApexLiveCandlestickChart: React.FC<ApexLiveCandlestickChartProps> =
       const stdDev = Math.sqrt(variance / count);
       bbUpper[i] = mean + stdDev * 2;
       bbLower[i] = mean - stdDev * 2;
+
+      // True Range & ATR (14)
+      const prevClose = i > 0 ? candles[i - 1].close : c.open;
+      const tr = Math.max(
+        c.high - c.low,
+        Math.abs(c.high - prevClose),
+        Math.abs(c.low - prevClose)
+      );
+      atr14[i] = i === 0 ? tr : (atr14[i - 1] * 13 + tr) / 14;
+
+      // Supertrend (10, 3)
+      const hl2 = (c.high + c.low) / 2;
+      const basicUpper = hl2 + 2.6 * atr14[i];
+      const basicLower = hl2 - 2.6 * atr14[i];
+      if (i === 0) {
+        supertrend[i] = basicLower;
+        supertrendDir[i] = 1;
+      } else {
+        const prevDir = supertrendDir[i - 1];
+        const prevSt = supertrend[i - 1];
+        if (prevDir === 1) {
+          const nextLower = Math.max(basicLower, prevSt);
+          if (close < nextLower) {
+            supertrendDir[i] = -1;
+            supertrend[i] = basicUpper;
+          } else {
+            supertrendDir[i] = 1;
+            supertrend[i] = nextLower;
+          }
+        } else {
+          const nextUpper = Math.min(basicUpper, prevSt);
+          if (close > nextUpper) {
+            supertrendDir[i] = 1;
+            supertrend[i] = basicLower;
+          } else {
+            supertrendDir[i] = -1;
+            supertrend[i] = nextUpper;
+          }
+        }
+      }
+
+      // RSI (14)
+      if (i === 0) {
+        rsi14[i] = 50;
+      } else {
+        const change = close - candles[i - 1].close;
+        const gain = change > 0 ? change : 0;
+        const loss = change < 0 ? -change : 0;
+        avgGain = (avgGain * 13 + gain) / 14;
+        avgLoss = (avgLoss * 13 + loss) / 14;
+        if (avgLoss <= 1e-9) rsi14[i] = 100;
+        else {
+          const rs = avgGain / avgLoss;
+          rsi14[i] = 100 - 100 / (1 + rs);
+        }
+      }
+
+      // MACD (12, 26, 9)
+      ema12 = i === 0 ? close : close * k12 + ema12 * (1 - k12);
+      ema26 = i === 0 ? close : close * k26 + ema26 * (1 - k26);
+      macdLine[i] = ema12 - ema26;
+      macdSignal[i] = i === 0 ? macdLine[i] : macdLine[i] * k9 + macdSignal[i - 1] * (1 - k9);
+      macdHist[i] = macdLine[i] - macdSignal[i];
     }
 
-    return { ema20, ema50, bbUpper, bbLower };
+    return {
+      ema20,
+      ema50,
+      sma200,
+      vwap,
+      bbUpper,
+      bbLower,
+      supertrend,
+      supertrendDir,
+      rsi14,
+      atr14,
+      macdLine,
+      macdSignal,
+      macdHist,
+    };
   }, [candles]);
 
-  // Slice visible candles based on zoom (visibleCount) & panOffset
+  // Slice visible candles based on zoom & panOffset
   const visibleSliceInfo = useMemo(() => {
     if (candles.length === 0) return { slice: [] as LiveCandle[], startIndex: 0 };
-    const count = Math.min(candles.length, Math.max(18, visibleCount));
-    const maxOffset = Math.max(0, candles.length - count);
-    const clampedOffset = Math.min(maxOffset, Math.max(0, panOffset));
-    const endIdx = candles.length - clampedOffset;
-    const startIdx = Math.max(0, endIdx - count);
+    const count = Math.max(20, visibleCount);
+    const liveCenterSlot = Math.floor(count * 0.52);
+    const lastIdx = candles.length - 1;
+    const minOff = -Math.floor(count * 0.38);
+    const maxOff = Math.max(0, candles.length - Math.floor(count * 0.2));
+    const clampedOffset = Math.min(maxOff, Math.max(minOff, panOffset));
+    const startIdx = Math.max(0, Math.floor(lastIdx - liveCenterSlot - clampedOffset - 1));
+    const endIdx = Math.min(
+      candles.length,
+      Math.ceil(lastIdx + (count - liveCenterSlot) - clampedOffset + 1)
+    );
     return {
-      slice: candles.slice(startIdx, endIdx),
+      slice: candles.slice(startIdx, Math.max(startIdx + 1, endIdx)),
       startIndex: startIdx,
     };
   }, [candles, visibleCount, panOffset]);
 
   const visibleCandles = visibleSliceInfo.slice;
 
-  // Compute Y-axis price bounds (minPrice, maxPrice) tightly fitted to visible candles + nearby position lines
+  // Compute Y-axis price bounds
   const priceBounds = useMemo(() => {
     const minPip = Math.pow(10, -spec.decimals);
     const tfScale = getTimeframeStepMultiplier(timeframeLabel);
@@ -366,7 +560,6 @@ export const ApexLiveCandlestickChart: React.FC<ApexLiveCandlestickChartProps> =
 
     const candleSpan = Math.max(maxP - minP, step * 5, minPip * 20);
 
-    // Include open position entry / SL / TP if within reasonable range (or currently being dragged)
     for (const pos of openPositions) {
       if (
         pos.entryPrice > 0 &&
@@ -394,18 +587,24 @@ export const ApexLiveCandlestickChart: React.FC<ApexLiveCandlestickChartProps> =
       }
     }
 
-    const span = Math.max(maxP - minP, step * 5, minPip * 20);
-    const padTop = span * 0.14;
-    const padBottom = span * 0.14;
+    const baseSpan = Math.max(maxP - minP, step * 5, minPip * 20);
+    const padTop = baseSpan * 0.14;
+    const padBottom = baseSpan * 0.14;
+    const rawMin = minP - padBottom;
+    const rawMax = maxP + padTop;
+    const mid = (rawMin + rawMax) / 2 + pricePanOffset;
+    const halfScaled = ((rawMax - rawMin) / 2) * priceScaleFactor;
 
     return {
-      minPrice: minP - padBottom,
-      maxPrice: maxP + padTop,
+      minPrice: mid - halfScaled,
+      maxPrice: mid + halfScaled,
     };
   }, [
     visibleCandles,
     activePrice,
     panOffset,
+    pricePanOffset,
+    priceScaleFactor,
     openPositions,
     draggingSlTp,
     spec.decimals,
@@ -414,40 +613,56 @@ export const ApexLiveCandlestickChart: React.FC<ApexLiveCandlestickChartProps> =
     timeframeLabel,
   ]);
 
+  const oscHeight = oscillator !== 'none' ? Math.min(105, Math.round(dimensions.height * 0.22)) : 0;
   const plotWidth = Math.max(120, dimensions.width - PRICE_AXIS_WIDTH);
-  const plotHeight = Math.max(120, dimensions.height - TIME_AXIS_HEIGHT);
-  const totalSlots = Math.max(visibleCount + 4, visibleCandles.length + 4);
+  const plotHeight = Math.max(120, dimensions.height - TIME_AXIS_HEIGHT - oscHeight);
+  const totalSlots = Math.max(20, visibleCount);
 
-  // Performance Refs for 60fps Render Loop
+  // Refs for 60fps canvas loop
   const candlesRef = useRef<LiveCandle[]>([]);
-  useEffect(() => {
-    candlesRef.current = candles;
-  }, [candles]);
+  useEffect(() => { candlesRef.current = candles; }, [candles]);
 
   const visibleCountRef = useRef(visibleCount);
-  useEffect(() => {
-    visibleCountRef.current = visibleCount;
-  }, [visibleCount]);
+  useEffect(() => { visibleCountRef.current = visibleCount; }, [visibleCount]);
 
   const panOffsetRef = useRef(panOffset);
-  useEffect(() => {
-    panOffsetRef.current = panOffset;
-  }, [panOffset]);
+  useEffect(() => { panOffsetRef.current = panOffset; }, [panOffset]);
 
   const indicatorsRef = useRef(indicators);
-  useEffect(() => {
-    indicatorsRef.current = indicators;
-  }, [indicators]);
+  useEffect(() => { indicatorsRef.current = indicators; }, [indicators]);
 
   const crosshairRef = useRef<{ x: number; y: number } | null>(null);
-  useEffect(() => {
-    crosshairRef.current = crosshair;
-  }, [crosshair]);
+  useEffect(() => { crosshairRef.current = crosshair; }, [crosshair]);
 
   const priceBoundsRef = useRef(priceBounds);
-  useEffect(() => {
-    priceBoundsRef.current = priceBounds;
-  }, [priceBounds]);
+  useEffect(() => { priceBoundsRef.current = priceBounds; }, [priceBounds]);
+
+  const chartTypeRef = useRef(activeChartType);
+  useEffect(() => { chartTypeRef.current = activeChartType; }, [activeChartType]);
+
+  const showEma20Ref = useRef(showEma20);
+  useEffect(() => { showEma20Ref.current = showEma20; }, [showEma20]);
+  const showEma50Ref = useRef(showEma50);
+  useEffect(() => { showEma50Ref.current = showEma50; }, [showEma50]);
+  const showSma200Ref = useRef(showSma200);
+  useEffect(() => { showSma200Ref.current = showSma200; }, [showSma200]);
+  const showVwapRef = useRef(showVwap);
+  useEffect(() => { showVwapRef.current = showVwap; }, [showVwap]);
+  const showBBandsRef = useRef(showBBands);
+  useEffect(() => { showBBandsRef.current = showBBands; }, [showBBands]);
+  const showSupertrendRef = useRef(showSupertrend);
+  useEffect(() => { showSupertrendRef.current = showSupertrend; }, [showSupertrend]);
+  const showVolumeRef = useRef(showVolume);
+  useEffect(() => { showVolumeRef.current = showVolume; }, [showVolume]);
+  const oscillatorRef = useRef(oscillator);
+  useEffect(() => { oscillatorRef.current = oscillator; }, [oscillator]);
+  const drawingsRef = useRef(drawings);
+  useEffect(() => { drawingsRef.current = drawings; }, [drawings]);
+  const draftDrawingRef = useRef(draftDrawing);
+  useEffect(() => { draftDrawingRef.current = draftDrawing; }, [draftDrawing]);
+  const hideDrawingsRef = useRef(hideDrawings);
+  useEffect(() => { hideDrawingsRef.current = hideDrawings; }, [hideDrawings]);
+
   const slotWidth = plotWidth / totalSlots;
 
   const priceToY = useCallback(
@@ -469,28 +684,74 @@ export const ApexLiveCandlestickChart: React.FC<ApexLiveCandlestickChartProps> =
     [priceBounds.maxPrice, priceBounds.minPrice, plotHeight, spec.spread, symbol]
   );
 
-  // Determine inspected candle (either hovered via crosshair or the live right-most candle)
+  const xToTime = useCallback(
+    (x: number) => {
+      if (candles.length === 0) return Date.now();
+      const liveCenterSlot = Math.floor(totalSlots * 0.52);
+      const lastIdx = candles.length - 1;
+      const slot = x / Math.max(1, slotWidth) - 0.5;
+      const k = lastIdx + slot - liveCenterSlot - panOffset;
+      const kInt = Math.round(k);
+      if (kInt >= 0 && kInt < candles.length) return candles[kInt].time;
+      return candles[lastIdx].time + (k - lastIdx) * timeframeSeconds * 1000;
+    },
+    [candles, totalSlots, slotWidth, panOffset, timeframeSeconds]
+  );
+
+  // Determine inspected candle
   const inspectedCandle = useMemo(() => {
-    if (visibleCandles.length === 0) return null;
+    if (candles.length === 0) return null;
     if (crosshair && crosshair.x >= 0 && crosshair.x <= plotWidth) {
-      const idx = Math.floor(crosshair.x / slotWidth);
-      if (idx >= 0 && idx < visibleCandles.length) {
-        return visibleCandles[idx];
+      const liveCenterSlot = Math.floor(totalSlots * 0.52);
+      const lastIdx = candles.length - 1;
+      const hoveredSlot = crosshair.x / slotWidth - 0.5;
+      const k = Math.round(lastIdx + hoveredSlot - liveCenterSlot - panOffset);
+      if (k >= 0 && k < candles.length) {
+        return candles[k];
       }
     }
-    return visibleCandles[visibleCandles.length - 1];
-  }, [visibleCandles, crosshair, plotWidth, slotWidth]);
+    return candles[candles.length - 1];
+  }, [candles, crosshair, plotWidth, slotWidth, totalSlots, panOffset]);
 
-  // Global window mousemove / touchmove / mouseup / touchend listeners for smooth SL/TP dragging
+  // Global window listeners for smooth SL/TP dragging
   useEffect(() => {
     if (!draggingSlTp) return;
+
+    const clampSlTpPriceForPosition = (
+      orderId: string,
+      type: 'SL' | 'TP',
+      rawPrice: number
+    ): number => {
+      const pos = openPositionsRef.current.find((p) => p.id === orderId);
+      const liveMark = latestPriceRef.current > 0 ? latestPriceRef.current : pos?.entryPrice || rawPrice;
+      const minPip = Math.pow(10, -spec.decimals);
+      const minDist = Math.max(minPip * 2, spec.spread * 0.5);
+      if (!pos) return roundPrice(rawPrice, symbol);
+
+      if (pos.side === 'BUY') {
+        if (type === 'SL') {
+          return roundPrice(Math.min(rawPrice, liveMark - minDist), symbol);
+        }
+        return roundPrice(Math.max(rawPrice, liveMark + minDist), symbol);
+      } else {
+        if (type === 'SL') {
+          return roundPrice(Math.max(rawPrice, liveMark + minDist), symbol);
+        }
+        return roundPrice(Math.min(rawPrice, liveMark - minDist), symbol);
+      }
+    };
 
     const updateDragFromClientY = (clientY: number) => {
       const container = containerRef.current;
       if (!container || !draggingSlTpRef.current) return;
       const rect = container.getBoundingClientRect();
       const relY = clientY - rect.top;
-      const nextPrice = yToPrice(relY);
+      const rawPrice = yToPrice(relY);
+      const nextPrice = clampSlTpPriceForPosition(
+        draggingSlTpRef.current.orderId,
+        draggingSlTpRef.current.type,
+        rawPrice
+      );
       const nextState: DraggingSlTpState = {
         ...draggingSlTpRef.current,
         price: nextPrice,
@@ -504,8 +765,9 @@ export const ApexLiveCandlestickChart: React.FC<ApexLiveCandlestickChartProps> =
       if (current && onModifyPositionSlTp) {
         const pos = openPositionsRef.current.find((p) => p.id === current.orderId);
         if (pos) {
-          const nextSl = current.type === 'SL' ? current.price : pos.stopLoss;
-          const nextTp = current.type === 'TP' ? current.price : pos.takeProfit;
+          const safePrice = clampSlTpPriceForPosition(current.orderId, current.type, current.price);
+          const nextSl = current.type === 'SL' ? safePrice : pos.stopLoss;
+          const nextTp = current.type === 'TP' ? safePrice : pos.takeProfit;
           onModifyPositionSlTp(pos.id, nextSl, nextTp);
         }
       }
@@ -536,7 +798,7 @@ export const ApexLiveCandlestickChart: React.FC<ApexLiveCandlestickChartProps> =
       window.removeEventListener('mouseup', onMouseUp);
       window.removeEventListener('touchend', onTouchEnd);
     };
-  }, [draggingSlTp, yToPrice, onModifyPositionSlTp]);
+  }, [draggingSlTp, yToPrice, onModifyPositionSlTp, spec.decimals, spec.spread, symbol]);
 
   const startSlTpDrag = useCallback(
     (orderId: string, type: 'SL' | 'TP', initialPrice: number, e: React.MouseEvent | React.TouchEvent) => {
@@ -562,10 +824,12 @@ export const ApexLiveCandlestickChart: React.FC<ApexLiveCandlestickChartProps> =
     [symbol, spec.decimals]
   );
 
-  // Format bottom time axis labels cleanly across 1m -> 1d
   const formatAxisTime = useCallback(
     (tsMs: number) => {
       const d = new Date(tsMs);
+      if (timeframeSeconds >= 2592000) {
+        return d.toLocaleDateString([], { month: 'short', year: '2-digit' });
+      }
       if (timeframeSeconds >= 86400) {
         return d.toLocaleDateString([], { month: 'short', day: 'numeric' });
       }
@@ -575,6 +839,12 @@ export const ApexLiveCandlestickChart: React.FC<ApexLiveCandlestickChartProps> =
           .toString()
           .padStart(2, '0')}:00`;
       }
+      if (timeframeSeconds < 60) {
+        return `${d.getMinutes().toString().padStart(2, '0')}:${d
+          .getSeconds()
+          .toString()
+          .padStart(2, '0')}`;
+      }
       return `${d.getHours().toString().padStart(2, '0')}:${d
         .getMinutes()
         .toString()
@@ -583,9 +853,10 @@ export const ApexLiveCandlestickChart: React.FC<ApexLiveCandlestickChartProps> =
     [timeframeSeconds]
   );
 
-  // Draw crisp 60fps institutional chart on HTML5 Canvas using a continuous rAF loop
+  // Draw crisp 60fps TradingView-inspired chart on HTML5 Canvas
   useEffect(() => {
     let rafId: number;
+    let smoothLivePrice = latestPriceRef.current;
     const render = () => {
       const canvas = canvasRef.current;
       if (!canvas) {
@@ -598,6 +869,17 @@ export const ApexLiveCandlestickChart: React.FC<ApexLiveCandlestickChartProps> =
         return;
       }
 
+      const targetLivePrice = latestPriceRef.current;
+      if (
+        !Number.isFinite(smoothLivePrice) ||
+        smoothLivePrice <= 0 ||
+        Math.abs(targetLivePrice - smoothLivePrice) > spec.volatility * 6
+      ) {
+        smoothLivePrice = targetLivePrice;
+      } else {
+        smoothLivePrice += (targetLivePrice - smoothLivePrice) * 0.28;
+      }
+
       const dpr = Math.min(window.devicePixelRatio || 1, 2);
       const { width, height } = dimensions;
       if (canvas.width !== width * dpr || canvas.height !== height * dpr) {
@@ -608,13 +890,15 @@ export const ApexLiveCandlestickChart: React.FC<ApexLiveCandlestickChartProps> =
       ctx.save();
       ctx.scale(dpr, dpr);
 
-      // 1. Clean White Institutional Chart Background
-      ctx.fillStyle = '#FFFFFF';
+      // 1. Deep Aqua-Fintech Institutional Chart Background (#080D0B)
+      ctx.fillStyle = '#080D0B';
       ctx.fillRect(0, 0, width, height);
 
       const pb = priceBoundsRef.current;
+      const oscMode = oscillatorRef.current;
+      const curOscH = oscMode !== 'none' ? Math.min(105, Math.round(height * 0.22)) : 0;
       const plotW = Math.max(120, width - PRICE_AXIS_WIDTH);
-      const plotH = Math.max(120, height - TIME_AXIS_HEIGHT);
+      const plotH = Math.max(120, height - TIME_AXIS_HEIGHT - curOscH);
       const priceSpan = pb.maxPrice - pb.minPrice;
 
       const pToY = (price: number) => {
@@ -623,7 +907,7 @@ export const ApexLiveCandlestickChart: React.FC<ApexLiveCandlestickChartProps> =
       };
 
       // 2. Price Axis Grid Lines & Right Axis Labels
-      const gridRows = 7;
+      const gridRows = 8;
       const rawStep = priceSpan / gridRows;
       const magnitude = Math.pow(10, Math.floor(Math.log10(Math.max(1e-9, rawStep))));
       const residual = rawStep / magnitude;
@@ -635,183 +919,616 @@ export const ApexLiveCandlestickChart: React.FC<ApexLiveCandlestickChartProps> =
       const niceStep = Math.max(Math.pow(10, -spec.decimals), niceMultiple * magnitude);
       const firstTick = Math.ceil(pb.minPrice / niceStep) * niceStep;
 
-      ctx.strokeStyle = '#F1F5F9';
+      ctx.strokeStyle = 'rgba(40, 214, 176, 0.05)';
       ctx.lineWidth = 1;
-      ctx.fillStyle = '#475569';
-      ctx.font = '600 11px "JetBrains Mono", monospace';
+      ctx.fillStyle = '#8B9A92';
+      ctx.font = '600 11px "Plus Jakarta Sans", sans-serif';
       ctx.textAlign = 'left';
       ctx.textBaseline = 'middle';
 
       for (let tick = firstTick; tick <= pb.maxPrice; tick += niceStep) {
         const y = Math.round(pToY(tick)) + 0.5;
-        if (y < 10 || y > plotH - 10) continue;
+        if (y < 12 || y > plotH - 12) continue;
         ctx.beginPath();
         ctx.moveTo(0, y);
         ctx.lineTo(plotW, y);
         ctx.stroke();
-        ctx.fillText(formatAxisPrice(tick), plotW + 6, y);
+        ctx.fillText(formatAxisPrice(tick), plotW + 7, y);
       }
 
-      // 3. Vertical Time Grid Lines & Time Axis Labels
+      // 3. Vertical Time Grid Lines & Time Axis Labels + Chart Series
       const currentCandles = candlesRef.current;
-      const visCount = visibleCountRef.current;
+      const visCount = Math.max(20, visibleCountRef.current);
       const pOffset = panOffsetRef.current;
-      const sWidth = plotW / Math.max(visCount + 4, currentCandles.length + 4);
 
       if (currentCandles.length > 0) {
-        const maxOff = Math.max(0, currentCandles.length - visCount);
-        const clampedOff = Math.min(maxOff, Math.max(0, pOffset));
-        const endIdx = currentCandles.length - clampedOff;
-        const startIdx = Math.max(0, endIdx - visCount);
-        const visibleSlice = currentCandles.slice(startIdx, endIdx);
+        const liveCenterSlot = Math.floor(visCount * 0.52);
+        const lastIdx = currentCandles.length - 1;
+        const minOff = -Math.floor(visCount * 0.38);
+        const maxOff = Math.max(0, currentCandles.length - Math.floor(visCount * 0.2));
+        const clampedOff = Math.min(maxOff, Math.max(minOff, pOffset));
+        const sWidth = plotW / visCount;
+
+        const getCandleX = (k: number) =>
+          (liveCenterSlot + (k - lastIdx) + clampedOff + 0.5) * sWidth;
+
+        const timeToX = (tMs: number) => {
+          const lastBarTime = currentCandles[lastIdx].time;
+          const barDiff = (tMs - lastBarTime) / Math.max(1000, timeframeSeconds * 1000);
+          return getCandleX(lastIdx + barDiff);
+        };
+
+        const startIdx = Math.max(0, Math.floor(lastIdx - liveCenterSlot - clampedOff - 1));
+        const endIdx = Math.min(
+          currentCandles.length,
+          Math.ceil(lastIdx + (visCount - liveCenterSlot) - clampedOff + 1)
+        );
+        const visibleSlice = currentCandles.slice(startIdx, Math.max(startIdx + 1, endIdx));
 
         ctx.textAlign = 'center';
-        ctx.fillStyle = '#64748B';
-        ctx.font = '500 10px "JetBrains Mono", monospace';
-        const timeStepSlots = Math.max(6, Math.round(visibleSlice.length / 5));
+        ctx.fillStyle = '#8B9A92';
+        ctx.font = '600 10.5px "Plus Jakarta Sans", sans-serif';
+        const timeStepSlots = Math.max(6, Math.round(visCount / 6));
+        const minGridK = Math.floor(lastIdx - liveCenterSlot - clampedOff - 1);
+        const maxGridK = Math.ceil(lastIdx + (visCount - liveCenterSlot) - clampedOff + 1);
 
-        for (let i = 0; i < visibleSlice.length; i += timeStepSlots) {
-          const c = visibleSlice[i];
-          const cx = Math.round((i + 0.5) * sWidth) + 0.5;
-          if (cx < 20 || cx > plotW - 20) continue;
-          ctx.strokeStyle = '#F1F5F9';
+        for (let k = minGridK; k <= maxGridK; k++) {
+          if (Math.abs(lastIdx - k) % timeStepSlots !== 0) continue;
+          const cx = Math.round(getCandleX(k)) + 0.5;
+          if (cx < 24 || cx > plotW - 24) continue;
+          ctx.strokeStyle = 'rgba(255, 255, 255, 0.032)';
           ctx.beginPath();
           ctx.moveTo(cx, 0);
-          ctx.lineTo(cx, plotH);
+          ctx.lineTo(cx, plotH + curOscH);
           ctx.stroke();
-          ctx.fillText(formatAxisTime(c.time), cx, plotH + TIME_AXIS_HEIGHT / 2);
+
+          const barTime =
+            k >= 0 && k < currentCandles.length
+              ? currentCandles[k].time
+              : currentCandles[lastIdx].time + (k - lastIdx) * timeframeSeconds * 1000;
+          ctx.fillText(formatAxisTime(barTime), cx, plotH + curOscH + TIME_AXIS_HEIGHT / 2);
         }
 
         // Separators
-        ctx.strokeStyle = '#E2E8F0';
+        ctx.strokeStyle = 'rgba(40, 214, 176, 0.14)';
         ctx.beginPath();
         ctx.moveTo(plotW + 0.5, 0);
         ctx.lineTo(plotW + 0.5, height);
         ctx.moveTo(0, plotH + 0.5);
         ctx.lineTo(width, plotH + 0.5);
+        if (curOscH > 0) {
+          ctx.moveTo(0, plotH + curOscH + 0.5);
+          ctx.lineTo(width, plotH + curOscH + 0.5);
+        }
         ctx.stroke();
 
-        // 4. Overlays
+        // Clip plot area
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(0, 0, plotW, plotH);
+        ctx.clip();
+
+        // 4. Overlays (Bollinger Bands, SMA 200, VWAP, EMA 50, EMA 20, Supertrend)
         const ind = indicatorsRef.current;
         if (showBBandsRef.current && visibleSlice.length > 1) {
           ctx.save();
           ctx.beginPath();
           for (let i = 0; i < visibleSlice.length; i++) {
-            const cx = (i + 0.5) * sWidth;
-            const y = pToY(ind.bbUpper[startIdx + i]);
-            if (i === 0) ctx.moveTo(cx, y); else ctx.lineTo(cx, y);
+            const k = startIdx + i;
+            const cx = getCandleX(k);
+            const y = pToY(ind.bbUpper[k]);
+            if (i === 0) ctx.moveTo(cx, y);
+            else ctx.lineTo(cx, y);
           }
           for (let i = visibleSlice.length - 1; i >= 0; i--) {
-            const cx = (i + 0.5) * sWidth;
-            const y = pToY(ind.bbLower[startIdx + i]);
+            const k = startIdx + i;
+            const cx = getCandleX(k);
+            const y = pToY(ind.bbLower[k]);
             ctx.lineTo(cx, y);
           }
           ctx.closePath();
-          ctx.fillStyle = 'rgba(14, 165, 233, 0.06)';
+          ctx.fillStyle = 'rgba(40, 214, 176, 0.05)';
           ctx.fill();
-          ctx.strokeStyle = 'rgba(14, 165, 233, 0.35)';
+          ctx.strokeStyle = 'rgba(40, 214, 176, 0.28)';
           ctx.stroke();
           ctx.restore();
         }
-        if (showEma50Ref.current && visibleSlice.length > 1) {
-          ctx.save(); ctx.strokeStyle = '#F59E0B'; ctx.lineWidth = 1.5; ctx.beginPath();
+
+        const drawOverlayLine = (arr: number[], stroke: string, widthPx = 1.5, dash: number[] = []) => {
+          if (visibleSlice.length <= 1) return;
+          ctx.save();
+          ctx.strokeStyle = stroke;
+          ctx.lineWidth = widthPx;
+          if (dash.length) ctx.setLineDash(dash);
+          ctx.beginPath();
           for (let i = 0; i < visibleSlice.length; i++) {
-            const cx = (i + 0.5) * sWidth;
-            const y = pToY(ind.ema50[startIdx + i]);
-            if (i === 0) ctx.moveTo(cx, y); else ctx.lineTo(cx, y);
+            const k = startIdx + i;
+            const cx = getCandleX(k);
+            const y = pToY(arr[k]);
+            if (i === 0) ctx.moveTo(cx, y);
+            else ctx.lineTo(cx, y);
           }
-          ctx.stroke(); ctx.restore();
+          ctx.stroke();
+          ctx.restore();
+        };
+
+        if (showSma200Ref.current) drawOverlayLine(ind.sma200, '#38BDF8', 1.6);
+        if (showVwapRef.current) drawOverlayLine(ind.vwap, '#A855F7', 1.5, [4, 2]);
+        if (showEma50Ref.current) drawOverlayLine(ind.ema50, '#F59E0B', 1.5);
+        if (showEma20Ref.current) drawOverlayLine(ind.ema20, '#28D6B0', 1.5);
+
+        if (showSupertrendRef.current && visibleSlice.length > 1) {
+          for (let i = 1; i < visibleSlice.length; i++) {
+            const k = startIdx + i;
+            const prevK = k - 1;
+            ctx.save();
+            ctx.strokeStyle = ind.supertrendDir[k] === 1 ? '#28D6B0' : '#F01650';
+            ctx.lineWidth = 1.8;
+            ctx.beginPath();
+            ctx.moveTo(getCandleX(prevK), pToY(ind.supertrend[prevK]));
+            ctx.lineTo(getCandleX(k), pToY(ind.supertrend[k]));
+            ctx.stroke();
+            ctx.restore();
+          }
         }
-        if (showEma20Ref.current && visibleSlice.length > 1) {
-          ctx.save(); ctx.strokeStyle = '#0284C7'; ctx.lineWidth = 1.5; ctx.beginPath();
+
+        // 5. Volume Histogram + Selected Chart Type (Candles / Hollow / Bars / Line / Area / Heikin Ashi)
+        const bWidth = Math.max(3, Math.min(15, sWidth * 0.72));
+        const maxVol = Math.max(
+          1,
+          ...visibleSlice.map((v) => (Number.isFinite(v.volume) && v.volume > 0 ? v.volume : 1))
+        );
+        const volMaxHeight = plotH * 0.11;
+        const cType = chartTypeRef.current;
+
+        if (cType === 'line' || cType === 'area') {
+          if (visibleSlice.length > 1) {
+            ctx.save();
+            ctx.beginPath();
+            for (let i = 0; i < visibleSlice.length; i++) {
+              const k = startIdx + i;
+              const cx = getCandleX(k);
+              const cy = pToY(visibleSlice[i].close);
+              if (i === 0) ctx.moveTo(cx, cy);
+              else ctx.lineTo(cx, cy);
+            }
+            ctx.strokeStyle = '#28D6B0';
+            ctx.lineWidth = 2.2;
+            ctx.stroke();
+
+            if (cType === 'area') {
+              const lastX = getCandleX(startIdx + visibleSlice.length - 1);
+              const firstX = getCandleX(startIdx);
+              ctx.lineTo(lastX, plotH);
+              ctx.lineTo(firstX, plotH);
+              ctx.closePath();
+              const grad = ctx.createLinearGradient(0, 0, 0, plotH);
+              grad.addColorStop(0, 'rgba(40, 214, 176, 0.28)');
+              grad.addColorStop(1, 'rgba(40, 214, 176, 0.0)');
+              ctx.fillStyle = grad;
+              ctx.fill();
+            }
+            ctx.restore();
+          }
+        } else {
+          let prevHaOpen = visibleSlice[0]?.open || 0;
+          let prevHaClose = visibleSlice[0]?.close || 0;
+
           for (let i = 0; i < visibleSlice.length; i++) {
-            const cx = (i + 0.5) * sWidth;
-            const y = pToY(ind.ema20[startIdx + i]);
-            if (i === 0) ctx.moveTo(cx, y); else ctx.lineTo(cx, y);
+            const k = startIdx + i;
+            const rawC = visibleSlice[i];
+            const isActiveBar = k === lastIdx && smoothLivePrice > 0;
+            let openP = rawC.open;
+            let closeP = isActiveBar ? smoothLivePrice : rawC.close;
+            let highP = isActiveBar ? Math.max(rawC.high, smoothLivePrice) : rawC.high;
+            let lowP = isActiveBar ? Math.min(rawC.low, smoothLivePrice) : rawC.low;
+
+            if (cType === 'heikin_ashi') {
+              const haClose = (rawC.open + rawC.high + rawC.low + rawC.close) / 4;
+              const haOpen = i === 0 ? (rawC.open + rawC.close) / 2 : (prevHaOpen + prevHaClose) / 2;
+              const haHigh = Math.max(rawC.high, haOpen, haClose);
+              const haLow = Math.min(rawC.low, haOpen, haClose);
+              openP = haOpen;
+              closeP = haClose;
+              highP = haHigh;
+              lowP = haLow;
+              prevHaOpen = haOpen;
+              prevHaClose = haClose;
+            }
+
+            const isBull = closeP >= openP;
+            const bodyFill = isBull ? '#00C896' : '#F01650';
+            const borderStroke = isBull ? '#20F5C4' : '#FF4778';
+            const wickColor = isBull ? '#00E5B0' : '#FF2E63';
+            const cx = Math.floor(getCandleX(k)) + 0.5;
+            if (cx < -bWidth || cx > plotW + bWidth) continue;
+
+            if (showVolumeRef.current) {
+              const vRatio = Math.min(1, Math.max(0.08, (rawC.volume || 50) / maxVol));
+              const vHeight = Math.round(vRatio * volMaxHeight);
+              const bx = Math.round(cx - bWidth / 2);
+              ctx.fillStyle = isBull ? 'rgba(0, 200, 150, 0.15)' : 'rgba(240, 22, 80, 0.15)';
+              ctx.fillRect(bx, plotH - vHeight, Math.round(bWidth), vHeight);
+            }
+
+            const openY = pToY(openP);
+            const closeY = pToY(closeP);
+            const bTopP = Math.max(openP, closeP);
+            const bBotP = Math.min(openP, closeP);
+            const effH = Math.max(highP, bTopP);
+            const effL = Math.min(lowP, bBotP);
+            const hY = pToY(effH);
+            const lY = pToY(effL);
+            const bx = Math.round(cx - bWidth / 2);
+            const bw = Math.max(2, Math.round(bWidth));
+
+            if (cType === 'bars') {
+              ctx.strokeStyle = wickColor;
+              ctx.lineWidth = 1.5;
+              ctx.beginPath();
+              ctx.moveTo(cx, Math.floor(hY));
+              ctx.lineTo(cx, Math.ceil(lY));
+              ctx.moveTo(cx - bw / 2, openY);
+              ctx.lineTo(cx, openY);
+              ctx.moveTo(cx, closeY);
+              ctx.lineTo(cx + bw / 2, closeY);
+              ctx.stroke();
+            } else {
+              // Crisp Pixel-Aligned Upper & Lower Wick
+              ctx.strokeStyle = wickColor;
+              ctx.lineWidth = isActiveBar ? 1.65 : 1.35;
+              ctx.beginPath();
+              ctx.moveTo(cx, Math.floor(hY));
+              ctx.lineTo(cx, Math.ceil(lY));
+              ctx.stroke();
+
+              const bTop = Math.round(Math.min(openY, closeY));
+              const rH = Math.abs(closeY - openY);
+              const bH = Math.max(2, Math.round(rH));
+
+              if (cType === 'hollow' && isBull) {
+                ctx.fillStyle = '#080D0B';
+                ctx.fillRect(bx, bTop, bw, bH);
+                ctx.strokeStyle = borderStroke;
+                ctx.lineWidth = 1.3;
+                ctx.strokeRect(bx + 0.5, bTop + 0.5, Math.max(1, bw - 1), Math.max(1, bH - 1));
+              } else {
+                ctx.fillStyle = bodyFill;
+                ctx.fillRect(bx, bTop, bw, bH);
+                if (bw >= 4 && bH >= 3) {
+                  ctx.strokeStyle = borderStroke;
+                  ctx.lineWidth = isActiveBar ? 1.2 : 0.85;
+                  ctx.strokeRect(bx + 0.5, bTop + 0.5, bw - 1, bH - 1);
+                }
+              }
+            }
           }
-          ctx.stroke(); ctx.restore();
         }
 
-        // 5. Candlesticks
-        const bWidth = Math.max(3, Math.min(14, sWidth * 0.68));
-        const tfMultiplier = getTimeframeStepMultiplier(timeframeLabel);
-        const tfStep = Math.max(spec.spread * 1.8, spec.volatility * tfMultiplier);
+        // 5B. Interactive User Drawings & Draft Drawing
+        if (!hideDrawingsRef.current) {
+          const allDraws = [
+            ...drawingsRef.current.filter((d) => d.symbol === symbol),
+            ...(draftDrawingRef.current ? [draftDrawingRef.current] : []),
+          ];
 
-        for (let i = 0; i < visibleSlice.length; i++) {
-          const c = visibleSlice[i];
-          const isBull = c.close >= c.open;
-          const color = isBull ? '#0B9E6D' : '#E11D48';
-          const cx = Math.round((i + 0.5) * sWidth) + 0.5;
-          const openY = pToY(c.open);
-          const closeY = pToY(c.close);
-          const bTopP = Math.max(c.open, c.close);
-          const bBotP = Math.min(c.open, c.close);
-          const bSpan = Math.max(Math.pow(10, -spec.decimals) * 2, bTopP - bBotP);
-          const maxV = Math.max(tfStep * 1.85, bSpan * 2.1);
-          const effH = Math.min(Math.max(c.high, bTopP), bTopP + maxV);
-          const effL = Math.max(Math.min(c.low, bBotP), bBotP - maxV);
-          const hY = pToY(effH);
-          const lY = pToY(effL);
+          for (const d of allDraws) {
+            const x1 = timeToX(d.t1);
+            const y1 = pToY(d.p1);
+            const x2 = timeToX(d.t2);
+            const y2 = pToY(d.p2);
 
-          ctx.strokeStyle = color; ctx.lineWidth = 1.4; ctx.beginPath();
-          ctx.moveTo(cx, Math.floor(hY)); ctx.lineTo(cx, Math.ceil(lY)); ctx.stroke();
-          const bTop = Math.min(openY, closeY);
-          const rH = Math.abs(closeY - openY);
-          const bH = Math.max(2, rH);
-          const bx = Math.round(cx - bWidth / 2);
-          ctx.fillStyle = color; ctx.fillRect(bx, bTop, Math.round(bWidth), bH);
+            ctx.save();
+            ctx.strokeStyle = d.color || '#28D6B0';
+            ctx.fillStyle = d.color || '#28D6B0';
+            ctx.lineWidth = 1.6;
+
+            if (d.tool === 'hline') {
+              ctx.setLineDash([5, 3]);
+              ctx.beginPath();
+              ctx.moveTo(0, y1);
+              ctx.lineTo(plotW, y1);
+              ctx.stroke();
+              ctx.font = '700 10px "Plus Jakarta Sans", sans-serif';
+              ctx.fillText(`H-Line ${formatAxisPrice(d.p1)}`, 64, y1 - 6);
+            } else if (d.tool === 'vline') {
+              ctx.setLineDash([5, 3]);
+              ctx.beginPath();
+              ctx.moveTo(x1, 0);
+              ctx.lineTo(x1, plotH);
+              ctx.stroke();
+            } else if (d.tool === 'trendline' || d.tool === 'ray') {
+              ctx.beginPath();
+              ctx.moveTo(x1, y1);
+              if (d.tool === 'ray' && Math.abs(x2 - x1) > 1) {
+                const slope = (y2 - y1) / (x2 - x1);
+                const targetX = x2 >= x1 ? plotW : 0;
+                const targetY = y1 + slope * (targetX - x1);
+                ctx.lineTo(targetX, targetY);
+              } else {
+                ctx.lineTo(x2, y2);
+              }
+              ctx.stroke();
+              ctx.beginPath();
+              ctx.arc(x1, y1, 3.5, 0, Math.PI * 2);
+              ctx.arc(x2, y2, 3.5, 0, Math.PI * 2);
+              ctx.fill();
+            } else if (d.tool === 'rect' || d.tool === 'measure') {
+              const rx = Math.min(x1, x2);
+              const ry = Math.min(y1, y2);
+              const rw = Math.abs(x2 - x1);
+              const rh = Math.abs(y2 - y1);
+              ctx.fillStyle =
+                d.tool === 'measure' ? 'rgba(56, 189, 248, 0.14)' : 'rgba(40, 214, 176, 0.12)';
+              ctx.fillRect(rx, ry, rw, rh);
+              ctx.strokeStyle = d.tool === 'measure' ? '#38BDF8' : '#28D6B0';
+              ctx.strokeRect(rx, ry, rw, rh);
+              if (d.tool === 'measure') {
+                const diff = d.p2 - d.p1;
+                const pct = (diff / Math.max(1e-9, d.p1)) * 100;
+                ctx.fillStyle = '#F4F8F6';
+                ctx.font = '700 10px "Plus Jakarta Sans", sans-serif';
+                ctx.fillText(
+                  `${diff >= 0 ? '+' : ''}${formatAxisPrice(diff)} (${pct >= 0 ? '+' : ''}${pct.toFixed(2)}%)`,
+                  rx + rw / 2,
+                  ry + rh / 2
+                );
+              }
+            } else if (d.tool === 'fib') {
+              const levels = [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1];
+              const minX = Math.min(x1, x2);
+              const maxX = Math.max(x1, x2, minX + 120);
+              for (const lv of levels) {
+                const lp = d.p1 + (d.p2 - d.p1) * lv;
+                const ly = pToY(lp);
+                ctx.strokeStyle = lv === 0.5 || lv === 0.618 ? '#28D6B0' : 'rgba(245, 158, 11, 0.65)';
+                ctx.lineWidth = 1.1;
+                ctx.beginPath();
+                ctx.moveTo(minX, ly);
+                ctx.lineTo(maxX, ly);
+                ctx.stroke();
+                ctx.fillStyle = '#F4F8F6';
+                ctx.font = '600 9.5px "Plus Jakarta Sans", sans-serif';
+                ctx.textAlign = 'left';
+                ctx.fillText(`${(lv * 100).toFixed(1)}% (${formatAxisPrice(lp)})`, minX + 4, ly - 5);
+              }
+            } else if (d.tool === 'long_rr' || d.tool === 'short_rr') {
+              const rx = Math.min(x1, x2);
+              const rw = Math.max(80, Math.abs(x2 - x1));
+              const entryY = y1;
+              const targetY = y2;
+              const stopDistY = Math.max(18, Math.abs(targetY - entryY) * 0.5);
+              const stopY = d.tool === 'long_rr' ? entryY + stopDistY : entryY - stopDistY;
+
+              // Profit box
+              ctx.fillStyle = 'rgba(0, 184, 124, 0.16)';
+              ctx.fillRect(rx, Math.min(entryY, targetY), rw, Math.abs(targetY - entryY));
+              // Risk box
+              ctx.fillStyle = 'rgba(240, 22, 80, 0.16)';
+              ctx.fillRect(rx, Math.min(entryY, stopY), rw, Math.abs(stopY - entryY));
+
+              ctx.strokeStyle = '#28D6B0';
+              ctx.beginPath();
+              ctx.moveTo(rx, entryY);
+              ctx.lineTo(rx + rw, entryY);
+              ctx.stroke();
+            }
+            ctx.restore();
+          }
+        }
+
+        ctx.restore();
+
+        // 5C. Bottom Oscillator Sub-Panel (RSI 14 / MACD / ATR 14)
+        if (curOscH > 0 && visibleSlice.length > 1) {
+          const oscTop = plotH;
+          ctx.save();
+          ctx.fillStyle = '#060A08';
+          ctx.fillRect(0, oscTop, plotW, curOscH);
+
+          ctx.fillStyle = '#28D6B0';
+          ctx.font = '700 10px "Plus Jakarta Sans", sans-serif';
+          ctx.textAlign = 'left';
+          const lastK = startIdx + visibleSlice.length - 1;
+          const labelTxt =
+            oscMode === 'rsi'
+              ? `RSI (14): ${ind.rsi14[lastK]?.toFixed(1) || '50.0'}`
+              : oscMode === 'macd'
+              ? `MACD (12,26,9): ${ind.macdHist[lastK]?.toFixed(spec.decimals) || '0.00'}`
+              : `ATR (14): ${ind.atr14[lastK]?.toFixed(spec.decimals) || '0.00'}`;
+          ctx.fillText(labelTxt, 10, oscTop + 13);
+
+          if (oscMode === 'rsi') {
+            const y70 = oscTop + curOscH * 0.3;
+            const y30 = oscTop + curOscH * 0.7;
+            ctx.strokeStyle = 'rgba(255,255,255,0.12)';
+            ctx.setLineDash([3, 3]);
+            ctx.beginPath();
+            ctx.moveTo(0, y70);
+            ctx.lineTo(plotW, y70);
+            ctx.moveTo(0, y30);
+            ctx.lineTo(plotW, y30);
+            ctx.stroke();
+            ctx.setLineDash([]);
+
+            ctx.strokeStyle = '#28D6B0';
+            ctx.lineWidth = 1.6;
+            ctx.beginPath();
+            for (let i = 0; i < visibleSlice.length; i++) {
+              const k = startIdx + i;
+              const cx = getCandleX(k);
+              const val = Math.max(0, Math.min(100, ind.rsi14[k] || 50));
+              const ry = oscTop + curOscH - (val / 100) * (curOscH - 16) - 6;
+              if (i === 0) ctx.moveTo(cx, ry);
+              else ctx.lineTo(cx, ry);
+            }
+            ctx.stroke();
+          } else if (oscMode === 'macd') {
+            let maxM = 1e-6;
+            for (let i = 0; i < visibleSlice.length; i++) {
+              const k = startIdx + i;
+              maxM = Math.max(
+                maxM,
+                Math.abs(ind.macdLine[k] || 0),
+                Math.abs(ind.macdSignal[k] || 0),
+                Math.abs(ind.macdHist[k] || 0)
+              );
+            }
+            const midY = oscTop + curOscH / 2 + 4;
+            for (let i = 0; i < visibleSlice.length; i++) {
+              const k = startIdx + i;
+              const cx = getCandleX(k);
+              const hVal = ind.macdHist[k] || 0;
+              const barH = (hVal / maxM) * (curOscH * 0.36);
+              ctx.fillStyle = hVal >= 0 ? 'rgba(0, 184, 124, 0.55)' : 'rgba(240, 22, 80, 0.55)';
+              ctx.fillRect(cx - bWidth / 2, barH >= 0 ? midY - barH : midY, Math.max(2, bWidth), Math.abs(barH));
+            }
+            ctx.strokeStyle = '#28D6B0';
+            ctx.lineWidth = 1.4;
+            ctx.beginPath();
+            for (let i = 0; i < visibleSlice.length; i++) {
+              const k = startIdx + i;
+              const cx = getCandleX(k);
+              const my = midY - ((ind.macdLine[k] || 0) / maxM) * (curOscH * 0.36);
+              if (i === 0) ctx.moveTo(cx, my);
+              else ctx.lineTo(cx, my);
+            }
+            ctx.stroke();
+          } else if (oscMode === 'atr') {
+            let minA = Infinity;
+            let maxA = -Infinity;
+            for (let i = 0; i < visibleSlice.length; i++) {
+              const v = ind.atr14[startIdx + i] || 0;
+              if (v < minA) minA = v;
+              if (v > maxA) maxA = v;
+            }
+            const spanA = Math.max(1e-9, maxA - minA);
+            ctx.strokeStyle = '#F59E0B';
+            ctx.lineWidth = 1.6;
+            ctx.beginPath();
+            for (let i = 0; i < visibleSlice.length; i++) {
+              const k = startIdx + i;
+              const cx = getCandleX(k);
+              const ay = oscTop + curOscH - 8 - ((ind.atr14[k] - minA) / spanA) * (curOscH - 24);
+              if (i === 0) ctx.moveTo(cx, ay);
+              else ctx.lineTo(cx, ay);
+            }
+            ctx.stroke();
+          }
+          ctx.restore();
         }
       }
 
-      // 6. Positions
+      // 6. Open Positions & Draggable SL / TP Lines
       const curPositions = openPositionsRef.current;
       for (const pos of curPositions) {
         if (pos.entryPrice >= pb.minPrice && pos.entryPrice <= pb.maxPrice) {
           const py = Math.round(pToY(pos.entryPrice)) + 0.5;
-          ctx.save(); ctx.setLineDash([4, 3]); ctx.strokeStyle = pos.side === 'BUY' ? '#0B9E6D' : '#E11D48';
-          ctx.lineWidth = 1.25; ctx.beginPath(); ctx.moveTo(0, py); ctx.lineTo(plotW, py); ctx.stroke(); ctx.restore();
+          ctx.save();
+          ctx.setLineDash([4, 3]);
+          ctx.strokeStyle = pos.side === 'BUY' ? '#00B87C' : '#F01650';
+          ctx.lineWidth = 1.25;
+          ctx.beginPath();
+          ctx.moveTo(0, py);
+          ctx.lineTo(plotW, py);
+          ctx.stroke();
+          ctx.restore();
         }
         const drag = draggingSlTpRef.current;
-        const eSlP = (drag && drag.orderId === pos.id && drag.type === 'SL') ? drag.price : pos.stopLoss;
+        const eSlP = drag && drag.orderId === pos.id && drag.type === 'SL' ? drag.price : pos.stopLoss;
         if (eSlP > 0 && eSlP >= pb.minPrice && eSlP <= pb.maxPrice) {
           const sY = Math.round(pToY(eSlP)) + 0.5;
           const isD = drag?.orderId === pos.id && drag?.type === 'SL';
-          ctx.save(); ctx.setLineDash(isD ? [] : [3, 3]); ctx.strokeStyle = '#E11D48';
-          ctx.lineWidth = isD ? 2.2 : 1.3; ctx.beginPath(); ctx.moveTo(0, sY); ctx.lineTo(plotW, sY); ctx.stroke();
-          ctx.fillStyle = '#E11D48'; ctx.fillRect(plotW, sY - 9, PRICE_AXIS_WIDTH, 18);
-          ctx.fillStyle = '#FFFFFF'; ctx.font = '700 9.5px "JetBrains Mono", monospace'; ctx.textAlign = 'center';
-          ctx.fillText(formatAxisPrice(eSlP), plotW + PRICE_AXIS_WIDTH / 2, sY + 0.5); ctx.restore();
+          ctx.save();
+          ctx.setLineDash(isD ? [] : [3, 3]);
+          ctx.strokeStyle = '#F01650';
+          ctx.lineWidth = isD ? 2.2 : 1.3;
+          ctx.beginPath();
+          ctx.moveTo(0, sY);
+          ctx.lineTo(plotW, sY);
+          ctx.stroke();
+          ctx.fillStyle = '#F01650';
+          ctx.fillRect(plotW, sY - 9, PRICE_AXIS_WIDTH, 18);
+          ctx.fillStyle = '#FFFFFF';
+          ctx.font = '700 10px "Plus Jakarta Sans", sans-serif';
+          ctx.textAlign = 'center';
+          ctx.fillText(formatAxisPrice(eSlP), plotW + PRICE_AXIS_WIDTH / 2, sY + 0.5);
+          ctx.restore();
         }
-        const eTpP = (drag && drag.orderId === pos.id && drag.type === 'TP') ? drag.price : pos.takeProfit;
+        const eTpP = drag && drag.orderId === pos.id && drag.type === 'TP' ? drag.price : pos.takeProfit;
         if (eTpP > 0 && eTpP >= pb.minPrice && eTpP <= pb.maxPrice) {
           const tY = Math.round(pToY(eTpP)) + 0.5;
           const isD = drag?.orderId === pos.id && drag?.type === 'TP';
-          ctx.save(); ctx.setLineDash(isD ? [] : [3, 3]); ctx.strokeStyle = '#0D9488';
-          ctx.lineWidth = isD ? 2.2 : 1.3; ctx.beginPath(); ctx.moveTo(0, tY); ctx.lineTo(plotW, tY); ctx.stroke();
-          ctx.fillStyle = '#0D9488'; ctx.fillRect(plotW, tY - 9, PRICE_AXIS_WIDTH, 18);
-          ctx.fillStyle = '#FFFFFF'; ctx.font = '700 9.5px "JetBrains Mono", monospace'; ctx.textAlign = 'center';
-          ctx.fillText(formatAxisPrice(eTpP), plotW + PRICE_AXIS_WIDTH / 2, tY + 0.5); ctx.restore();
+          ctx.save();
+          ctx.setLineDash(isD ? [] : [3, 3]);
+          ctx.strokeStyle = '#00B87C';
+          ctx.lineWidth = isD ? 2.2 : 1.3;
+          ctx.beginPath();
+          ctx.moveTo(0, tY);
+          ctx.lineTo(plotW, tY);
+          ctx.stroke();
+          ctx.fillStyle = '#00B87C';
+          ctx.fillRect(plotW, tY - 9, PRICE_AXIS_WIDTH, 18);
+          ctx.fillStyle = '#FFFFFF';
+          ctx.font = '700 10px "Plus Jakarta Sans", sans-serif';
+          ctx.textAlign = 'center';
+          ctx.fillText(formatAxisPrice(eTpP), plotW + PRICE_AXIS_WIDTH / 2, tY + 0.5);
+          ctx.restore();
         }
       }
 
-      // 7. Live Price
-      const lY = Math.max(11, Math.min(plotH - 11, Math.round(pToY(latestPriceRef.current)) + 0.5));
-      ctx.save(); ctx.setLineDash([3, 3]); ctx.strokeStyle = '#0B9E6D'; ctx.lineWidth = 1.2;
-      ctx.beginPath(); ctx.moveTo(0, lY); ctx.lineTo(plotW, lY); ctx.stroke(); ctx.restore();
-      const pillH = 22; ctx.fillStyle = '#0B9E6D'; ctx.fillRect(plotW, lY - pillH / 2, PRICE_AXIS_WIDTH, pillH);
-      ctx.fillStyle = '#FFFFFF'; ctx.font = '700 11px "JetBrains Mono", monospace'; ctx.textAlign = 'center';
-      ctx.fillText(formatAxisPrice(latestPriceRef.current), plotW + PRICE_AXIS_WIDTH / 2, lY + 0.5);
+      // 7. Moveable Live Price Dotted Line + Crisp Green/Red Right-Axis Tag
+      const lastBar = currentCandles[currentCandles.length - 1];
+      const liveRenderPrice = smoothLivePrice > 0 ? smoothLivePrice : latestPriceRef.current;
+      const isLiveBull = !lastBar || liveRenderPrice >= lastBar.open;
+      const liveTagColor = isLiveBull ? '#00B87C' : '#F01650';
+      const lY = Math.max(14, Math.min(plotH - 22, Math.round(pToY(liveRenderPrice)) + 0.5));
+      ctx.save();
+      ctx.setLineDash([3, 3]);
+      ctx.strokeStyle = liveTagColor;
+      ctx.lineWidth = 1.25;
+      ctx.beginPath();
+      ctx.moveTo(0, lY);
+      ctx.lineTo(plotW, lY);
+      ctx.stroke();
+      ctx.restore();
+
+      const pillH = 22;
+      ctx.fillStyle = liveTagColor;
+      ctx.beginPath();
+      ctx.roundRect(plotW, lY - pillH / 2, PRICE_AXIS_WIDTH - 2, pillH, 5);
+      ctx.fill();
+      ctx.fillStyle = '#FFFFFF';
+      ctx.font = '700 10.5px "Plus Jakarta Sans", sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText(
+        `⇅ ${formatAxisPrice(latestPriceRef.current)}`,
+        plotW + (PRICE_AXIS_WIDTH - 2) / 2,
+        lY + 0.5
+      );
 
       // 8. Crosshair
       const ch = crosshairRef.current;
       const dSlTp = draggingSlTpRef.current;
       if (!dSlTp && ch && ch.x >= 0 && ch.x <= plotW && ch.y >= 0 && ch.y <= plotH) {
-        ctx.save(); ctx.setLineDash([4, 4]); ctx.strokeStyle = '#94A3B8'; ctx.lineWidth = 1;
-        ctx.beginPath(); ctx.moveTo(ch.x, 0); ctx.lineTo(ch.x, plotH); ctx.moveTo(0, ch.y); ctx.lineTo(plotW, ch.y); ctx.stroke();
+        ctx.save();
+        ctx.setLineDash([4, 4]);
+        ctx.strokeStyle = 'rgba(139, 154, 146, 0.45)';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(ch.x, 0);
+        ctx.lineTo(ch.x, plotH);
+        ctx.moveTo(0, ch.y);
+        ctx.lineTo(plotW, ch.y);
+        ctx.stroke();
         const hP = pb.maxPrice - (ch.y / plotH) * priceSpan;
-        ctx.fillStyle = '#1E293B'; ctx.fillRect(plotW, ch.y - 10, PRICE_AXIS_WIDTH, 20);
-        ctx.fillStyle = '#FFFFFF'; ctx.font = '600 10px "JetBrains Mono", monospace'; ctx.textAlign = 'center';
-        ctx.fillText(formatAxisPrice(hP), plotW + PRICE_AXIS_WIDTH / 2, ch.y + 0.5); ctx.restore();
+        ctx.fillStyle = '#0C1411';
+        ctx.fillRect(plotW, ch.y - 10, PRICE_AXIS_WIDTH, 20);
+        ctx.fillStyle = '#28D6B0';
+        ctx.font = '700 10.5px "Plus Jakarta Sans", sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText(formatAxisPrice(hP), plotW + PRICE_AXIS_WIDTH / 2, ch.y + 0.5);
+        ctx.restore();
       }
 
       ctx.restore();
@@ -819,12 +1536,11 @@ export const ApexLiveCandlestickChart: React.FC<ApexLiveCandlestickChartProps> =
     };
     rafId = requestAnimationFrame(render);
     return () => cancelAnimationFrame(rafId);
-  }, [dimensions, formatAxisPrice, formatAxisTime, spec.decimals, spec.spread, spec.volatility, timeframeLabel]);
+  }, [dimensions, formatAxisPrice, formatAxisTime, spec.decimals, spec.spread, spec.volatility, symbol, timeframeLabel, timeframeSeconds]);
 
-  // Check if a pointer Y is close to an existing SL or TP line on canvas so user can drag line anywhere
   const findNearbySlTpLine = useCallback(
     (relY: number): { orderId: string; type: 'SL' | 'TP'; price: number } | null => {
-      const hitTolerancePx = 11;
+      const hitTolerancePx = 20;
       for (const pos of openPositions) {
         if (pos.stopLoss > 0) {
           const slY = priceToY(pos.stopLoss);
@@ -844,19 +1560,88 @@ export const ApexLiveCandlestickChart: React.FC<ApexLiveCandlestickChartProps> =
     [openPositions, priceToY]
   );
 
-  // Mouse & Touch Panning + Pinch-to-Zoom + Direct SL/TP Line Dragging
+  // Mouse & Touch Panning + Drawing Tools + SL/TP Dragging
   const handleMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (e.button === 2) return; // Right-click handled by onContextMenu
+    setContextMenu(null);
+
     const rect = e.currentTarget.getBoundingClientRect();
+    const relX = e.clientX - rect.left;
     const relY = e.clientY - rect.top;
+
+    // If user is in a drawing mode and not locked
+    if (activeTool !== 'cursor' && !lockDrawings && relX <= plotWidth && relY <= plotHeight) {
+      const clickTime = xToTime(relX);
+      const clickPrice = yToPrice(relY);
+
+      if (activeTool === 'hline' || activeTool === 'vline') {
+        const newObj: ChartDrawingObject = {
+          id: `draw-${Date.now()}`,
+          symbol,
+          tool: activeTool,
+          t1: clickTime,
+          p1: clickPrice,
+          t2: clickTime,
+          p2: clickPrice,
+          color: '#28D6B0',
+        };
+        setDrawings((prev) => [...prev, newObj]);
+        setRedoStack([]);
+        setActiveTool('cursor');
+        return;
+      }
+
+      if (!draftDrawing) {
+        setDraftDrawing({
+          id: `draw-${Date.now()}`,
+          symbol,
+          tool: activeTool,
+          t1: clickTime,
+          p1: clickPrice,
+          t2: clickTime,
+          p2: clickPrice,
+          color: '#28D6B0',
+        });
+      } else {
+        const finalized: ChartDrawingObject = {
+          ...draftDrawing,
+          t2: clickTime,
+          p2: clickPrice,
+        };
+        setDrawings((prev) => [...prev, finalized]);
+        setRedoStack([]);
+        setDraftDrawing(null);
+        setActiveTool('cursor');
+      }
+      return;
+    }
+
     const hitLine = findNearbySlTpLine(relY);
     if (hitLine) {
       startSlTpDrag(hitLine.orderId, hitLine.type, hitLine.price, e);
       return;
     }
 
-    isDraggingRef.current = true;
+    const currentSpan = Math.max(1e-6, priceBounds.maxPrice - priceBounds.minPrice);
     dragStartXRef.current = e.clientX;
+    dragStartYRef.current = e.clientY;
     dragStartPanRef.current = panOffset;
+    dragStartPricePanRef.current = pricePanOffset;
+    dragStartPriceScaleRef.current = priceScaleFactor;
+    dragStartSpanRef.current = currentSpan;
+
+    // Right price axis drag: if grabbing the live price pill, move price vertically; otherwise scale/move price axis
+    if (relX >= plotWidth - 4) {
+      const liveY = priceToY(latestPriceRef.current);
+      if (Math.abs(relY - liveY) <= 18) {
+        isLivePillDraggingRef.current = true;
+      } else {
+        isPriceAxisDraggingRef.current = true;
+      }
+      return;
+    }
+
+    isDraggingRef.current = true;
   };
 
   const handleMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
@@ -864,16 +1649,56 @@ export const ApexLiveCandlestickChart: React.FC<ApexLiveCandlestickChartProps> =
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
 
+    if (draftDrawing) {
+      setDraftDrawing((prev) =>
+        prev
+          ? {
+              ...prev,
+              t2: xToTime(x),
+              p2: yToPrice(y),
+            }
+          : null
+      );
+      setCrosshair({ x, y });
+      return;
+    }
+
     if (draggingSlTpRef.current) return;
+
+    if (isLivePillDraggingRef.current) {
+      const deltaY = e.clientY - dragStartYRef.current;
+      const priceDelta = (deltaY / Math.max(80, plotHeight)) * dragStartSpanRef.current;
+      if (rafPanRef.current) cancelAnimationFrame(rafPanRef.current);
+      rafPanRef.current = requestAnimationFrame(() => {
+        setPricePanOffset(dragStartPricePanRef.current + priceDelta);
+      });
+      return;
+    }
+
+    if (isPriceAxisDraggingRef.current) {
+      const deltaY = e.clientY - dragStartYRef.current;
+      const scaleMultiplier = Math.exp(deltaY * 0.0065);
+      const nextScale = Math.min(4.5, Math.max(0.22, dragStartPriceScaleRef.current * scaleMultiplier));
+      if (rafPanRef.current) cancelAnimationFrame(rafPanRef.current);
+      rafPanRef.current = requestAnimationFrame(() => {
+        setPriceScaleFactor(nextScale);
+      });
+      return;
+    }
 
     if (isDraggingRef.current) {
       const deltaX = e.clientX - dragStartXRef.current;
-      const barsMoved = Math.round(deltaX / Math.max(4, slotWidth));
-      const maxOffset = Math.max(0, candles.length - visibleCount);
-      const nextPan = Math.min(maxOffset, Math.max(0, dragStartPanRef.current + barsMoved));
+      const deltaY = e.clientY - dragStartYRef.current;
+      const barsMoved = deltaX / Math.max(4, slotWidth);
+      const minOffset = -Math.floor(visibleCount * 0.38);
+      const maxOffset = Math.max(0, candles.length - Math.floor(visibleCount * 0.2));
+      const nextPan = Math.min(maxOffset, Math.max(minOffset, dragStartPanRef.current + barsMoved));
+      const priceDelta = (deltaY / Math.max(80, plotHeight)) * dragStartSpanRef.current;
+
       if (rafPanRef.current) cancelAnimationFrame(rafPanRef.current);
       rafPanRef.current = requestAnimationFrame(() => {
         setPanOffset(nextPan);
+        setPricePanOffset(dragStartPricePanRef.current + priceDelta);
       });
     } else {
       setCrosshair({ x, y });
@@ -882,18 +1707,29 @@ export const ApexLiveCandlestickChart: React.FC<ApexLiveCandlestickChartProps> =
 
   const handleMouseUpOrLeave = () => {
     isDraggingRef.current = false;
+    isPriceAxisDraggingRef.current = false;
+    isLivePillDraggingRef.current = false;
     setCrosshair(null);
   };
 
   const handleWheel = (e: React.WheelEvent<HTMLDivElement>) => {
     e.preventDefault();
+    const rect = e.currentTarget.getBoundingClientRect();
+    const relX = e.clientX - rect.left;
+    // Wheel over the right price axis zooms vertical price scale; wheel over chart zooms visible candle count
+    if (relX >= plotWidth - 4) {
+      const factor = e.deltaY > 0 ? 1.1 : 0.9;
+      setPriceScaleFactor((prev) => Math.min(4.5, Math.max(0.22, prev * factor)));
+      return;
+    }
     const delta = e.deltaY > 0 ? 6 : -6;
-    setVisibleCount((prev) => Math.min(95, Math.max(20, prev + delta)));
+    setVisibleCount((prev) => Math.min(135, Math.max(16, prev + delta)));
   };
 
   const handleTouchStart = (e: React.TouchEvent<HTMLDivElement>) => {
     if (e.touches.length === 1) {
       const rect = e.currentTarget.getBoundingClientRect();
+      const relX = e.touches[0].clientX - rect.left;
       const relY = e.touches[0].clientY - rect.top;
       const hitLine = findNearbySlTpLine(relY);
       if (hitLine) {
@@ -901,11 +1737,29 @@ export const ApexLiveCandlestickChart: React.FC<ApexLiveCandlestickChartProps> =
         return;
       }
 
-      isDraggingRef.current = true;
+      const currentSpan = Math.max(1e-6, priceBounds.maxPrice - priceBounds.minPrice);
       dragStartXRef.current = e.touches[0].clientX;
+      dragStartYRef.current = e.touches[0].clientY;
       dragStartPanRef.current = panOffset;
+      dragStartPricePanRef.current = pricePanOffset;
+      dragStartPriceScaleRef.current = priceScaleFactor;
+      dragStartSpanRef.current = currentSpan;
+
+      if (relX >= plotWidth - 6) {
+        const liveY = priceToY(latestPriceRef.current);
+        if (Math.abs(relY - liveY) <= 22) {
+          isLivePillDraggingRef.current = true;
+        } else {
+          isPriceAxisDraggingRef.current = true;
+        }
+        return;
+      }
+
+      isDraggingRef.current = true;
     } else if (e.touches.length === 2) {
       isDraggingRef.current = false;
+      isPriceAxisDraggingRef.current = false;
+      isLivePillDraggingRef.current = false;
       const dx = e.touches[0].clientX - e.touches[1].clientX;
       const dy = e.touches[0].clientY - e.touches[1].clientY;
       pinchStartDistRef.current = Math.hypot(dx, dy);
@@ -916,15 +1770,42 @@ export const ApexLiveCandlestickChart: React.FC<ApexLiveCandlestickChartProps> =
   const handleTouchMove = (e: React.TouchEvent<HTMLDivElement>) => {
     if (draggingSlTpRef.current) return;
 
-    if (e.touches.length === 1 && isDraggingRef.current) {
-      const deltaX = e.touches[0].clientX - dragStartXRef.current;
-      const barsMoved = Math.round(deltaX / Math.max(4, slotWidth));
-      const maxOffset = Math.max(0, candles.length - visibleCount);
-      const nextPan = Math.min(maxOffset, Math.max(0, dragStartPanRef.current + barsMoved));
-      if (rafPanRef.current) cancelAnimationFrame(rafPanRef.current);
-      rafPanRef.current = requestAnimationFrame(() => {
-        setPanOffset(nextPan);
-      });
+    if (e.touches.length === 1) {
+      if (isLivePillDraggingRef.current) {
+        const deltaY = e.touches[0].clientY - dragStartYRef.current;
+        const priceDelta = (deltaY / Math.max(80, plotHeight)) * dragStartSpanRef.current;
+        if (rafPanRef.current) cancelAnimationFrame(rafPanRef.current);
+        rafPanRef.current = requestAnimationFrame(() => {
+          setPricePanOffset(dragStartPricePanRef.current + priceDelta);
+        });
+        return;
+      }
+
+      if (isPriceAxisDraggingRef.current) {
+        const deltaY = e.touches[0].clientY - dragStartYRef.current;
+        const scaleMultiplier = Math.exp(deltaY * 0.0065);
+        const nextScale = Math.min(4.5, Math.max(0.22, dragStartPriceScaleRef.current * scaleMultiplier));
+        if (rafPanRef.current) cancelAnimationFrame(rafPanRef.current);
+        rafPanRef.current = requestAnimationFrame(() => {
+          setPriceScaleFactor(nextScale);
+        });
+        return;
+      }
+
+      if (isDraggingRef.current) {
+        const deltaX = e.touches[0].clientX - dragStartXRef.current;
+        const deltaY = e.touches[0].clientY - dragStartYRef.current;
+        const barsMoved = deltaX / Math.max(4, slotWidth);
+        const minOffset = -Math.floor(visibleCount * 0.38);
+        const maxOffset = Math.max(0, candles.length - Math.floor(visibleCount * 0.2));
+        const nextPan = Math.min(maxOffset, Math.max(minOffset, dragStartPanRef.current + barsMoved));
+        const priceDelta = (deltaY / Math.max(80, plotHeight)) * dragStartSpanRef.current;
+        if (rafPanRef.current) cancelAnimationFrame(rafPanRef.current);
+        rafPanRef.current = requestAnimationFrame(() => {
+          setPanOffset(nextPan);
+          setPricePanOffset(dragStartPricePanRef.current + priceDelta);
+        });
+      }
     } else if (e.touches.length === 2 && pinchStartDistRef.current) {
       const dx = e.touches[0].clientX - e.touches[1].clientX;
       const dy = e.touches[0].clientY - e.touches[1].clientY;
@@ -932,37 +1813,59 @@ export const ApexLiveCandlestickChart: React.FC<ApexLiveCandlestickChartProps> =
       if (dist > 10) {
         const scale = pinchStartDistRef.current / dist;
         const nextCount = Math.round(pinchStartCountRef.current * scale);
-        setVisibleCount(Math.min(95, Math.max(20, nextCount)));
+        setVisibleCount(Math.min(135, Math.max(16, nextCount)));
       }
     }
   };
 
   const handleTouchEnd = () => {
     isDraggingRef.current = false;
+    isPriceAxisDraggingRef.current = false;
+    isLivePillDraggingRef.current = false;
     pinchStartDistRef.current = null;
   };
 
-  // Helper to quickly re-add SL or TP if it was removed
   const handleQuickAddSlOrTp = (pos: ChartPositionLine, type: 'SL' | 'TP') => {
     if (!onModifyPositionSlTp) return;
     const tfScale = getTimeframeStepMultiplier(timeframeLabel);
-    const unitDist = Math.max(spec.spread * 6, spec.volatility * tfScale * 2.2);
+    const unitDist = Math.max(spec.spread * 12, spec.volatility * tfScale * 3.5);
+    const refPrice = activePrice > 0 ? activePrice : pos.entryPrice;
     if (type === 'SL') {
-      const dist = unitDist * 1.15;
+      const dist = unitDist * 1.4;
       const newSl = roundPrice(
-        pos.side === 'BUY' ? activePrice - dist : activePrice + dist,
+        pos.side === 'BUY' ? refPrice - dist : refPrice + dist,
         symbol
       );
       onModifyPositionSlTp(pos.id, newSl, pos.takeProfit);
     } else {
-      const dist = unitDist * 1.85;
+      const dist = unitDist * 2.0;
       const newTp = roundPrice(
-        pos.side === 'BUY' ? activePrice + dist : activePrice - dist,
+        pos.side === 'BUY' ? refPrice + dist : refPrice - dist,
         symbol
       );
       onModifyPositionSlTp(pos.id, pos.stopLoss, newTp);
     }
   };
+
+  const handleUndoDrawing = () => {
+    setDrawings((prev) => {
+      if (prev.length === 0) return prev;
+      const last = prev[prev.length - 1];
+      setRedoStack((r) => [...r, last]);
+      return prev.slice(0, -1);
+    });
+  };
+
+  const handleRedoDrawing = () => {
+    setRedoStack((prev) => {
+      if (prev.length === 0) return prev;
+      const last = prev[prev.length - 1];
+      setDrawings((d) => [...d, last]);
+      return prev.slice(0, -1);
+    });
+  };
+
+  const symbolDrawingsCount = drawings.filter((d) => d.symbol === symbol).length;
 
   return (
     <div
@@ -975,92 +1878,328 @@ export const ApexLiveCandlestickChart: React.FC<ApexLiveCandlestickChartProps> =
       onTouchStart={handleTouchStart}
       onTouchMove={handleTouchMove}
       onTouchEnd={handleTouchEnd}
-      className={`relative w-full h-full bg-white select-none overflow-hidden touch-none ${
-        draggingSlTp ? 'cursor-ns-resize' : 'cursor-crosshair'
+      onContextMenu={(e) => {
+        e.preventDefault();
+        const rect = e.currentTarget.getBoundingClientRect();
+        const relY = e.clientY - rect.top;
+        setContextMenu({
+          x: Math.min(rect.width - 210, e.clientX - rect.left),
+          y: Math.min(rect.height - 220, relY),
+          price: yToPrice(relY),
+        });
+      }}
+      style={{ width: '100%', height: '100%' }}
+      className={`relative w-full h-full bg-[#080D0B] select-none overflow-hidden touch-none ${
+        draggingSlTp ? 'cursor-ns-resize' : activeTool !== 'cursor' ? 'cursor-cell' : 'cursor-crosshair'
       }`}
     >
-      <canvas ref={canvasRef} className="block w-full h-full" />
+      <canvas
+        ref={canvasRef}
+        style={{ width: '100%', height: '100%' }}
+        className="block w-full h-full"
+      />
 
-      {/* Smooth Chart Analysis & Indicator Toolbar + Live OHLCV Wick Readout */}
+      {/* Left Floating Drawing Tools Dock (Desktop & Tablet or when toggled) */}
+      {showDrawingToolbar && (
+        <div
+          onMouseDown={(e) => e.stopPropagation()}
+          onTouchStart={(e) => e.stopPropagation()}
+          className="hidden sm:flex flex-col items-center gap-1 p-1.5 rounded-[14px] bg-[#0C1411]/92 backdrop-blur-md border border-[#28D6B0]/20 absolute left-2.5 top-12 z-20 shadow-xl"
+        >
+          {(
+            [
+              { id: 'cursor', label: '✢', title: 'Crosshair / Pan' },
+              { id: 'trendline', label: '╱', title: 'Trendline' },
+              { id: 'hline', label: '━', title: 'Horizontal Line' },
+              { id: 'ray', label: '↗', title: 'Ray Line' },
+              { id: 'rect', label: '▭', title: 'Supply/Demand Zone' },
+              { id: 'fib', label: '☰', title: 'Fibonacci Retracement' },
+              { id: 'long_rr', label: 'L', title: 'Long Position R:R' },
+              { id: 'short_rr', label: 'S', title: 'Short Position R:R' },
+              { id: 'measure', label: '📏', title: 'Measure Price & %' },
+            ] as { id: DrawingToolMode; label: string; title: string }[]
+          ).map((t) => (
+            <button
+              key={t.id}
+              type="button"
+              title={t.title}
+              onClick={() => {
+                setDraftDrawing(null);
+                setActiveTool(t.id);
+              }}
+              className={`w-7 h-7 rounded-[9px] text-[11px] font-bold flex items-center justify-center transition-colors cursor-pointer ${
+                activeTool === t.id
+                  ? 'bg-[#28D6B0] text-[#04100C]'
+                  : 'text-[#8B9A92] hover:text-[#F4F8F6] hover:bg-white/5'
+              }`}
+            >
+              {t.label}
+            </button>
+          ))}
+
+          {symbolDrawingsCount > 0 && (
+            <>
+              <div className="w-4 h-px bg-white/10 my-0.5" />
+              <button
+                type="button"
+                title="Undo Drawing"
+                onClick={handleUndoDrawing}
+                className="w-7 h-7 rounded-[9px] text-[11px] font-bold text-[#8B9A92] hover:text-[#F4F8F6] hover:bg-white/5 flex items-center justify-center cursor-pointer"
+              >
+                ↶
+              </button>
+              <button
+                type="button"
+                title="Clear Symbol Drawings"
+                onClick={() =>
+                  setDrawings((prev) => prev.filter((d) => d.symbol !== symbol))
+                }
+                className="w-7 h-7 rounded-[9px] text-[11px] font-bold text-[#F01650] hover:bg-[#F01650]/15 flex items-center justify-center cursor-pointer"
+              >
+                ✕
+              </button>
+            </>
+          )}
+        </div>
+      )}
+
+      {/* Top Chart OHLCV Readout + Chart Type + Indicators Selector */}
       <div
         onMouseDown={(e) => e.stopPropagation()}
         onTouchStart={(e) => e.stopPropagation()}
-        className="absolute top-1.5 left-2 right-[72px] z-10 flex flex-wrap items-center justify-between gap-1.5 pointer-events-auto"
+        className="absolute top-2 left-2.5 right-[76px] z-20 flex flex-wrap items-center justify-between gap-1.5 pointer-events-auto"
       >
         {/* OHLC + Live Wick Range HUD */}
         {inspectedCandle && (
-          <div className="inline-flex flex-wrap items-center gap-1.5 px-2 py-0.5 rounded-md bg-white/92 backdrop-blur-sm border border-slate-200/90 shadow-xs text-[9.5px] font-mono text-slate-600">
-            <span className="font-extrabold text-slate-900">{spec.shortName}</span>
+          <div className="inline-flex flex-wrap items-center gap-2 px-3 py-1 rounded-[12px] bg-[#0C1411]/90 backdrop-blur-md border border-[#28D6B0]/20 text-[10.5px] font-sans font-semibold text-[#A5B5AE]">
+            <span className="font-extrabold text-[#F4F8F6]">{spec.shortName}</span>
             <span>
-              O:<strong className="text-slate-800">{formatAxisPrice(inspectedCandle.open)}</strong>
+              O:<strong className="text-[#F4F8F6] ml-0.5 tabular-nums">{formatAxisPrice(inspectedCandle.open)}</strong>
             </span>
             <span>
-              H:<strong className="text-[#0B9E6D]">{formatAxisPrice(inspectedCandle.high)}</strong>
+              H:<strong className="text-[#00B87C] ml-0.5 tabular-nums">{formatAxisPrice(inspectedCandle.high)}</strong>
             </span>
             <span>
-              L:<strong className="text-[#E11D48]">{formatAxisPrice(inspectedCandle.low)}</strong>
+              L:<strong className="text-[#F01650] ml-0.5 tabular-nums">{formatAxisPrice(inspectedCandle.low)}</strong>
             </span>
-            <span>
+            <span className="inline-flex items-center gap-1">
               C:
               <strong
-                className={
+                className={`ml-0.5 px-1.5 py-0.2 rounded-[6px] tabular-nums inline-flex items-center gap-0.5 transition-colors duration-150 ${
                   inspectedCandle.close >= inspectedCandle.open
-                    ? 'text-[#0B9E6D]'
-                    : 'text-[#E11D48]'
-                }
+                    ? 'text-[#28D6B0] bg-[#28D6B0]/14'
+                    : 'text-[#F01650] bg-[#F01650]/14'
+                }`}
               >
-                {formatAxisPrice(inspectedCandle.close)}
+                <span className="text-[8px]">
+                  {inspectedCandle.close >= inspectedCandle.open ? '▲' : '▼'}
+                </span>
+                <span>{formatAxisPrice(inspectedCandle.close)}</span>
               </strong>
             </span>
           </div>
         )}
 
-        {/* Analysis Indicator Toggles */}
-        <div className="inline-flex items-center gap-1">
+        {/* Chart Type + Technical Indicators Toggles */}
+        <div className="inline-flex items-center gap-1 flex-wrap">
+          <select
+            aria-label="Chart Type"
+            value={activeChartType}
+            onChange={(e) => setChartType(e.target.value as ChartTypeMode)}
+            className="px-2.5 py-1 rounded-[10px] text-[10px] font-bold bg-[#0C1411]/92 border border-[#28D6B0]/25 text-[#F4F8F6] outline-none cursor-pointer"
+          >
+            <option value="candles">Candles</option>
+            <option value="hollow">Hollow Candles</option>
+            <option value="heikin_ashi">Heikin Ashi</option>
+            <option value="bars">OHLC Bars</option>
+            <option value="area">Area</option>
+            <option value="line">Line</option>
+          </select>
+
           <button
             type="button"
             onClick={() => setShowEma20((v) => !v)}
-            className={`px-1.5 py-0.5 rounded text-[9px] font-mono font-bold border transition-colors cursor-pointer ${
+            className={`px-2.5 py-1 rounded-[10px] text-[10px] font-bold border transition-colors cursor-pointer ${
               showEma20
-                ? 'bg-sky-500/15 border-sky-500/50 text-sky-700'
-                : 'bg-white/90 border-slate-200 text-slate-500 hover:text-slate-800'
+                ? 'bg-[#28D6B0]/18 border-[#28D6B0]/50 text-[#28D6B0]'
+                : 'bg-[#0C1411]/90 border-white/10 text-[#8B9A92] hover:text-white'
             }`}
           >
             EMA20
           </button>
-          <button
-            type="button"
-            onClick={() => setShowEma50((v) => !v)}
-            className={`px-1.5 py-0.5 rounded text-[9px] font-mono font-bold border transition-colors cursor-pointer ${
-              showEma50
-                ? 'bg-amber-500/15 border-amber-500/50 text-amber-700'
-                : 'bg-white/90 border-slate-200 text-slate-500 hover:text-slate-800'
-            }`}
-          >
-            EMA50
-          </button>
-          <button
-            type="button"
-            onClick={() => setShowBBands((v) => !v)}
-            className={`px-1.5 py-0.5 rounded text-[9px] font-mono font-bold border transition-colors cursor-pointer ${
-              showBBands
-                ? 'bg-teal-500/15 border-teal-500/50 text-teal-700'
-                : 'bg-white/90 border-slate-200 text-slate-500 hover:text-slate-800'
-            }`}
-          >
-            BB
-          </button>
-          {panOffset > 0 && (
+
+          <div className="relative">
             <button
               type="button"
-              onClick={() => setPanOffset(0)}
-              className="px-1.5 py-0.5 rounded text-[9px] font-mono font-bold bg-[#0B9E6D] text-white shadow-xs cursor-pointer"
+              onClick={() => setShowIndicatorsMenu((v) => !v)}
+              className="px-2.5 py-1 rounded-[10px] text-[10px] font-bold border bg-[#0C1411]/92 border-[#28D6B0]/25 text-[#28D6B0] hover:bg-[#121F1A] cursor-pointer"
             >
-              LIVE →
+              fx Indicators ▾
+            </button>
+
+            {showIndicatorsMenu && (
+              <div className="absolute right-0 top-7 z-40 w-52 p-2.5 rounded-[16px] bg-[#070C0A] border border-[#28D6B0]/30 shadow-2xl space-y-1.5 text-[11px]">
+                <div className="text-[10px] font-bold text-[#8B9A92] uppercase px-1">
+                  Overlay Indicators
+                </div>
+                {[
+                  { label: 'EMA 20 (Aqua)', active: showEma20, toggle: () => setShowEma20(!showEma20) },
+                  { label: 'EMA 50 (Amber)', active: showEma50, toggle: () => setShowEma50(!showEma50) },
+                  { label: 'SMA 200 (Sky)', active: showSma200, toggle: () => setShowSma200(!showSma200) },
+                  { label: 'VWAP (Session)', active: showVwap, toggle: () => setShowVwap(!showVwap) },
+                  { label: 'Bollinger Bands', active: showBBands, toggle: () => setShowBBands(!showBBands) },
+                  { label: 'Supertrend (10,3)', active: showSupertrend, toggle: () => setShowSupertrend(!showSupertrend) },
+                  { label: 'Volume Histogram', active: showVolume, toggle: () => setShowVolume(!showVolume) },
+                ].map((item) => (
+                  <button
+                    key={item.label}
+                    type="button"
+                    onClick={item.toggle}
+                    className={`w-full px-2.5 py-1.5 rounded-[10px] flex items-center justify-between font-semibold cursor-pointer ${
+                      item.active ? 'bg-[#28D6B0]/15 text-[#28D6B0]' : 'text-[#A5B5AE] hover:bg-white/5'
+                    }`}
+                  >
+                    <span>{item.label}</span>
+                    <span>{item.active ? 'ON' : 'OFF'}</span>
+                  </button>
+                ))}
+
+                <div className="text-[10px] font-bold text-[#8B9A92] uppercase px-1 pt-1 border-t border-white/10">
+                  Sub-Panel Oscillator
+                </div>
+                {(
+                  [
+                    { id: 'none', label: 'None' },
+                    { id: 'rsi', label: 'RSI (14)' },
+                    { id: 'macd', label: 'MACD (12, 26, 9)' },
+                    { id: 'atr', label: 'ATR (14)' },
+                  ] as { id: OscillatorMode; label: string }[]
+                ).map((osc) => (
+                  <button
+                    key={osc.id}
+                    type="button"
+                    onClick={() => setOscillator(osc.id)}
+                    className={`w-full px-2.5 py-1.5 rounded-[10px] flex items-center justify-between font-semibold cursor-pointer ${
+                      oscillator === osc.id ? 'bg-[#28D6B0] text-[#04100C] font-bold' : 'text-[#A5B5AE] hover:bg-white/5'
+                    }`}
+                  >
+                    <span>{osc.label}</span>
+                    {oscillator === osc.id && <span>✓</span>}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {(Math.abs(panOffset) > 0.5 ||
+            Math.abs(pricePanOffset) > 1e-6 ||
+            Math.abs(priceScaleFactor - 1) > 0.03) && (
+            <button
+              type="button"
+              onClick={() => {
+                setPanOffset(0);
+                setPricePanOffset(0);
+                setPriceScaleFactor(1);
+              }}
+              className="px-2.5 py-1 rounded-[10px] text-[10px] font-bold bg-[#28D6B0] text-[#04100C] cursor-pointer"
+            >
+              LIVE / AUTO →
             </button>
           )}
         </div>
       </div>
+
+      {/* Right-Click Context Menu */}
+      {contextMenu && (
+        <div
+          style={{ left: `${contextMenu.x}px`, top: `${contextMenu.y}px` }}
+          onMouseDown={(e) => e.stopPropagation()}
+          className="absolute z-40 w-52 p-2 rounded-[16px] bg-[#070C0A]/95 backdrop-blur-md border border-[#28D6B0]/30 shadow-2xl space-y-1 text-xs"
+        >
+          <div className="px-2.5 py-1 text-[10px] font-bold text-[#8B9A92] border-b border-white/10">
+            Price @ {formatAxisPrice(contextMenu.price)}
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              setDrawings((prev) => [
+                ...prev,
+                {
+                  id: `draw-${Date.now()}`,
+                  symbol,
+                  tool: 'hline',
+                  t1: Date.now(),
+                  p1: contextMenu.price,
+                  t2: Date.now(),
+                  p2: contextMenu.price,
+                  color: '#28D6B0',
+                },
+              ]);
+              setContextMenu(null);
+            }}
+            className="w-full px-2.5 py-1.5 rounded-[10px] text-left text-[#F4F8F6] hover:bg-[#28D6B0]/15 hover:text-[#28D6B0] font-medium cursor-pointer"
+          >
+            + Draw Horizontal Line Here
+          </button>
+          {onQuickCreateAlert && (
+            <button
+              type="button"
+              onClick={() => {
+                onQuickCreateAlert(contextMenu.price);
+                setContextMenu(null);
+              }}
+              className="w-full px-2.5 py-1.5 rounded-[10px] text-left text-[#F4F8F6] hover:bg-[#28D6B0]/15 hover:text-[#28D6B0] font-medium cursor-pointer"
+            >
+              🔔 Set Price Alert @ {formatAxisPrice(contextMenu.price)}
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={() => {
+              setPanOffset(0);
+              setPricePanOffset(0);
+              setPriceScaleFactor(1);
+              setVisibleCount(48);
+              setContextMenu(null);
+            }}
+            className="w-full px-2.5 py-1.5 rounded-[10px] text-left text-[#A5B5AE] hover:bg-white/5 hover:text-white font-medium cursor-pointer"
+          >
+            Reset Chart &amp; Auto-Scale
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setHideDrawings((v) => !v);
+              setContextMenu(null);
+            }}
+            className="w-full px-2.5 py-1.5 rounded-[10px] text-left text-[#A5B5AE] hover:bg-white/5 hover:text-white font-medium cursor-pointer"
+          >
+            {hideDrawings ? 'Show Drawings' : 'Hide Drawings'}
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setLockDrawings((v) => !v);
+              setContextMenu(null);
+            }}
+            className="w-full px-2.5 py-1.5 rounded-[10px] text-left text-[#A5B5AE] hover:bg-white/5 hover:text-white font-medium cursor-pointer"
+          >
+            {lockDrawings ? 'Unlock Drawings' : 'Lock Drawings'}
+          </button>
+          {redoStack.length > 0 && (
+            <button
+              type="button"
+              onClick={() => {
+                handleRedoDrawing();
+                setContextMenu(null);
+              }}
+              className="w-full px-2.5 py-1.5 rounded-[10px] text-left text-[#A5B5AE] hover:bg-white/5 hover:text-white font-medium cursor-pointer"
+            >
+              ↷ Redo Drawing
+            </button>
+          )}
+        </div>
+      )}
 
       {/* Interactive On-Chart Position Pills & Moveable SL / TP Drag Lines */}
       {openPositions.map((pos) => {
@@ -1097,7 +2236,6 @@ export const ApexLiveCandlestickChart: React.FC<ApexLiveCandlestickChartProps> =
 
         const isPositive = pos.netPnl >= 0;
 
-        // Projected PnL when dragging SL or TP
         const slProjectedPnl =
           effectiveSlPrice > 0
             ? calculatePositionPnl(symbol, pos.side, pos.volume, pos.entryPrice, effectiveSlPrice)
@@ -1111,24 +2249,24 @@ export const ApexLiveCandlestickChart: React.FC<ApexLiveCandlestickChartProps> =
 
         return (
           <React.Fragment key={pos.id}>
-            {/* Entry Pill with Quick +SL / +TP if removed & 1-Click Close */}
+            {/* Entry Pill with Quick +SL / +TP & 1-Click Close */}
             {showEntry && (
               <div
                 style={{ top: `${entryY - 12}px` }}
                 onMouseDown={(e) => e.stopPropagation()}
                 onTouchStart={(e) => e.stopPropagation()}
-                className="absolute left-2.5 z-10 inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-white/95 border border-slate-300 shadow-sm text-[10px] font-mono pointer-events-auto"
+                className="absolute left-12 z-10 inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-[10px] bg-[#0C1411]/95 border border-[#28D6B0]/30 shadow-md text-[10px] font-sans font-bold pointer-events-auto"
               >
                 <span
                   className={`font-extrabold ${
-                    pos.side === 'BUY' ? 'text-[#0B9E6D]' : 'text-[#E11D48]'
+                    pos.side === 'BUY' ? 'text-[#28D6B0]' : 'text-[#F01650]'
                   }`}
                 >
                   {pos.side} {pos.volume.toFixed(2)}
                 </span>
                 <span
-                  className={`font-bold ${
-                    isPositive ? 'text-[#0B9E6D]' : 'text-[#E11D48]'
+                  className={`font-bold tabular-nums ${
+                    isPositive ? 'text-[#28D6B0]' : 'text-[#F01650]'
                   }`}
                 >
                   {isPositive ? '+' : ''}${pos.netPnl.toFixed(2)}
@@ -1137,7 +2275,7 @@ export const ApexLiveCandlestickChart: React.FC<ApexLiveCandlestickChartProps> =
                   <button
                     type="button"
                     onClick={() => handleQuickAddSlOrTp(pos, 'SL')}
-                    className="px-1 py-0.2 rounded bg-rose-50 border border-rose-300 text-[#E11D48] hover:bg-rose-600 hover:text-white font-bold text-[9px] cursor-pointer"
+                    className="px-1.5 py-0.2 rounded-[6px] bg-[#F01650]/15 border border-[#F01650]/40 text-[#F01650] hover:bg-[#F01650] hover:text-white font-bold text-[9px] cursor-pointer"
                     title="Add Stop Loss to Chart"
                   >
                     +SL
@@ -1147,7 +2285,7 @@ export const ApexLiveCandlestickChart: React.FC<ApexLiveCandlestickChartProps> =
                   <button
                     type="button"
                     onClick={() => handleQuickAddSlOrTp(pos, 'TP')}
-                    className="px-1 py-0.2 rounded bg-teal-50 border border-teal-300 text-[#0D9488] hover:bg-teal-600 hover:text-white font-bold text-[9px] cursor-pointer"
+                    className="px-1.5 py-0.2 rounded-[6px] bg-[#28D6B0]/15 border border-[#28D6B0]/40 text-[#28D6B0] hover:bg-[#28D6B0] hover:text-[#04100C] font-bold text-[9px] cursor-pointer"
                     title="Add Take Profit to Chart"
                   >
                     +TP
@@ -1157,7 +2295,7 @@ export const ApexLiveCandlestickChart: React.FC<ApexLiveCandlestickChartProps> =
                   <button
                     type="button"
                     onClick={() => onEditPositionModal(pos)}
-                    className="px-1 py-0.2 rounded bg-slate-100 border border-slate-300 text-slate-700 hover:bg-slate-800 hover:text-white font-bold text-[9px] cursor-pointer"
+                    className="px-1.5 py-0.2 rounded-[6px] bg-[#090F0D] border border-white/15 text-[#A5B5AE] hover:text-white font-bold text-[9px] cursor-pointer"
                     title="Edit Stop Loss & Take Profit"
                   >
                     SL/TP
@@ -1167,7 +2305,7 @@ export const ApexLiveCandlestickChart: React.FC<ApexLiveCandlestickChartProps> =
                   <button
                     type="button"
                     onClick={() => onClosePosition(pos.id)}
-                    className="ml-0.5 px-1 rounded bg-rose-50 hover:bg-rose-500 text-rose-600 hover:text-white font-bold transition-colors cursor-pointer"
+                    className="ml-0.5 px-1.5 rounded-[6px] bg-[#F01650]/20 hover:bg-[#F01650] text-[#F01650] hover:text-white font-bold transition-colors cursor-pointer"
                     title="Close Position"
                   >
                     ×
@@ -1176,22 +2314,22 @@ export const ApexLiveCandlestickChart: React.FC<ApexLiveCandlestickChartProps> =
               </div>
             )}
 
-            {/* Moveable / Draggable Stop Loss (SL) Pill with 1-Click Remove (×) */}
+            {/* Moveable / Draggable Stop Loss (SL) Pill */}
             {showSl && (
               <div
                 style={{ top: `${slY - 12}px` }}
                 data-testid={`chart-sl-line-${pos.id}`}
                 onMouseDown={(e) => startSlTpDrag(pos.id, 'SL', effectiveSlPrice, e)}
                 onTouchStart={(e) => startSlTpDrag(pos.id, 'SL', effectiveSlPrice, e)}
-                className={`absolute right-[74px] z-20 inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-rose-50/95 border shadow-sm text-[9.5px] font-mono text-[#E11D48] pointer-events-auto cursor-ns-resize select-none transition-shadow ${
+                className={`absolute right-[76px] z-20 inline-flex items-center gap-1 px-2 py-0.5 rounded-[9px] bg-[#0C1411]/95 border shadow-md text-[9.5px] font-sans font-bold text-[#F01650] pointer-events-auto cursor-ns-resize select-none transition-shadow ${
                   draggingSlTp?.orderId === pos.id && draggingSlTp?.type === 'SL'
-                    ? 'border-[#E11D48] ring-2 ring-rose-400/50 shadow-md scale-[1.03]'
-                    : 'border-rose-300 hover:border-[#E11D48]'
+                    ? 'border-[#F01650] ring-2 ring-[#F01650]/40 scale-[1.03]'
+                    : 'border-[#F01650]/45 hover:border-[#F01650]'
                 }`}
                 title="Drag Up/Down to Move Stop Loss"
               >
-                <span className="font-extrabold">⇅ SL {formatAxisPrice(effectiveSlPrice)}</span>
-                <span className="text-[8.5px] opacity-85">
+                <span className="font-extrabold tabular-nums">⇅ SL {formatAxisPrice(effectiveSlPrice)}</span>
+                <span className="text-[8.5px] opacity-85 tabular-nums">
                   ({slProjectedPnl >= 0 ? '+' : ''}${slProjectedPnl.toFixed(2)})
                 </span>
                 {onModifyPositionSlTp && (
@@ -1204,7 +2342,7 @@ export const ApexLiveCandlestickChart: React.FC<ApexLiveCandlestickChartProps> =
                       e.stopPropagation();
                       onModifyPositionSlTp(pos.id, 0, pos.takeProfit);
                     }}
-                    className="ml-0.5 px-1 rounded bg-rose-500/15 hover:bg-rose-600 text-[#E11D48] hover:text-white font-extrabold transition-colors cursor-pointer"
+                    className="ml-0.5 px-1 rounded bg-[#F01650]/20 hover:bg-[#F01650] text-[#F01650] hover:text-white font-extrabold transition-colors cursor-pointer"
                     title="Remove Stop Loss (SL)"
                   >
                     ×
@@ -1213,22 +2351,22 @@ export const ApexLiveCandlestickChart: React.FC<ApexLiveCandlestickChartProps> =
               </div>
             )}
 
-            {/* Moveable / Draggable Take Profit (TP) Pill with 1-Click Remove (×) */}
+            {/* Moveable / Draggable Take Profit (TP) Pill */}
             {showTp && (
               <div
                 style={{ top: `${tpY - 12}px` }}
                 data-testid={`chart-tp-line-${pos.id}`}
                 onMouseDown={(e) => startSlTpDrag(pos.id, 'TP', effectiveTpPrice, e)}
                 onTouchStart={(e) => startSlTpDrag(pos.id, 'TP', effectiveTpPrice, e)}
-                className={`absolute right-[74px] z-20 inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-teal-50/95 border shadow-sm text-[9.5px] font-mono text-[#0D9488] pointer-events-auto cursor-ns-resize select-none transition-shadow ${
+                className={`absolute right-[76px] z-20 inline-flex items-center gap-1 px-2 py-0.5 rounded-[9px] bg-[#0C1411]/95 border shadow-md text-[9.5px] font-sans font-bold text-[#28D6B0] pointer-events-auto cursor-ns-resize select-none transition-shadow ${
                   draggingSlTp?.orderId === pos.id && draggingSlTp?.type === 'TP'
-                    ? 'border-[#0D9488] ring-2 ring-teal-400/50 shadow-md scale-[1.03]'
-                    : 'border-teal-300 hover:border-[#0D9488]'
+                    ? 'border-[#28D6B0] ring-2 ring-[#28D6B0]/40 scale-[1.03]'
+                    : 'border-[#28D6B0]/45 hover:border-[#28D6B0]'
                 }`}
                 title="Drag Up/Down to Move Take Profit"
               >
-                <span className="font-extrabold">⇅ TP {formatAxisPrice(effectiveTpPrice)}</span>
-                <span className="text-[8.5px] opacity-85">
+                <span className="font-extrabold tabular-nums">⇅ TP {formatAxisPrice(effectiveTpPrice)}</span>
+                <span className="text-[8.5px] opacity-85 tabular-nums">
                   ({tpProjectedPnl >= 0 ? '+' : ''}${tpProjectedPnl.toFixed(2)})
                 </span>
                 {onModifyPositionSlTp && (
@@ -1241,7 +2379,7 @@ export const ApexLiveCandlestickChart: React.FC<ApexLiveCandlestickChartProps> =
                       e.stopPropagation();
                       onModifyPositionSlTp(pos.id, pos.stopLoss, 0);
                     }}
-                    className="ml-0.5 px-1 rounded bg-teal-500/15 hover:bg-teal-600 text-[#0D9488] hover:text-white font-extrabold transition-colors cursor-pointer"
+                    className="ml-0.5 px-1 rounded bg-[#28D6B0]/20 hover:bg-[#28D6B0] text-[#28D6B0] hover:text-[#04100C] font-extrabold transition-colors cursor-pointer"
                     title="Remove Take Profit (TP)"
                   >
                     ×

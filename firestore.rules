@@ -1,19 +1,19 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Pillar 1: Global Safety Net
+
+    // Default deny catch-all
     match /{document=**} {
       allow read, write: if false;
     }
 
-    // Health check collection for connection test
-    match /test/{docId} {
-      allow read, write: if true;
+    // --- Hardened Global Helpers ---
+    function isSignedIn() {
+      return request.auth != null;
     }
 
-    // Global Hardened Primitives
     function isValidId(id) {
-      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+      return id is string && id.size() > 0 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
     }
 
     function incoming() {
@@ -24,270 +24,78 @@ service cloud.firestore {
       return resource.data;
     }
 
-    function isSignedIn() {
-      return request.auth != null;
-    }
-
-    function isOwner(userId) {
-      return isSignedIn() && request.auth.uid == userId;
-    }
-
-    // Zero-lookup admin check for list queries (Cost-Optimization Clause)
-    function isBootstrapAdmin() {
-      return isSignedIn() && request.auth.token.email == 'kingritikx0343@gmail.com';
-    }
-
     function isAdmin() {
-      return isBootstrapAdmin() || (
-        isSignedIn() &&
-        exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+      return isSignedIn() && (
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid)) ||
+        request.auth.token.email == 'kingritikx0343@gmail.com' ||
+        request.auth.token.email == 'admin@fundedapex.com'
       );
     }
 
-    // Validation Blueprint: UserProfile
-    function isValidUserProfile(data) {
-      return data.keys().hasAll([
-          'uid', 'fullName', 'email', 'country', 'referralCode',
-          'role', 'rewardPoints', 'mfaEnabled', 'deletionRequested',
-          'createdAt', 'updatedAt'
-        ]) &&
-        data.keys().hasOnly([
-          'uid', 'fullName', 'email', 'country', 'referralCode', 'referredBy',
-          'role', 'rewardPoints', 'lastSpinDate', 'mfaEnabled', 'deletionRequested',
-          'createdAt', 'updatedAt'
-        ]) &&
-        data.uid is string && data.uid.size() >= 1 && data.uid.size() <= 128 && data.uid.matches('^[a-zA-Z0-9_\\-]+$') &&
-        data.fullName is string && data.fullName.size() >= 1 && data.fullName.size() <= 100 &&
-        data.email is string && data.email.size() >= 3 && data.email.size() <= 150 &&
-        data.country is string && data.country.size() >= 1 && data.country.size() <= 80 &&
-        data.referralCode is string && data.referralCode.size() >= 3 && data.referralCode.size() <= 32 &&
-        (!('referredBy' in data) || (data.referredBy is string && data.referredBy.size() <= 32)) &&
-        data.role is string && data.role.size() <= 20 && data.role in ['user', 'support', 'admin', 'super_admin'] &&
-        data.rewardPoints is number && data.rewardPoints >= 0 && data.rewardPoints <= 10000000 &&
-        (!('lastSpinDate' in data) || (data.lastSpinDate is string && data.lastSpinDate.size() <= 40)) &&
-        data.mfaEnabled is bool &&
-        data.deletionRequested is bool &&
-        data.createdAt is timestamp &&
-        data.updatedAt is timestamp;
-    }
-
-    // Validation Blueprint: AdminRecord
-    function isValidAdminRecord(data) {
-      return data.keys().hasAll(['uid', 'role', 'createdAt']) &&
-        data.keys().hasOnly(['uid', 'role', 'createdAt']) &&
-        data.uid is string && data.uid.size() >= 1 && data.uid.size() <= 128 && data.uid.matches('^[a-zA-Z0-9_\\-]+$') &&
-        data.role is string && data.role.size() <= 20 && data.role in ['admin', 'super_admin', 'support'] &&
-        data.createdAt is timestamp;
-    }
-
-    // Validation Blueprint: TradingAccount
-    function isValidTradingAccount(data) {
-      return data.keys().hasAll([
-          'accountNumber', 'userId', 'challengeId', 'challengeTitle', 'challengeType',
-          'accountSize', 'startingBalance', 'balance', 'equity', 'usedMargin', 'freeMargin',
-          'profitTargetPct', 'dailyDrawdownPct', 'maxDrawdownPct', 'minTradingDays',
-          'tradingDaysCount', 'leverage', 'status'
-        ]) &&
-        data.accountNumber is string && data.accountNumber.size() >= 3 && data.accountNumber.size() <= 32 && data.accountNumber.matches('^[a-zA-Z0-9_\\-]+$') &&
-        data.userId is string && data.userId.size() >= 1 && data.userId.size() <= 128 && data.userId.matches('^[a-zA-Z0-9_\\-]+$') &&
-        (!('userEmail' in data) || (data.userEmail is string && data.userEmail.size() <= 150)) &&
-        (!('userName' in data) || (data.userName is string && data.userName.size() <= 100)) &&
-        data.challengeId is string && data.challengeId.size() >= 1 && data.challengeId.size() <= 64 &&
-        data.challengeTitle is string && data.challengeTitle.size() >= 1 && data.challengeTitle.size() <= 100 &&
-        data.challengeType is string && data.challengeType.size() <= 20 && data.challengeType in ['one_step', 'two_step', 'three_step', 'instant'] &&
-        data.accountSize is number && data.accountSize >= 1000 && data.accountSize <= 1000000 &&
-        data.startingBalance is number && data.startingBalance >= 1000 && data.startingBalance <= 1000000 &&
-        data.balance is number && data.balance >= 0 && data.balance <= 100000000 &&
-        data.equity is number && data.equity >= 0 && data.equity <= 100000000 &&
-        data.usedMargin is number && data.usedMargin >= 0 && data.usedMargin <= 100000000 &&
-        data.freeMargin is number && data.freeMargin >= -100000000 && data.freeMargin <= 100000000 &&
-        data.profitTargetPct is number && data.profitTargetPct >= 0 && data.profitTargetPct <= 100 &&
-        data.dailyDrawdownPct is number && data.dailyDrawdownPct >= 1 && data.dailyDrawdownPct <= 100 &&
-        data.maxDrawdownPct is number && data.maxDrawdownPct >= 1 && data.maxDrawdownPct <= 100 &&
-        data.minTradingDays is number && data.minTradingDays >= 0 && data.minTradingDays <= 365 &&
-        data.tradingDaysCount is number && data.tradingDaysCount >= 0 && data.tradingDaysCount <= 3650 &&
-        data.leverage is number && data.leverage >= 1 && data.leverage <= 500 &&
-        data.status is string && data.status.size() <= 20 && data.status in ['available', 'active', 'passed', 'failed', 'suspended', 'completed'] &&
-        (!('terminalUserId' in data) || (data.terminalUserId is string && data.terminalUserId.size() <= 64)) &&
-        (!('terminalPassword' in data) || (data.terminalPassword is string && data.terminalPassword.size() <= 64)) &&
-        (!('currentStep' in data) || (data.currentStep is number && data.currentStep >= 1 && data.currentStep <= 3)) &&
-        (!('totalSteps' in data) || (data.totalSteps is number && data.totalSteps >= 1 && data.totalSteps <= 3)) &&
-        (!('profitSplitPct' in data) || (data.profitSplitPct is number && data.profitSplitPct >= 0 && data.profitSplitPct <= 100)) &&
-        (!('breachReason' in data) || (data.breachReason is string && data.breachReason.size() <= 300));
-    }
-
-    // Validation Blueprint: TradeOrder
-    function isValidTradeOrder(data) {
-      return data.keys().hasAll([
-          'ticketId', 'accountId', 'userId', 'symbol', 'side', 'orderType',
-          'volume', 'entryPrice', 'currentPrice', 'exitPrice', 'stopLoss',
-          'takeProfit', 'grossPnl', 'commission', 'netPnl', 'status',
-          'openTime', 'closeTime', 'createdAt', 'updatedAt'
-        ]) &&
-        data.keys().hasOnly([
-          'ticketId', 'accountId', 'userId', 'symbol', 'side', 'orderType',
-          'volume', 'entryPrice', 'currentPrice', 'exitPrice', 'stopLoss',
-          'takeProfit', 'grossPnl', 'commission', 'netPnl', 'status',
-          'openTime', 'closeTime', 'createdAt', 'updatedAt'
-        ]) &&
-        data.ticketId is string && data.ticketId.size() >= 1 && data.ticketId.size() <= 64 && data.ticketId.matches('^[a-zA-Z0-9_\\-]+$') &&
-        data.accountId is string && data.accountId.size() >= 1 && data.accountId.size() <= 128 && data.accountId.matches('^[a-zA-Z0-9_\\-]+$') &&
-        data.userId is string && data.userId.size() >= 1 && data.userId.size() <= 128 && data.userId.matches('^[a-zA-Z0-9_\\-]+$') &&
-        data.symbol is string && data.symbol.size() >= 2 && data.symbol.size() <= 20 &&
-        data.side is string && data.side.size() <= 10 && data.side in ['BUY', 'SELL'] &&
-        data.orderType is string && data.orderType.size() <= 20 && data.orderType in ['MARKET', 'BUY_LIMIT', 'SELL_LIMIT', 'BUY_STOP', 'SELL_STOP'] &&
-        data.volume is number && data.volume > 0 && data.volume <= 1000 &&
-        data.entryPrice is number && data.entryPrice >= 0 &&
-        data.currentPrice is number && data.currentPrice >= 0 &&
-        data.exitPrice is number && data.exitPrice >= 0 &&
-        data.stopLoss is number && data.stopLoss >= 0 &&
-        data.takeProfit is number && data.takeProfit >= 0 &&
-        data.grossPnl is number &&
-        data.commission is number &&
-        data.netPnl is number &&
-        data.status is string && data.status.size() <= 20 && data.status in ['OPEN', 'PENDING', 'CLOSED', 'CANCELLED'] &&
-        data.openTime is string && data.openTime.size() <= 40 &&
-        data.closeTime is string && data.closeTime.size() <= 40 &&
-        data.createdAt is timestamp &&
-        data.updatedAt is timestamp;
-    }
-
-    // Validation Blueprint: AdminAuditLog
-    function isValidAdminAuditLog(data) {
-      return data.keys().hasAll(['adminId', 'adminEmail', 'action', 'targetId', 'details', 'createdAt']) &&
-        data.keys().hasOnly(['adminId', 'adminEmail', 'action', 'targetId', 'details', 'createdAt']) &&
-        data.adminId is string && data.adminId.size() >= 1 && data.adminId.size() <= 128 && data.adminId.matches('^[a-zA-Z0-9_\\-]+$') &&
-        data.adminEmail is string && data.adminEmail.size() >= 3 && data.adminEmail.size() <= 150 &&
-        data.action is string && data.action.size() >= 1 && data.action.size() <= 100 &&
-        data.targetId is string && data.targetId.size() >= 1 && data.targetId.size() <= 128 &&
-        data.details is string && data.details.size() <= 500 &&
-        data.createdAt is timestamp;
-    }
-
-    // Validation Blueprint: MailNotification
-    function isValidMailNotification(data) {
-      return data.keys().hasAll([
-          'to', 'recipientName', 'sender', 'domain', 'accountId', 'accountNumber',
-          'challengeId', 'challengeTitle', 'terminalUserId', 'terminalPassword',
-          'subject', 'htmlBody', 'textBody', 'triggeredBy', 'createdAt'
-        ]) &&
-        data.keys().hasOnly([
-          'to', 'recipientName', 'sender', 'domain', 'accountId', 'accountNumber',
-          'challengeId', 'challengeTitle', 'terminalUserId', 'terminalPassword',
-          'subject', 'htmlBody', 'textBody', 'triggeredBy', 'createdAt', 'dispatchedAt'
-        ]) &&
-        data.to is string && data.to.size() >= 3 && data.to.size() <= 150 &&
-        data.recipientName is string && data.recipientName.size() <= 100 &&
-        data.sender is string && data.sender.size() <= 150 &&
-        data.domain is string && data.domain.size() <= 100 &&
-        data.accountId is string && data.accountId.size() <= 128 &&
-        data.accountNumber is string && data.accountNumber.size() <= 32 &&
-        data.challengeId is string && data.challengeId.size() <= 64 &&
-        data.challengeTitle is string && data.challengeTitle.size() <= 100 &&
-        data.terminalUserId is string && data.terminalUserId.size() <= 64 &&
-        data.terminalPassword is string && data.terminalPassword.size() <= 64 &&
-        data.subject is string && data.subject.size() <= 200 &&
-        data.htmlBody is string && data.htmlBody.size() <= 10000 &&
-        data.textBody is string && data.textBody.size() <= 5000 &&
-        data.triggeredBy is string && data.triggeredBy.size() <= 40 && data.triggeredBy in ['admin_account_update', 'admin_challenge_update', 'account_allocation'] &&
-        data.createdAt is string && data.createdAt.size() <= 40;
-    }
-
-    // Collection: /users/{userId}
+    // --- Users Collection (PII Isolated) ---
     match /users/{userId} {
-      allow get, list: if isValidId(userId);
-      allow create, update: if isValidId(userId);
-      allow delete: if isValidId(userId) && isAdmin();
+      allow get: if isSignedIn() && isValidId(userId) && (request.auth.uid == userId || isAdmin());
+      allow list: if isAdmin();
+      allow create: if isSignedIn() && isValidId(userId) && request.auth.uid == userId && (incoming().role == 'user' || isAdmin());
+      allow update: if isSignedIn() && isValidId(userId) && (
+        (request.auth.uid == userId && !incoming().diff(existing()).affectedKeys().hasAny(['role', 'uid', 'email', 'createdAt'])) ||
+        isAdmin()
+      );
+      allow delete: if isAdmin();
     }
 
-    // Collection: /admins/{adminId}
+    // --- Admins Registry ---
     match /admins/{adminId} {
-      allow get: if isValidId(adminId) && (isOwner(adminId) || isAdmin());
-      allow list: if isBootstrapAdmin() || (isSignedIn() && resource.data.uid == request.auth.uid);
-      allow create: if isValidId(adminId) &&
-        isValidAdminRecord(incoming()) &&
-        incoming().uid == adminId &&
-        incoming().createdAt == request.time &&
-        isAdmin();
-      allow update: if isValidId(adminId) &&
-        isValidAdminRecord(incoming()) &&
-        incoming().uid == existing().uid &&
-        incoming().createdAt == existing().createdAt &&
-        isAdmin();
-      allow delete: if isValidId(adminId) && isAdmin();
+      allow read, write: if isAdmin() && isValidId(adminId);
     }
 
-    // Collection: /tradingAccounts/{accountId} & /trading_accounts/{accountId}
-    match /tradingAccounts/{accountId} {
-      allow get, list: if isValidId(accountId);
-      allow create, update: if isValidId(accountId);
-      allow delete: if isValidId(accountId) && isAdmin();
+    // --- Trading Accounts ---
+    match /accounts/{accountId} {
+      allow get: if isSignedIn() && isValidId(accountId) && (resource.data.userId == request.auth.uid || isAdmin());
+      allow list: if isSignedIn() && (resource.data.userId == request.auth.uid || isAdmin());
+      allow create: if isSignedIn() && isValidId(accountId) && (incoming().userId == request.auth.uid || isAdmin());
+      allow update: if isSignedIn() && isValidId(accountId) && (resource.data.userId == request.auth.uid || isAdmin());
+      allow delete: if isAdmin() && isValidId(accountId);
     }
 
-    match /trading_accounts/{accountId} {
-      allow get, list: if isValidId(accountId);
-      allow create, update: if isValidId(accountId);
-      allow delete: if isValidId(accountId) && isAdmin();
-    }
-
-    // Collection: /orders/{orderId}
+    // --- Orders ---
     match /orders/{orderId} {
-      allow get: if isValidId(orderId) && (
-        (isSignedIn() && existing().userId == request.auth.uid) || isAdmin()
-      );
-      allow list: if isSignedIn() && (
-        resource.data.userId == request.auth.uid || isBootstrapAdmin()
-      );
-      allow create: if isSignedIn() &&
-        isValidId(orderId) &&
-        isValidTradeOrder(incoming()) &&
-        incoming().userId == request.auth.uid &&
-        incoming().status in ['OPEN', 'PENDING'] &&
-        incoming().createdAt == request.time &&
-        incoming().updatedAt == request.time;
-      allow update: if isSignedIn() &&
-        isValidId(orderId) &&
-        isValidTradeOrder(incoming()) && (
-          isAdmin() || (
-            existing().userId == request.auth.uid &&
-            !(existing().status in ['CLOSED', 'CANCELLED']) &&
-            incoming().userId == existing().userId &&
-            incoming().accountId == existing().accountId &&
-            incoming().ticketId == existing().ticketId &&
-            incoming().symbol == existing().symbol &&
-            incoming().side == existing().side &&
-            incoming().createdAt == existing().createdAt &&
-            incoming().updatedAt == request.time
-          )
-        );
-      allow delete: if isValidId(orderId) && isAdmin();
+      allow get: if isSignedIn() && isValidId(orderId) && (resource.data.userId == request.auth.uid || isAdmin());
+      allow list: if isSignedIn() && (resource.data.userId == request.auth.uid || isAdmin());
+      allow create: if isSignedIn() && isValidId(orderId) && (incoming().userId == request.auth.uid || isAdmin());
+      allow update: if isSignedIn() && isValidId(orderId) && (resource.data.userId == request.auth.uid || isAdmin());
+      allow delete: if isAdmin() && isValidId(orderId);
     }
 
-    // Collection: /purchase_requests/{reqId}
-    match /purchase_requests/{reqId} {
-      allow get, list: if isValidId(reqId);
-      allow create, update: if isValidId(reqId);
-      allow delete: if isValidId(reqId) && isAdmin();
+    // --- Purchase Requests ---
+    match /purchaseRequests/{requestId} {
+      allow get: if isSignedIn() && isValidId(requestId) && (resource.data.userId == request.auth.uid || isAdmin());
+      allow list: if isSignedIn() && (resource.data.userId == request.auth.uid || isAdmin());
+      allow create: if isSignedIn() && isValidId(requestId) && (incoming().userId == request.auth.uid || isAdmin());
+      allow update, delete: if isAdmin() && isValidId(requestId);
     }
 
-    match /purchaseRequests/{reqId} {
-      allow get, list: if isValidId(reqId);
-      allow create, update: if isValidId(reqId);
-      allow delete: if isValidId(reqId) && isAdmin();
+    // --- Verified Payouts Showcase ---
+    match /payouts/{payoutId} {
+      allow read: if isValidId(payoutId);
+      allow write: if isAdmin() && isValidId(payoutId);
     }
 
-    // Collection: /adminLogs/{logId}
-    match /adminLogs/{logId} {
-      allow get, list: if isValidId(logId);
-      allow create: if isValidId(logId);
-      allow update, delete: if false;
+    // --- Payment Deposit Settings ---
+    match /paymentSettings/{settingId} {
+      allow read: if isValidId(settingId);
+      allow write: if isAdmin() && isValidId(settingId);
     }
 
-    // Collection: /mail_notifications/{mailId}
-    match /mail_notifications/{mailId} {
-      allow get, list: if isValidId(mailId);
-      allow create: if isValidId(mailId);
-      allow update, delete: if isValidId(mailId) && isAdmin();
+    // --- Admin Coupons ---
+    match /adminCoupons/{couponId} {
+      allow read: if isValidId(couponId);
+      allow write: if isAdmin() && isValidId(couponId);
+    }
+
+    // --- Connection Test doc ---
+    match /test/connection {
+      allow read: if true;
     }
   }
 }
