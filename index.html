@@ -1,8 +1,18 @@
 <!doctype html>
-<html lang="en" class="dark">
+<html lang="en" class="dark" style="background-color: #04080A; color: #FFFFFF;">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <script type="text/javascript">
+      // 1. Immediately normalize trailing slash for GitHub Pages project repositories
+      // If visited as https://user.github.io/repo without trailing slash, relative assets fail (404 white screen).
+      (function() {
+        var p = window.location.pathname;
+        if (p && !p.endsWith('/') && !p.split('/').pop().includes('.')) {
+          window.location.replace(p + '/' + window.location.search + window.location.hash);
+        }
+      })();
+    </script>
     <title>FUNDED APEX — Institutional Prop Trading Simulation &amp; Evaluation Platform</title>
     <meta name="description" content="Trade Big. Think Smart. Get Funded. Unlock professional trading opportunities with structured challenges, transparent rules, and a modern trading environment at FUNDED APEX." />
     <meta property="og:title" content="FUNDED APEX — Institutional Prop Trading Platform" />
@@ -74,7 +84,7 @@
     </script>
     <script src="https://accounts.google.com/gsi/client" async defer></script>
   </head>
-  <body class="bg-transparent text-[#FFFFFF] antialiased selection:bg-[#00E676]/25 selection:text-[#00E676]">
+  <body style="background-color: #04080A; color: #FFFFFF; min-height: 100vh; margin: 0;" class="bg-[#04080A] text-[#FFFFFF] antialiased selection:bg-[#00E676]/25 selection:text-[#00E676]">
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>

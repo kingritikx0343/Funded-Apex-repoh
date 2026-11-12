@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
   pages: write
   id-token: write
 
@@ -35,18 +35,24 @@ jobs:
       - name: Lint
         run: npm run lint
 
-      - name: Build
-        run: npm run build
-
-      - name: Setup Pages
-        if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
+      - name: Setup Pages Environment
         uses: actions/configure-pages@v5
 
-      - name: Upload artifact
+      - name: Build Production Bundle
+        run: npm run build
+
+      - name: Upload GitHub Pages Artifact
         if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
         uses: actions/upload-pages-artifact@v3
         with:
           path: './dist'
+
+      - name: Deploy to gh-pages Branch
+        if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
+        uses: JamesIves/github-pages-deploy-action@v4
+        with:
+          folder: dist
+          branch: gh-pages
 
   deploy:
     environment:
