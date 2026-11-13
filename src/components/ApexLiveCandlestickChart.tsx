@@ -826,18 +826,17 @@ export const ApexLiveCandlestickChart: React.FC<ApexLiveCandlestickChartProps> =
 
   const formatAxisTime = useCallback(
     (tsMs: number) => {
+      const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
       const d = new Date(tsMs);
+      const mon = MONTHS[d.getMonth()] || 'Jan';
       if (timeframeSeconds >= 2592000) {
-        return d.toLocaleDateString([], { month: 'short', year: '2-digit' });
+        return `${mon} '${String(d.getFullYear()).slice(-2)}`;
       }
       if (timeframeSeconds >= 86400) {
-        return d.toLocaleDateString([], { month: 'short', day: 'numeric' });
+        return `${mon} ${d.getDate()}`;
       }
       if (timeframeSeconds >= 14400) {
-        return `${d.toLocaleDateString([], { month: 'short', day: 'numeric' })} ${d
-          .getHours()
-          .toString()
-          .padStart(2, '0')}:00`;
+        return `${mon} ${d.getDate()} ${d.getHours().toString().padStart(2, '0')}:00`;
       }
       if (timeframeSeconds < 60) {
         return `${d.getMinutes().toString().padStart(2, '0')}:${d
@@ -863,7 +862,7 @@ export const ApexLiveCandlestickChart: React.FC<ApexLiveCandlestickChartProps> =
         rafId = requestAnimationFrame(render);
         return;
       }
-      const ctx = canvas.getContext('2d');
+      const ctx = canvas.getContext('2d', { alpha: false });
       if (!ctx) {
         rafId = requestAnimationFrame(render);
         return;

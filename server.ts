@@ -37,17 +37,26 @@ async function startServer() {
   const DATA_DIR = path.resolve(process.cwd(), '.data');
   const VAULT_FILE = path.join(DATA_DIR, 'apex_vault.json');
 
+  let memoryVaultCache: Record<string, any> | null = null;
+
   function readServerVault(): Record<string, any> {
+    if (memoryVaultCache !== null) {
+      return memoryVaultCache;
+    }
     try {
       if (fs.existsSync(VAULT_FILE)) {
         const raw = fs.readFileSync(VAULT_FILE, 'utf-8');
         const parsed = JSON.parse(raw);
-        if (parsed && typeof parsed === 'object') return parsed;
+        if (parsed && typeof parsed === 'object') {
+          memoryVaultCache = parsed;
+          return parsed;
+        }
       }
     } catch {
       // ignore read errors
     }
-    return {};
+    memoryVaultCache = {};
+    return memoryVaultCache;
   }
 
   function writeServerVault(incoming: Record<string, any>): Record<string, any> {
@@ -96,6 +105,7 @@ async function startServer() {
           : existing.paymentSettings,
         updatedAt: new Date().toISOString(),
       };
+      memoryVaultCache = merged;
       fs.writeFileSync(VAULT_FILE, JSON.stringify(merged), 'utf-8');
       return merged;
     } catch {
@@ -182,8 +192,33 @@ async function startServer() {
     res.status(200).json({ ok: true, emails: filtered });
   });
 
-  // Server-side live market quotes proxy (Swissquote Institutional Spot XAU/USD & Forex BBO + Gold-API + Binance Crypto)
+  // Server-side live market quotes proxy with 2.2s TTL cache & in-flight request deduplication
+  let cachedQuotesResponse: {
+    ts: number;
+    payload: { ok: boolean; tickers: any[]; spotQuotes: Record<string, { bid: number; ask: number }> };
+  } | null = null;
+  let inFlightQuotesPromise: Promise<{
+    ok: boolean;
+    tickers: any[];
+    spotQuotes: Record<string, { bid: number; ask: number }>;
+  }> | null = null;
+
   app.get('/api/market/quotes', async (_req, res) => {
+    const now = Date.now();
+    if (cachedQuotesResponse && now - cachedQuotesResponse.ts < 2200) {
+      res.status(200).json(cachedQuotesResponse.payload);
+      return;
+    }
+    if (inFlightQuotesPromise) {
+      try {
+        const shared = await inFlightQuotesPromise;
+        res.status(200).json(shared);
+        return;
+      } catch {
+        // continue to fresh fetch
+      }
+    }
+
     const symbolsParam = encodeURIComponent(
       JSON.stringify([
         'BTCUSDT',
@@ -280,19 +315,43 @@ async function startServer() {
       return [];
     };
 
-    const [, tickers] = await Promise.all([fetchSwissquote(), fetchBinance()]);
-    res.status(200).json({
-      ok: tickers.length > 0 || Object.keys(spotQuotes).length > 0,
-      tickers,
-      spotQuotes,
-    });
+    inFlightQuotesPromise = (async () => {
+      const [, tickers] = await Promise.all([fetchSwissquote(), fetchBinance()]);
+      const payload = {
+        ok: tickers.length > 0 || Object.keys(spotQuotes).length > 0,
+        tickers,
+        spotQuotes,
+      };
+      if (payload.ok) {
+        cachedQuotesResponse = { ts: Date.now(), payload };
+      }
+      return payload;
+    })();
+
+    try {
+      const result = await inFlightQuotesPromise;
+      res.status(200).json(result);
+    } finally {
+      inFlightQuotesPromise = null;
+    }
   });
 
-  // Server-side live historical klines proxy for all timeframes (1m, 5m, 15m, 30m, 1h, 4h, 1d, 1w)
+  // Server-side live historical klines proxy with 6s TTL cache per symbol:interval:limit
+  const klinesCache = new Map<
+    string,
+    { ts: number; payload: { ok: boolean; klines: any[]; source?: string } }
+  >();
+
   app.get('/api/market/klines', async (req, res) => {
     const rawSymbol = String(req.query.symbol || 'XAUUSD').toUpperCase();
     const interval = String(req.query.interval || '15m');
     const limit = Math.min(500, Math.max(20, Number(req.query.limit) || 350));
+    const cacheKey = `${rawSymbol}:${interval}:${limit}`;
+    const cachedKline = klinesCache.get(cacheKey);
+    if (cachedKline && Date.now() - cachedKline.ts < 6000) {
+      res.status(200).json(cachedKline.payload);
+      return;
+    }
 
     // Yahoo Finance v8 ticker mapping for authentic TradingView-matching Gold, Silver, Oil, Forex & Index candles
     const yahooSymbolMap: Record<string, string> = {
@@ -435,10 +494,14 @@ async function startServer() {
                 const vol = String(chunk.reduce((s, b) => s + parseFloat(b[5]), 0));
                 agg4h.push([chunk[0][0], open, high, low, close, vol]);
               }
-              res.status(200).json({ ok: true, klines: agg4h.slice(-limit), source: 'yahoo' });
+              const payload4h = { ok: true, klines: agg4h.slice(-limit), source: 'yahoo' };
+              klinesCache.set(cacheKey, { ts: Date.now(), payload: payload4h });
+              res.status(200).json(payload4h);
               return;
             }
-            res.status(200).json({ ok: true, klines: parsedBars.slice(-limit), source: 'yahoo' });
+            const payloadStd = { ok: true, klines: parsedBars.slice(-limit), source: 'yahoo' };
+            klinesCache.set(cacheKey, { ts: Date.now(), payload: payloadStd });
+            res.status(200).json(payloadStd);
             return;
           }
         }
@@ -475,7 +538,9 @@ async function startServer() {
         clearTimeout(timer);
         if (r.ok) {
           const data = await r.json();
-          res.status(200).json({ ok: true, klines: data, source: 'binance' });
+          const payloadBin = { ok: true, klines: data, source: 'binance' };
+          klinesCache.set(cacheKey, { ts: Date.now(), payload: payloadBin });
+          res.status(200).json(payloadBin);
           return;
         }
       } catch {

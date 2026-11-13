@@ -703,21 +703,17 @@ tbody tr {
   opacity: 1;
 }
 
-/* Smooth hover lift on all major dark cards across Public, Dashboard, and Admin views */
+/* Smooth border highlight on dark cards without forcing 100+ separate GPU backing layers during scroll */
 main .bg-\[\#090D0A\] {
-  transition:
-    transform 200ms cubic-bezier(0.22, 1, 0.36, 1),
-    border-color 180ms ease;
-  transform: translate3d(0, 0, 0);
-  backface-visibility: hidden;
+  transition: border-color 180ms ease;
 }
 
 main .bg-\[\#090D0A\]:hover {
-  transform: translate3d(0, -2.5px, 0);
   border-color: rgba(0, 229, 176, 0.42) !important;
 }
 
 /* Eliminate expensive multi-pass GPU framebuffer readback (backdrop-filter) across the entire app for locked 120FPS scroll */
+[class*="backdrop-blur"],
 .backdrop-blur-xs,
 .backdrop-blur-sm,
 .backdrop-blur,
@@ -727,7 +723,8 @@ main .bg-\[\#090D0A\]:hover {
 .backdrop-blur-2xl,
 .backdrop-blur-3xl,
 .apex-glass-panel,
-.liquid-glass {
+.liquid-glass,
+.liquid-terminal-glass {
   backdrop-filter: none !important;
   -webkit-backdrop-filter: none !important;
 }
@@ -746,21 +743,20 @@ main .bg-\[\#090D0A\]:hover {
   backface-visibility: hidden;
 }
 
-/* Global Fast & Smooth Section Reveal Animation System (120fps GPU Easing) */
+/* Global Fast & Smooth Section Reveal Animation System (120fps / 120Hz GPU Easing) */
 .apex-scroll-animated,
 .apex-reveal-init,
 [data-scroll-reveal],
 [data-reveal] {
-  backface-visibility: hidden;
   transition:
-    opacity 260ms cubic-bezier(0.22, 1, 0.36, 1),
-    transform 280ms cubic-bezier(0.22, 1, 0.36, 1);
+    opacity 200ms cubic-bezier(0.22, 1, 0.36, 1),
+    transform 200ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 .apex-scroll-pending,
 section.apex-scroll-pending {
-  opacity: 0.86;
-  transform: translate3d(0, 16px, 0);
+  opacity: 0.92;
+  transform: translate3d(0, 12px, 0);
 }
 
 .apex-scroll-animated.is-revealed,
@@ -768,7 +764,7 @@ section.apex-scroll-pending {
 [data-scroll-reveal].is-revealed,
 [data-reveal].is-revealed {
   opacity: 1;
-  transform: translate3d(0, 0, 0);
+  transform: none;
 }
 
 @keyframes apexToastCountdown {
@@ -804,20 +800,8 @@ section.apex-scroll-pending {
   will-change: transform, opacity;
 }
 
-@keyframes apexFloatShape {
-  0%, 100% {
-    transform: translate3d(0, 0, 0) rotate(0deg);
-  }
-  50% {
-    transform: translate3d(0, -5px, 0) rotate(3deg);
-  }
-}
-
 .apex-float-shape {
-  animation: apexFloatShape 4.8s ease-in-out infinite;
-  will-change: transform, opacity;
-  transform: translate3d(0, 0, 0);
-  backface-visibility: hidden;
+  transform: translateZ(0);
 }
 
 /* Scrollbars */
@@ -857,4 +841,16 @@ section.apex-scroll-pending {
 .custom-scrollbar::-webkit-scrollbar-thumb:hover {
   background: #00E5B0;
 }
+
+@media (prefers-reduced-motion: reduce) {
+  .apex-marquee-track,
+  .apex-marquee-track-fast,
+  .apex-water-caustic-layer,
+  .apex-water-caustic-secondary,
+  .apex-float-gentle {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
+}
+
 

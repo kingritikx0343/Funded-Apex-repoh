@@ -1116,7 +1116,10 @@ export const PublicPages: React.FC = () => {
         <div className="rounded-[24px] bg-[#090D0A] border border-[#00E5B0]/30 p-8 sm:p-14 text-center space-y-6 relative overflow-hidden shadow-[0_28px_80px_rgba(0,0,0,0.92)]">
           <div
             aria-hidden="true"
-            className="pointer-events-none absolute -top-24 left-1/2 -translate-x-1/2 w-[480px] h-[240px] rounded-full bg-[#00E5B0]/[0.09] blur-[110px]"
+            style={{
+              background: 'radial-gradient(ellipse at center, rgba(0, 229, 176, 0.14) 0%, transparent 70%)',
+            }}
+            className="pointer-events-none absolute -top-24 left-1/2 -translate-x-1/2 w-[480px] h-[240px] rounded-full"
           />
           <div className="w-16 h-16 mx-auto rounded-2xl bg-[#051217] border border-[#00E5B0]/35 flex items-center justify-center shadow-[0_0_32px_rgba(0,229,176,0.22)]">
             <Award className="w-8 h-8 text-[#00E5B0]" />
@@ -1598,7 +1601,7 @@ export const PublicPages: React.FC = () => {
           ==================================================================== */}
       <section
         id="challenges-matrix"
-        className="apex-reveal-init scroll-mt-20 bg-[#030504]/55 backdrop-blur-[2px] py-10 sm:py-14 px-4 sm:px-8 border-b border-[#00E5B0]/15"
+        className="apex-reveal-init scroll-mt-20 bg-[#030504]/60 py-10 sm:py-14 px-4 sm:px-8 border-b border-[#00E5B0]/15"
       >
         <div className="max-w-[1380px] mx-auto space-y-6 sm:space-y-8">
           <div className="flex flex-col lg:flex-row lg:items-end justify-between gap-6">
@@ -1872,7 +1875,7 @@ export const PublicPages: React.FC = () => {
       {/* ====================================================================
           SECTION 6: HOW IT WORKS (4-STAGE PROCESS)
           ==================================================================== */}
-      <section className="apex-reveal-init bg-[#030504]/55 backdrop-blur-[2px] py-10 sm:py-14 px-4 sm:px-8 border-b border-[#00E5B0]/15">
+      <section className="apex-reveal-init bg-[#030504]/60 py-10 sm:py-14 px-4 sm:px-8 border-b border-[#00E5B0]/15">
         <div className="max-w-[1380px] mx-auto space-y-6 sm:space-y-8">
           <div className="space-y-3 max-w-2xl">
             <div className="inline-flex items-center gap-2 px-3 py-1 rounded-[8px] bg-[#090D0A] border border-[#00E5B0]/25 text-[11px] font-mono font-semibold uppercase tracking-[0.14em] text-[#00E5B0]">
@@ -1990,7 +1993,7 @@ export const PublicPages: React.FC = () => {
           ==================================================================== */}
       <section
         id="faq"
-        className="apex-reveal-init scroll-mt-20 bg-[#030504]/55 backdrop-blur-[2px] py-10 sm:py-14 px-4 sm:px-8 border-b border-[#00E5B0]/15"
+        className="apex-reveal-init scroll-mt-20 bg-[#030504]/60 py-10 sm:py-14 px-4 sm:px-8 border-b border-[#00E5B0]/15"
       >
         <div className="max-w-4xl mx-auto space-y-6 sm:space-y-8">
           <div className="text-center space-y-3">
@@ -2042,10 +2045,13 @@ export const PublicPages: React.FC = () => {
           ==================================================================== */}
       <section className="apex-reveal-init bg-transparent py-10 sm:py-14 px-4 sm:px-8">
         <div className="max-w-[1380px] mx-auto">
-          <div className="rounded-[24px] bg-[#071318]/95 backdrop-blur-xl border border-[#00E5B0]/30 p-6 sm:p-10 text-center space-y-5 relative overflow-hidden shadow-[0_32px_95px_rgba(0,0,0,0.96)]">
+          <div className="rounded-[24px] bg-[#071318]/95 border border-[#00E5B0]/30 p-6 sm:p-10 text-center space-y-5 relative overflow-hidden shadow-[0_32px_95px_rgba(0,0,0,0.96)]">
             <div
               aria-hidden="true"
-              className="pointer-events-none absolute -top-24 left-1/2 -translate-x-1/2 w-[480px] h-[240px] rounded-full bg-[#00E5B0]/[0.10] blur-[110px]"
+              style={{
+                background: 'radial-gradient(ellipse at center, rgba(0, 229, 176, 0.14) 0%, transparent 70%)',
+              }}
+              className="pointer-events-none absolute -top-24 left-1/2 -translate-x-1/2 w-[480px] h-[240px] rounded-full"
             />
             <div className="inline-flex items-center gap-2 px-3.5 py-1 rounded-full bg-[#050E13] border border-[#00E5B0]/35 text-[11px] font-mono font-bold uppercase tracking-[0.14em] text-[#00E5B0] relative z-10">
               <span>READY TO GET FUNDED</span>

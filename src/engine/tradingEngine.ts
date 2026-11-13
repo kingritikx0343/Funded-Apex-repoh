@@ -82,6 +82,7 @@ export interface TradingAccountRecord {
   profitSplitPct?: number;
   currentStep?: number;
   totalSteps?: number;
+  phaseStartingBalance?: number;
   peakEquity: number;
   dailyStartingEquity: number;
   lastDailyResetDate: string;
@@ -1112,12 +1113,17 @@ export function evaluateAccountRiskMetrics(
     Math.round((maxLossLimitUsd - overallDropUsd) * 100) / 100
   );
 
+  const phaseStartBalance =
+    account.phaseStartingBalance && account.phaseStartingBalance >= account.startingBalance
+      ? account.phaseStartingBalance
+      : account.startingBalance;
+
   const dailyBreachLevelUsd =
     Math.round((Math.max(account.startingBalance, currentDailyStart) - dailyLossLimitUsd) * 100) / 100;
   const maxBreachFloorUsd =
     Math.round((account.startingBalance - maxLossLimitUsd) * 100) / 100;
   const profitTargetLevelUsd =
-    Math.round((account.startingBalance + profitTargetUsd) * 100) / 100;
+    Math.round((phaseStartBalance + profitTargetUsd) * 100) / 100;
 
   const dailyDrawdownUsedPct = Math.min(
     100,
@@ -1128,7 +1134,7 @@ export function evaluateAccountRiskMetrics(
     Math.round((overallDropUsd / Math.max(1, maxLossLimitUsd)) * 10000) / 100
   );
 
-  const netGainUsd = Math.max(0, Math.round((equity - account.startingBalance) * 100) / 100);
+  const netGainUsd = Math.max(0, Math.round((equity - phaseStartBalance) * 100) / 100);
   const profitProgressPct =
     profitTargetUsd > 0
       ? Math.min(100, Math.round((netGainUsd / profitTargetUsd) * 10000) / 100)
@@ -1232,7 +1238,8 @@ export function evaluateAccountPayoutEligibility(
 
   const isInstant = account.challengeType === 'instant';
   const isEvaluationPassed =
-    account.status === 'passed' || account.status === 'completed';
+    (account.status === 'passed' || account.status === 'completed') &&
+    (totalSteps <= 1 || currentStep >= totalSteps);
 
   // 15% Consistency Rule in Payout Section
   const consistencyRulePct = isInstant ? 15 : 0;
@@ -1273,11 +1280,17 @@ export function evaluateAccountPayoutEligibility(
       'Account is breached due to Daily/Maximum Drawdown violation. Terminal password has been removed and payouts are permanently disabled.';
   } else if (!isStepCompleted) {
     if (account.challengeType === 'two_step') {
-      reason = `2-Step Challenge (Phase ${currentStep} of 2 in progress): Pass both evaluation steps to unlock Funded Payouts.`;
+      const step1TargetUsd = Math.round(account.startingBalance * 0.08 * 100) / 100;
+      const step2TargetUsd = Math.round(account.startingBalance * 0.05 * 100) / 100;
+      if (currentStep <= 1) {
+        reason = `2-Step Challenge Locked (Step 1 of 2 in progress): Pass Step 1 (+8% / +$${step1TargetUsd.toLocaleString()}) and Step 2 (+5% / +$${step2TargetUsd.toLocaleString()}) to become Funded and unlock Payouts.`;
+      } else {
+        reason = `2-Step Challenge Locked (Step 2 of 2 in progress — Step 1 Passed ✓): Reach the Step 2 profit target (+5% / +$${step2TargetUsd.toLocaleString()}) to pass evaluation and unlock Funded Payouts.`;
+      }
     } else if (account.challengeType === 'three_step') {
-      reason = `3-Step Challenge (Phase ${currentStep} of 3 in progress): Pass all 3 evaluation steps to unlock Funded Payouts.`;
+      reason = `3-Step Challenge Locked (Step ${currentStep} of 3 in progress): Pass all 3 evaluation steps (+6% each) to become Funded and unlock Payouts.`;
     } else {
-      reason = `1-Step Challenge (Evaluation in progress): Reach the +${account.profitTargetPct}% profit target ($${metrics.profitTargetUsd.toLocaleString()}) to pass and unlock Payouts.`;
+      reason = `1-Step Challenge Locked (Evaluation in progress): Reach the +${account.profitTargetPct}% profit target ($${metrics.profitTargetUsd.toLocaleString()}) to pass and unlock Payouts.`;
     }
   } else if (!hasPositiveProfit) {
     reason = `No positive P&L available to withdraw (Current Realized P&L: ${realizedProfitUsd >= 0 ? '+' : ''}$${realizedProfitUsd.toFixed(2)}). Generate trading profit above $${account.startingBalance.toLocaleString()} starting capital to request a payout.`;

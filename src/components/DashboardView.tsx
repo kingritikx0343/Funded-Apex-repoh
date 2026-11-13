@@ -150,14 +150,23 @@ export const DashboardView: React.FC = () => {
       .filter((p) => p.accountId === activeAccount.id)
       .reduce((s, p) => s + p.amountUsd / ((rules.profitSplitPct || 80) / 100), 0);
     const syncedBalance =
-      closedOrders.length > 0
-        ? Math.round((activeAccount.startingBalance + realizedNet - withdrawnGross) * 100) / 100
-        : Math.round(activeAccount.balance * 100) / 100;
+      activeAccount.status === 'failed'
+        ? Math.round(activeAccount.balance * 100) / 100
+        : Math.round((activeAccount.startingBalance + realizedNet - withdrawnGross) * 100) / 100;
     return {
       ...activeAccount,
       balance: syncedBalance,
     };
   }, [activeAccount, closedOrders, payouts]);
+
+  const activeAccountPayoutEligibility = useMemo(() => {
+    if (!reconciledActiveAccount) return null;
+    return evaluateAccountPayoutEligibility(
+      reconciledActiveAccount,
+      activeAccOrders,
+      closedOrders
+    );
+  }, [reconciledActiveAccount, activeAccOrders, closedOrders]);
 
   const totalProfit = useMemo(
     () =>
@@ -195,13 +204,29 @@ export const DashboardView: React.FC = () => {
   const activeAccountsCount = accounts.filter((a) => a.status === 'active').length;
 
   const selectedPayoutAccount = useMemo(() => {
-    return (
+    const rawAcc =
       accounts.find((a) => a.id === selectedPayoutAccountId) ||
       activeAccount ||
       accounts[0] ||
-      null
+      null;
+    if (!rawAcc) return null;
+    const accRules = resolveChallengeRulesForAccount(rawAcc);
+    const closedForAcc = userOrders.filter(
+      (o) => o.accountId === rawAcc.id && o.status === 'CLOSED'
     );
-  }, [accounts, selectedPayoutAccountId, activeAccount]);
+    const realizedNet = closedForAcc.reduce((s, o) => s + (o.netPnl || 0), 0);
+    const withdrawnGross = payouts
+      .filter((p) => p.accountId === rawAcc.id)
+      .reduce((s, p) => s + p.amountUsd / ((accRules.profitSplitPct || 80) / 100), 0);
+    const syncedBalance =
+      rawAcc.status === 'failed'
+        ? Math.round(rawAcc.balance * 100) / 100
+        : Math.round((rawAcc.startingBalance + realizedNet - withdrawnGross) * 100) / 100;
+    return {
+      ...rawAcc,
+      balance: syncedBalance,
+    };
+  }, [accounts, selectedPayoutAccountId, activeAccount, userOrders, payouts]);
 
   const payoutEligibility = useMemo(() => {
     if (!selectedPayoutAccount) return null;
@@ -936,8 +961,15 @@ export const DashboardView: React.FC = () => {
                     <div className="w-8 h-8 rounded-[8px] bg-[#00E676]/10 border border-[#00E676]/25 flex items-center justify-center text-[#00E676] shrink-0">
                       <Wallet className="w-4 h-4" />
                     </div>
-                    <div className="text-2xl sm:text-3xl font-display font-extrabold text-[#00E676] tracking-tight tabular-nums">
-                      ${Math.max(0, evalNetPnl > 0 ? evalNetPnl * 0.8 : 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    <div className="min-w-0">
+                      <div className="text-2xl sm:text-3xl font-display font-extrabold text-[#00E676] tracking-tight tabular-nums">
+                        ${(activeAccountPayoutEligibility?.maxWithdrawableUsd ?? 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </div>
+                      {reconciledActiveAccount && reconciledActiveAccount.status !== 'passed' && reconciledActiveAccount.status !== 'completed' && (
+                        <div className="text-[10px] font-mono text-amber-300/90 truncate mt-0.5">
+                          Pass {reconciledActiveAccount.totalSteps && reconciledActiveAccount.totalSteps > 1 ? `Step ${reconciledActiveAccount.currentStep || 1}/${reconciledActiveAccount.totalSteps}` : 'Evaluation'} to unlock
+                        </div>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -1435,9 +1467,9 @@ export const DashboardView: React.FC = () => {
                         .filter((p) => p.accountId === acc.id)
                         .reduce((s, p) => s + p.amountUsd / ((accRules.profitSplitPct || 80) / 100), 0);
                       const syncedAccBalance =
-                        accClosed.length > 0
-                          ? Math.round((acc.startingBalance + accRealizedNet - accWithdrawnGross) * 100) / 100
-                          : Math.round(acc.balance * 100) / 100;
+                        acc.status === 'failed'
+                          ? Math.round(acc.balance * 100) / 100
+                          : Math.round((acc.startingBalance + accRealizedNet - accWithdrawnGross) * 100) / 100;
                       const accMetrics = evaluateAccountRiskMetrics(
                         { ...acc, balance: syncedAccBalance },
                         accOpen
@@ -2060,17 +2092,35 @@ export const DashboardView: React.FC = () => {
                         className="w-full px-3.5 py-2.5 rounded-[9px] bg-[#030504] border border-white/15 text-xs font-mono font-bold text-white"
                       >
                         {accounts.map((acc) => {
-                          const pnl = Math.round((acc.balance - acc.startingBalance) * 100) / 100;
+                          const accRules = resolveChallengeRulesForAccount(acc);
+                          const accClosed = userOrders.filter(
+                            (o) => o.accountId === acc.id && o.status === 'CLOSED'
+                          );
+                          const accRealizedNet = accClosed.reduce((s, o) => s + (o.netPnl || 0), 0);
+                          const accWithdrawnGross = payouts
+                            .filter((p) => p.accountId === acc.id)
+                            .reduce((s, p) => s + p.amountUsd / ((accRules.profitSplitPct || 80) / 100), 0);
+                          const syncedBal =
+                            acc.status === 'failed'
+                              ? acc.balance
+                              : acc.startingBalance + accRealizedNet - accWithdrawnGross;
+                          const pnl = Math.round((syncedBal - acc.startingBalance) * 100) / 100;
+                          const stepBadge =
+                            acc.status === 'passed' || acc.status === 'completed'
+                              ? 'FUNDED'
+                              : (acc.totalSteps || accRules.totalSteps) > 1
+                              ? `STEP ${acc.currentStep || 1}/${acc.totalSteps || accRules.totalSteps}`
+                              : 'PHASE 1';
                           return (
                             <option key={acc.id} value={acc.id}>
-                              #{acc.accountNumber} · {acc.challengeTitle} · P&amp;L: {pnl >= 0 ? '+' : ''}${pnl.toFixed(2)}
+                              #{acc.accountNumber} · {acc.challengeTitle} [{stepBadge}] · P&amp;L: {pnl >= 0 ? '+' : ''}${pnl.toFixed(2)}
                             </option>
                           );
                         })}
                       </select>
                     </div>
 
-                    {payoutEligibility && (
+                    {payoutEligibility && selectedPayoutAccount && (
                       <div className="p-4 rounded-[12px] bg-[#030504] border border-white/10 space-y-3">
                         <div className="flex items-center justify-between">
                           <span className="text-xs font-display font-bold text-white">
@@ -2086,6 +2136,65 @@ export const DashboardView: React.FC = () => {
                             {payoutEligibility.eligible ? 'PAYOUT UNLOCKED ✓' : 'OBJECTIVES PENDING'}
                           </span>
                         </div>
+
+                        {/* Multi-Step Challenge Gate Indicator (1-Step / 2-Step / 3-Step) */}
+                        {(() => {
+                          const rules = resolveChallengeRulesForAccount(selectedPayoutAccount);
+                          const totalSteps = selectedPayoutAccount.totalSteps || rules.totalSteps || 1;
+                          const currentStep = selectedPayoutAccount.currentStep || rules.currentStep || 1;
+                          const isFunded =
+                            selectedPayoutAccount.status === 'passed' ||
+                            selectedPayoutAccount.status === 'completed';
+
+                          if (totalSteps >= 2) {
+                            return (
+                              <div className="p-2.5 rounded-[9px] bg-[#090D0A] border border-white/10 space-y-2">
+                                <div className="flex items-center justify-between text-[10px] font-mono">
+                                  <span className="text-[#A7B1AA] uppercase font-bold">
+                                    {totalSteps}-Step Evaluation Gate
+                                  </span>
+                                  <span className={isFunded ? 'text-[#00E676] font-bold' : 'text-amber-300 font-bold'}>
+                                    {isFunded
+                                      ? 'All Steps Passed — Funded ✓'
+                                      : `Step ${currentStep} of ${totalSteps} Active`}
+                                  </span>
+                                </div>
+                                <div className="grid grid-cols-3 gap-1.5 text-[10px] font-mono">
+                                  <div
+                                    className={`px-2 py-1.5 rounded-[6px] border text-center font-bold ${
+                                      isFunded || currentStep > 1
+                                        ? 'bg-[#00E676]/15 border-[#00E676]/40 text-[#00E676]'
+                                        : 'bg-amber-500/15 border-amber-500/40 text-amber-300'
+                                    }`}
+                                  >
+                                    Step 1 (+8%) {isFunded || currentStep > 1 ? '✓' : '•'}
+                                  </div>
+                                  <div
+                                    className={`px-2 py-1.5 rounded-[6px] border text-center font-bold ${
+                                      isFunded || (totalSteps > 2 && currentStep > 2)
+                                        ? 'bg-[#00E676]/15 border-[#00E676]/40 text-[#00E676]'
+                                        : currentStep === 2
+                                        ? 'bg-amber-500/15 border-amber-500/40 text-amber-300'
+                                        : 'bg-[#030504] border-white/10 text-[#77837B]'
+                                    }`}
+                                  >
+                                    Step 2 (+5%) {isFunded || (totalSteps > 2 && currentStep > 2) ? '✓' : currentStep === 2 ? '•' : '🔒'}
+                                  </div>
+                                  <div
+                                    className={`px-2 py-1.5 rounded-[6px] border text-center font-bold ${
+                                      isFunded
+                                        ? 'bg-[#00E676]/20 border-[#00E676]/50 text-[#00E676]'
+                                        : 'bg-[#030504] border-white/10 text-[#77837B]'
+                                    }`}
+                                  >
+                                    Payouts {isFunded ? '✓' : '🔒'}
+                                  </div>
+                                </div>
+                              </div>
+                            );
+                          }
+                          return null;
+                        })()}
 
                         <div className="grid grid-cols-2 gap-2 text-xs font-mono">
                           <div className="p-2.5 rounded-[8px] bg-[#090D0A] border border-white/5">

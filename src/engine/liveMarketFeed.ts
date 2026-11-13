@@ -189,7 +189,7 @@ export function parseBinance24hrTicker(
   if (!rawBid || isNaN(rawBid) || rawBid <= 0) return null;
 
   const bid = roundPrice(rawBid, sym);
-  const ask = roundPrice(Math.max(rawBid + spec.spread * 0.5, rawAsk), sym);
+  const ask = roundPrice(Math.max(bid + spec.spread, rawAsk), sym);
   const last = roundPrice(rawLast > 0 ? rawLast : (bid + ask) / 2, sym);
   const change24hPct = parseFloat(item.priceChangePercent || '0');
   const high24h = roundPrice(
@@ -816,6 +816,7 @@ export function subscribeLiveMarketStream(
   // Poll live Swissquote XAU/USD + Forex BBO + Crypto via our /api/market/quotes server proxy every 3.5 seconds for exact institutional price parity
   const pollFastSpotQuotes = async () => {
     if (closed) return;
+    if (typeof document !== 'undefined' && document.hidden) return;
     let gotXauFromProxy = false;
     if (typeof window !== 'undefined') {
       try {
@@ -828,12 +829,7 @@ export function subscribeLiveMarketStream(
               const spec = INSTRUMENTS[sym];
               if (sq && spec && Number(sq.bid) > 0) {
                 const bid = roundPrice(Number(sq.bid), sym);
-                const ask = roundPrice(
-                  Number(sq.ask) > bid
-                    ? Math.min(Number(sq.ask), bid + spec.spread * 1.5)
-                    : bid + spec.spread,
-                  sym
-                );
+                const ask = roundPrice(bid + spec.spread, sym);
                 if (sym === 'XAUUSD') {
                   authoritativeXauSpotBid = bid;
                   INSTRUMENTS.XAUUSD.basePrice = bid;
@@ -884,7 +880,7 @@ export function subscribeLiveMarketStream(
   };
 
   void pollFastSpotQuotes();
-  const spotQuotesTimer = setInterval(pollFastSpotQuotes, 3500);
+  const spotQuotesTimer = setInterval(pollFastSpotQuotes, 6000);
 
   const streamList = [
     'paxgusdt@bookTicker',
@@ -893,11 +889,6 @@ export function subscribeLiveMarketStream(
     'solusdt@bookTicker',
     'xrpusdt@bookTicker',
     'bnbusdt@bookTicker',
-    'btcusdt@aggTrade',
-    'ethusdt@aggTrade',
-    'solusdt@aggTrade',
-    'xrpusdt@aggTrade',
-    'bnbusdt@aggTrade',
     'btcusdt@ticker',
     'ethusdt@ticker',
   ].join('/');
@@ -961,7 +952,7 @@ export function subscribeLiveMarketStream(
             if (rawBid <= 0) return;
 
             const bid = roundPrice(rawBid, sym);
-            const ask = roundPrice(Math.max(bid + spec.spread * 0.5, rawAsk), sym);
+            const ask = roundPrice(Math.max(bid + spec.spread, rawAsk), sym);
             const last = roundPrice((bid + ask) / 2, sym);
 
             onQuoteUpdate({
@@ -974,28 +965,13 @@ export function subscribeLiveMarketStream(
             return;
           }
 
-          if (streamName.endsWith('@aggTrade')) {
-            const tradePrice = parseFloat(data.p || '0');
-            if (tradePrice <= 0) return;
-            const bid = roundPrice(tradePrice, sym);
-            const ask = roundPrice(bid + spec.spread, sym);
-            onQuoteUpdate({
-              symbol: sym,
-              bid,
-              ask,
-              last: bid,
-              timestamp: Date.now(),
-            });
-            return;
-          }
-
           const rawBid = parseFloat(data.b || data.c || '0');
           const rawAsk = parseFloat(data.a || '0') || rawBid + spec.spread;
           const rawLast = parseFloat(data.c || '0') || (rawBid + rawAsk) / 2;
           if (rawBid <= 0) return;
 
           const bid = roundPrice(rawBid, sym);
-          const ask = roundPrice(Math.max(bid + spec.spread * 0.5, rawAsk), sym);
+          const ask = roundPrice(Math.max(bid + spec.spread, rawAsk), sym);
           const last = roundPrice(rawLast, sym);
           const change24hPct = Math.round(parseFloat(data.P || '0') * 100) / 100;
           const high24h = roundPrice(parseFloat(data.h || String(bid)), sym);

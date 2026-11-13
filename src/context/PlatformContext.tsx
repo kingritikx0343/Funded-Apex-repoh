@@ -583,20 +583,21 @@ const INITIAL_DEFAULT_ACCOUNTS: TradingAccountRecord[] = [
     challengeType: 'two_step',
     accountSize: 100000,
     startingBalance: 100000,
-    balance: 104850,
-    equity: 104850,
+    phaseStartingBalance: 100000,
+    balance: 100000,
+    equity: 100000,
     usedMargin: 0,
-    freeMargin: 104850,
+    freeMargin: 100000,
     profitTargetPct: 8,
     dailyDrawdownPct: 5,
     maxDrawdownPct: 10,
     minTradingDays: 3,
-    tradingDaysCount: 3,
+    tradingDaysCount: 0,
     leverage: 100,
     profitSplitPct: 90,
     currentStep: 1,
     totalSteps: 2,
-    peakEquity: 104850,
+    peakEquity: 100000,
     dailyStartingEquity: 100000,
     lastDailyResetDate: new Date().toISOString().split('T')[0],
     status: 'active',
@@ -615,23 +616,24 @@ const INITIAL_DEFAULT_ACCOUNTS: TradingAccountRecord[] = [
     challengeType: 'two_step',
     accountSize: 50000,
     startingBalance: 50000,
-    balance: 54250,
-    equity: 54250,
+    phaseStartingBalance: 50000,
+    balance: 50000,
+    equity: 50000,
     usedMargin: 0,
-    freeMargin: 54250,
+    freeMargin: 50000,
     profitTargetPct: 8,
     dailyDrawdownPct: 5,
     maxDrawdownPct: 10,
     minTradingDays: 3,
-    tradingDaysCount: 3,
+    tradingDaysCount: 0,
     leverage: 100,
     profitSplitPct: 90,
-    currentStep: 2,
+    currentStep: 1,
     totalSteps: 2,
-    peakEquity: 54250,
+    peakEquity: 50000,
     dailyStartingEquity: 50000,
     lastDailyResetDate: new Date().toISOString().split('T')[0],
-    status: 'passed',
+    status: 'active',
     terminalUserId: 'APEX-ID-2410',
     terminalPassword: 'APEX-2410',
     createdAt: '2026-11-01T10:00:00.000Z',
@@ -812,6 +814,23 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     }
   });
 
+  const [orders, setOrders] = useState<TradeOrderRecord[]>(() => {
+    try {
+      return readMergedLocalStorageList<TradeOrderRecord>(
+        [
+          STORAGE_KEYS.ORDERS,
+          'funded_apex_orders_v3',
+          'funded_apex_orders_v2',
+          'funded_apex_orders_v1',
+          'funded_apex_orders',
+        ],
+        'id'
+      );
+    } catch {
+      return [];
+    }
+  });
+
   const [accounts, setAccounts] = useState<TradingAccountRecord[]>(() => {
     try {
       const recovered = readMergedLocalStorageList<TradingAccountRecord>(
@@ -849,10 +868,48 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
           termId = `APEX-ID-${numDigits}`;
         }
 
-        const resolvedRules = resolveChallengeRulesForAccount(acc);
+        const accOrders = orders.filter((o) => o.accountId === acc.id);
+        const closedOrdersForAcc = accOrders.filter((o) => o.status === 'CLOSED');
+        const openOrdersForAcc = accOrders.filter((o) => o.status === 'OPEN');
+
+        // Heal legacy hardcoded phantom seed balances ($104,850 on FA-902841 and $54,250 on FA-882410 when 0 orders exist)
+        const isPhantomSeed =
+          accOrders.length === 0 &&
+          ((acc.id === 'acc-owner-100k' && acc.balance === 104850) ||
+            (acc.id === 'acc-admin-50k' && acc.balance === 54250) ||
+            (acc.status !== 'failed' && closedOrdersForAcc.length === 0 && acc.balance !== acc.startingBalance));
+
+        const healedStatus =
+          accOrders.length === 0 && acc.id === 'acc-admin-50k' && acc.status === 'passed'
+            ? 'active'
+            : acc.status;
+        const healedStep =
+          accOrders.length === 0 && acc.id === 'acc-admin-50k' ? 1 : acc.currentStep;
+
+        const realizedNet = closedOrdersForAcc.reduce((s, o) => s + (o.netPnl || 0), 0);
+        const floatingNet = openOrdersForAcc.reduce((s, o) => s + (o.netPnl || 0), 0);
+        const cleanBalance =
+          healedStatus === 'failed'
+            ? acc.balance
+            : Math.round((acc.startingBalance + realizedNet) * 100) / 100;
+        const cleanEquity =
+          healedStatus === 'failed'
+            ? cleanBalance
+            : Math.round((cleanBalance + floatingNet) * 100) / 100;
+
+        const resolvedRules = resolveChallengeRulesForAccount({
+          ...acc,
+          status: healedStatus,
+          currentStep: healedStep,
+        });
 
         return {
           ...acc,
+          balance: isPhantomSeed ? acc.startingBalance : cleanBalance,
+          equity: isPhantomSeed ? acc.startingBalance : cleanEquity,
+          freeMargin: isPhantomSeed ? acc.startingBalance : cleanEquity - (acc.usedMargin || 0),
+          phaseStartingBalance: acc.phaseStartingBalance || acc.startingBalance,
+          status: healedStatus,
           terminalUserId: termId,
           terminalPassword: pass,
           dailyDrawdownPct: resolvedRules.dailyDrawdownPct,
@@ -863,30 +920,17 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
           minTradingDays: resolvedRules.minTradingDays,
           totalSteps: resolvedRules.totalSteps,
           currentStep: resolvedRules.currentStep,
-          peakEquity: acc.peakEquity || acc.equity || acc.startingBalance,
-          dailyStartingEquity: acc.dailyStartingEquity || acc.equity || acc.startingBalance,
+          peakEquity: isPhantomSeed
+            ? acc.startingBalance
+            : Math.max(acc.startingBalance, cleanEquity),
+          dailyStartingEquity: isPhantomSeed
+            ? acc.startingBalance
+            : acc.dailyStartingEquity || acc.startingBalance,
           lastDailyResetDate: acc.lastDailyResetDate || new Date().toISOString().split('T')[0],
         };
       });
     } catch {
       return INITIAL_DEFAULT_ACCOUNTS;
-    }
-  });
-
-  const [orders, setOrders] = useState<TradeOrderRecord[]>(() => {
-    try {
-      return readMergedLocalStorageList<TradeOrderRecord>(
-        [
-          STORAGE_KEYS.ORDERS,
-          'funded_apex_orders_v3',
-          'funded_apex_orders_v2',
-          'funded_apex_orders_v1',
-          'funded_apex_orders',
-        ],
-        'id'
-      );
-    } catch {
-      return [];
     }
   });
 
@@ -1333,10 +1377,33 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         }
       }
       if (Array.isArray(v.accounts) && v.accounts.length > 0) {
+        const vaultOrders: TradeOrderRecord[] = Array.isArray(v.orders) ? v.orders : [];
         setAccounts((prev) => {
           const byId = new Map<string, TradingAccountRecord>();
           v.accounts.forEach((a: TradingAccountRecord) => {
-            if (a?.id) byId.set(a.id, a);
+            if (!a?.id) return;
+            const hasVaultOrders = vaultOrders.some((o) => o.accountId === a.id);
+            const isPhantomVaultSeed =
+              !hasVaultOrders &&
+              ((a.id === 'acc-owner-100k' && a.balance === 104850) ||
+                (a.id === 'acc-admin-50k' && (a.balance === 54250 || a.status === 'passed')));
+            byId.set(
+              a.id,
+              isPhantomVaultSeed
+                ? {
+                    ...a,
+                    balance: a.startingBalance,
+                    equity: a.startingBalance,
+                    freeMargin: a.startingBalance,
+                    peakEquity: a.startingBalance,
+                    dailyStartingEquity: a.startingBalance,
+                    phaseStartingBalance: a.startingBalance,
+                    status: 'active',
+                    currentStep: 1,
+                    profitTargetPct: 8,
+                  }
+                : a
+            );
           });
           prev.forEach((a) => {
             if (a?.id) {
@@ -1349,13 +1416,27 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
               });
             }
           });
-          const next = Array.from(byId.values());
-          if (next.length === prev.length && JSON.stringify(next) === JSON.stringify(prev)) {
-            return prev;
-          }
-          return next;
-        });
-      }
+            const next = Array.from(byId.values());
+            if (
+              next.length === prev.length &&
+              next.every((n, idx) => {
+                const p = prev[idx];
+                return (
+                  p &&
+                  p.id === n.id &&
+                  p.balance === n.balance &&
+                  p.status === n.status &&
+                  p.currentStep === n.currentStep &&
+                  p.terminalPassword === n.terminalPassword &&
+                  p.certificateImageUrl === n.certificateImageUrl
+                );
+              })
+            ) {
+              return prev;
+            }
+            return next;
+          });
+        }
       if (Array.isArray(v.orders) && v.orders.length > 0) {
         setOrders((prev) => {
           const byId = new Map<string, TradeOrderRecord>();
@@ -1420,8 +1501,11 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   useEffect(() => {
     void refreshVaultData();
     const interval = setInterval(() => {
-      void refreshVaultData();
-    }, 8000);
+      if (typeof document !== 'undefined' && document.hidden) return;
+      if (routeRef.current === 'admin' || routeRef.current === 'dashboard') {
+        void refreshVaultData();
+      }
+    }, 15000);
     const onFocus = () => {
       void refreshVaultData();
     };
@@ -1656,10 +1740,21 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     return userAccounts.find((a) => a.id === activeAccountId) || userAccounts[0] || null;
   }, [userAccounts, activeAccountId]);
 
-  // Keep a ref to current route so high-frequency tick loops only trigger fast React re-renders on 'terminal'
+  // Keep refs to current route and active orders so high-frequency tick loops never re-render static website pages during 120Hz scroll
   const routeRef = React.useRef<PageRoute>(route);
+  const hasActiveOrdersRef = React.useRef<boolean>(false);
+
+  useEffect(() => {
+    hasActiveOrdersRef.current = orders.some(
+      (o) => o.status === 'OPEN' || o.status === 'PENDING'
+    );
+  }, [orders]);
+
   useEffect(() => {
     routeRef.current = route;
+    if (route === 'terminal') {
+      setQuotes({ ...quotesRef.current });
+    }
   }, [route]);
 
   // Automatically ensure active/passed challenge accounts always have an active Terminal User ID & Password
@@ -1914,14 +2009,37 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         if (!active) return;
         const nowTs = Date.now();
         lastWsTickTs[tickUpdate.symbol] = nowTs;
-        spotAnchors[tickUpdate.symbol] = tickUpdate.bid;
+        if (tickUpdate.bid && tickUpdate.bid > 0) {
+          spotAnchors[tickUpdate.symbol] = tickUpdate.bid;
+        }
         pendingWsUpdates[tickUpdate.symbol] = tickUpdate;
 
-        // Only trigger React state flushes on the live trading terminal so website pages scroll at 120fps with zero background re-renders
-        if (routeRef.current !== 'terminal') {
+        // Always keep quotesRef.current up-to-the-millisecond so order execution never uses a stale price
+        const currRefQuote = quotesRef.current[tickUpdate.symbol];
+        if (currRefQuote) {
+          const incomingBid = tickUpdate.bid ?? currRefQuote.bid;
+          quotesRef.current[tickUpdate.symbol] = {
+            ...currRefQuote,
+            ...tickUpdate,
+            high24h: Math.max(currRefQuote.high24h, incomingBid, tickUpdate.high24h || incomingBid),
+            low24h:
+              currRefQuote.low24h > 0
+                ? Math.min(currRefQuote.low24h, incomingBid, tickUpdate.low24h || incomingBid)
+                : incomingBid,
+            timestamp: nowTs,
+          };
+        }
+
+        // Only flush React state when on 'terminal' (320ms), when open/pending orders exist (1500ms), or on initial snapshot (lastWsFlushTs === 0)
+        // This guarantees 0 background React re-renders while scrolling website pages at 120Hz!
+        const isTerminalRoute = routeRef.current === 'terminal';
+        const shouldFlushReactState =
+          isTerminalRoute || hasActiveOrdersRef.current || lastWsFlushTs === 0;
+        if (!shouldFlushReactState) {
           return;
         }
-        if (nowTs - lastWsFlushTs < 320) {
+        const flushIntervalMs = isTerminalRoute ? 320 : 1500;
+        if (lastWsFlushTs > 0 && nowTs - lastWsFlushTs < flushIntervalMs) {
           return;
         }
         lastWsFlushTs = nowTs;
@@ -1961,7 +2079,7 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
     const restSyncTimer = setInterval(() => {
       if (routeRef.current !== 'terminal') return;
-      fetchInitialLiveQuotes(generateInitialQuotes()).then(({ quotes: freshQuotes, source }) => {
+      fetchInitialLiveQuotes(quotesRef.current).then(({ quotes: freshQuotes, source }) => {
         if (!active || routeRef.current !== 'terminal') return;
         if (Object.keys(freshQuotes).length > 0) {
           const nowTs = Date.now();
@@ -1972,8 +2090,8 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
               const existing = prev[sym];
               if (incoming) {
                 spotAnchors[sym] = incoming.bid;
-                // If direct exchange WebSocket ticked within the last 2.0 seconds, keep WS price authoritative
-                const recentWs = lastWsTickTs[sym] && nowTs - lastWsTickTs[sym]! < 2000;
+                // If direct exchange WebSocket ticked within the last 3.5 seconds, keep WS price authoritative so PnL never snaps back
+                const recentWs = lastWsTickTs[sym] && nowTs - lastWsTickTs[sym]! < 3500;
                 if (recentWs && existing && isDirectExchangeSymbol(sym)) {
                   next[sym] = {
                     ...existing,
@@ -1999,7 +2117,7 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
           }));
         }
       });
-    }, 10000);
+    }, 12000);
 
     let tickRafId: number | null = null;
     const microTickInterval = setInterval(() => {
@@ -2020,9 +2138,9 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
             const curr = prevQuotes[sym];
             if (!curr) return;
 
-            // If real WebSocket stream is actively ticking this instrument within 650ms (or 1500ms for crypto), keep WS tick
+            // If real WebSocket stream or spot BBO is actively ticking this instrument, keep real feed authoritative
             const wsAge = lastWsTickTs[sym] ? nowMs - lastWsTickTs[sym]! : Infinity;
-            const freshThreshold = sym === 'XAUUSD' ? 650 : 1500;
+            const freshThreshold = sym === 'XAUUSD' ? 1800 : 2500;
             if (isDirectExchangeSymbol(sym) && wsAge < freshThreshold) {
               return;
             }
@@ -2030,17 +2148,17 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
             // Tightly mean-revert around the verified live spot anchor so price never drifts away from live market
             const anchor = spotAnchors[sym] ?? curr.bid;
             const minPip = Math.pow(10, -spec.decimals);
-            const stepUnit = sym === 'XAUUSD' ? 0.14 : Math.max(minPip, spec.spread * 0.45);
+            const stepUnit = sym === 'XAUUSD' ? 0.08 : Math.max(minPip, spec.spread * 0.35);
             const driftFromAnchor = curr.bid - anchor;
-            const maxAllowedExcursion = sym === 'XAUUSD' ? 0.65 : Math.max(spec.spread * 2.5, minPip * 8);
+            const maxAllowedExcursion = sym === 'XAUUSD' ? 0.45 : Math.max(spec.spread * 2.0, minPip * 6);
             const reversionPull =
               Math.abs(driftFromAnchor) > maxAllowedExcursion
                 ? -driftFromAnchor * 0.55
-                : -driftFromAnchor * 0.22;
-            const waveBias = Math.sin(nowMs / 2200 + idx * 1.3) * 0.12 * stepUnit;
-            const jitter = (Math.random() - 0.5) * stepUnit * 1.4 + waveBias + reversionPull;
+                : -driftFromAnchor * 0.25;
+            const waveBias = Math.sin(nowMs / 2200 + idx * 1.3) * 0.1 * stepUnit;
+            const jitter = (Math.random() - 0.5) * stepUnit * 1.2 + waveBias + reversionPull;
             const sign = jitter >= 0 ? 1 : -1;
-            const microDelta = sign * Math.max(minPip, Math.min(spec.spread * 0.85, Math.abs(jitter)));
+            const microDelta = sign * Math.max(minPip, Math.min(spec.spread * 0.65, Math.abs(jitter)));
             const nextBid = roundPrice(Math.max(spec.spread * 2, curr.bid + microDelta), sym);
             const nextAsk = roundPrice(nextBid + spec.spread, sym);
 
@@ -2100,33 +2218,6 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       }
       const quote = quotes[order.symbol];
       if (!quote) return order;
-
-      // Guard against legacy orders opened against a stale fallback quote (>20% away from live spot) without wiping SL/TP
-      if (
-        order.status === 'OPEN' &&
-        order.entryPrice > 0 &&
-        Math.abs(quote.bid - order.entryPrice) / order.entryPrice > 0.2
-      ) {
-        hasOrderUpdates = true;
-        const reAnchoredEntry = order.side === 'BUY' ? quote.ask : quote.bid;
-        const markPrice = order.side === 'BUY' ? quote.bid : quote.ask;
-        const { grossPnl, commission, netPnl } = calculatePositionPnl(
-          order.symbol,
-          order.side,
-          order.volume,
-          reAnchoredEntry,
-          markPrice,
-          'OPEN'
-        );
-        return {
-          ...order,
-          entryPrice: reAnchoredEntry,
-          currentPrice: markPrice,
-          grossPnl,
-          commission,
-          netPnl,
-        };
-      }
 
       const trigger = evaluateOrderTrigger(order, quote);
       if (trigger.action === 'ACTIVATE_PENDING') {
@@ -2233,14 +2324,12 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
           .filter((p) => p.accountId === acc.id)
           .reduce((s, p) => s + p.amountUsd / ((rules.profitSplitPct || 80) / 100), 0);
         const nextBalance =
-          closedForAcc.length > 0
-            ? Math.round(
-                (acc.startingBalance +
-                  closedForAcc.reduce((s, o) => s + (o.netPnl || 0), 0) -
-                  withdrawnGross) *
-                  100
-              ) / 100
-            : Math.round((acc.balance + realizedDelta) * 100) / 100;
+          Math.round(
+            (acc.startingBalance +
+              closedForAcc.reduce((s, o) => s + (o.netPnl || 0), 0) -
+              withdrawnGross) *
+              100
+          ) / 100;
         const tempAcc = { ...acc, balance: nextBalance };
         const metrics = evaluateAccountRiskMetrics(tempAcc, openForAcc);
 
@@ -2256,6 +2345,7 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
         let nextStatus = metrics.nextStatus;
         let nextCurrentStep = acc.currentStep ?? 1;
+        let nextPhaseStartBal = acc.phaseStartingBalance || acc.startingBalance;
         const totalSteps =
           acc.totalSteps ??
           (acc.challengeType === 'instant'
@@ -2267,10 +2357,22 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
             : 3);
 
         let nextProfitTargetPct = metrics.profitTargetPct;
-        if (metrics.stepCompleted && acc.status === 'active') {
+        // Only promote evaluation steps once profit target is locked in on realized balance (or when no open trades remain)
+        const realizedPhaseGain = Math.max(0, Math.round((nextBalance - nextPhaseStartBal) * 100) / 100);
+        const canAdvanceStep =
+          metrics.stepCompleted &&
+          acc.status === 'active' &&
+          metrics.profitTargetUsd > 0 &&
+          realizedPhaseGain >= metrics.profitTargetUsd;
+
+        if (metrics.stepCompleted && acc.status === 'active' && !canAdvanceStep) {
+          // Keep status 'active' while the winning position is still floating open until profit is realized
+          nextStatus = 'active';
+        } else if (canAdvanceStep) {
           if (totalSteps > 1 && nextCurrentStep < totalSteps) {
             nextCurrentStep += 1;
             nextStatus = 'active';
+            nextPhaseStartBal = nextBalance;
             const stepRules = resolveChallengeRulesForAccount({
               ...tempAcc,
               currentStep: nextCurrentStep,
@@ -2298,6 +2400,7 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
           acc.equity !== nextEquity ||
           acc.status !== nextStatus ||
           acc.currentStep !== nextCurrentStep ||
+          acc.phaseStartingBalance !== nextPhaseStartBal ||
           acc.peakEquity !== metrics.peakEquity
         ) {
           didMutateAccounts = true;
@@ -2305,6 +2408,7 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
         return {
           ...tempAcc,
+          phaseStartingBalance: nextPhaseStartBal,
           balance: settledBreachBalance,
           equity: nextEquity,
           usedMargin: isBreachedNow ? 0 : metrics.usedMargin,
@@ -3655,7 +3759,7 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       }
       const effectiveOwnerUid = user?.uid || account.userId;
 
-      const quote = quotes[input.symbol];
+      const quote = quotesRef.current[input.symbol] || quotes[input.symbol];
       const validation = validateOrderRequest({ ...input, accountId: account.id }, account, quote);
       if (!validation.valid) {
         pushNotification('Order Rejected', validation.error || 'Invalid order parameters.', 'error');
@@ -3708,11 +3812,23 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
       if (isMarket) {
         const openForAcc = nextOrders.filter((o) => o.accountId === account.id && o.status === 'OPEN');
-        const metrics = evaluateAccountRiskMetrics(account, openForAcc);
+        const closedForAcc = nextOrders.filter((o) => o.accountId === account.id && o.status === 'CLOSED');
+        const rules = resolveChallengeRulesForAccount(account);
+        const withdrawnGross = payouts
+          .filter((p) => p.accountId === account.id)
+          .reduce((s, p) => s + p.amountUsd / ((rules.profitSplitPct || 80) / 100), 0);
+        const reconciledBal =
+          Math.round(
+            (account.startingBalance +
+              closedForAcc.reduce((s, o) => s + (o.netPnl || 0), 0) -
+              withdrawnGross) *
+              100
+          ) / 100;
+        const metrics = evaluateAccountRiskMetrics({ ...account, balance: reconciledBal }, openForAcc);
         const isBreachedOnEntry = metrics.nextStatus === 'failed';
         const settledEntryBal = isBreachedOnEntry
-          ? Math.round((account.balance + metrics.floatingPnl) * 100) / 100
-          : account.balance;
+          ? Math.round((reconciledBal + metrics.floatingPnl) * 100) / 100
+          : reconciledBal;
 
         const today = new Date().toISOString().split('T')[0];
         const needsDailyReset = account.lastDailyResetDate !== today;
@@ -3730,9 +3846,9 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
                   peakEquity: metrics.peakEquity,
                   dailyStartingEquity: currentDailyStart,
                   lastDailyResetDate: today,
-                  status: metrics.nextStatus,
+                  status: isBreachedOnEntry ? 'failed' : a.status,
                   terminalPassword: isBreachedOnEntry ? '' : a.terminalPassword,
-                  breachReason: metrics.breachReason || a.breachReason,
+                  breachReason: isBreachedOnEntry ? metrics.breachReason || a.breachReason : a.breachReason,
                   updatedAt: new Date().toISOString(),
                 }
               : a
@@ -3788,7 +3904,7 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
       return { ok: true, order: newOrder };
     },
-    [user, accounts, challenges, quotes, orders, openStripeCheckout, dispatchFundedApexEmail, pushNotification]
+    [user, accounts, challenges, quotes, orders, payouts, openStripeCheckout, dispatchFundedApexEmail, pushNotification]
   );
 
   const modifyOrder = useCallback(
@@ -3797,7 +3913,7 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       if (!target) return { ok: false, error: 'Order not found.' };
 
       const spec = INSTRUMENTS[target.symbol];
-      const quote = quotes[target.symbol];
+      const quote = quotesRef.current[target.symbol] || quotes[target.symbol];
       const minPip = Math.pow(10, -(spec?.decimals || 2));
       const minDist = Math.max(minPip * 2, (spec?.spread || minPip) * 0.5);
 
@@ -3868,7 +3984,7 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       const target = orders.find((o) => o.id === orderId && o.status === 'OPEN');
       if (!target) return { ok: false, error: 'Open position not found.' };
 
-      const quote = quotes[target.symbol];
+      const quote = quotesRef.current[target.symbol] || quotes[target.symbol];
       const fillPrice = target.side === 'BUY' ? quote.bid : quote.ask;
       const closeVolume = Math.max(0.01, Math.round(target.volume * partialRatio * 100) / 100);
       const isPartial = closeVolume < target.volume;
@@ -3951,20 +4067,19 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
           .filter((p) => p.accountId === acc.id)
           .reduce((s, p) => s + p.amountUsd / ((rules.profitSplitPct || 80) / 100), 0);
         const nextBal =
-          closedForAcc.length > 0
-            ? Math.round(
-                (acc.startingBalance +
-                  closedForAcc.reduce((s, o) => s + (o.netPnl || 0), 0) -
-                  withdrawnGross) *
-                  100
-              ) / 100
-            : Math.round((acc.balance + closedPnl.netPnl) * 100) / 100;
+          Math.round(
+            (acc.startingBalance +
+              closedForAcc.reduce((s, o) => s + (o.netPnl || 0), 0) -
+              withdrawnGross) *
+              100
+          ) / 100;
         const openForAcc = nextOrders.filter((o) => o.accountId === acc.id && o.status === 'OPEN');
         const tempAcc = { ...acc, balance: nextBal };
         const metrics = evaluateAccountRiskMetrics(tempAcc, openForAcc);
 
         let nextStatus = metrics.nextStatus;
         let nextCurrentStep = acc.currentStep ?? 1;
+        let nextPhaseStartBal = acc.phaseStartingBalance || acc.startingBalance;
         const totalSteps =
           acc.totalSteps ??
           (acc.challengeType === 'instant'
@@ -3976,20 +4091,30 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
             : 3);
 
         let nextProfitTargetPct = metrics.profitTargetPct;
+        const realizedPhaseGain = Math.max(0, Math.round((nextBal - nextPhaseStartBal) * 100) / 100);
+        const canAdvanceStep =
+          metrics.stepCompleted &&
+          acc.status === 'active' &&
+          metrics.profitTargetUsd > 0 &&
+          realizedPhaseGain >= metrics.profitTargetUsd;
+
         if (nextStatus === 'failed' && acc.status !== 'failed') {
           breachedAccountNum = acc.accountNumber;
           breachMsg = metrics.breachReason || 'Drawdown limit violated.';
-        } else if (metrics.stepCompleted && acc.status === 'active') {
+        } else if (metrics.stepCompleted && acc.status === 'active' && !canAdvanceStep) {
+          nextStatus = 'active';
+        } else if (canAdvanceStep) {
           if (totalSteps > 1 && nextCurrentStep < totalSteps) {
             nextCurrentStep += 1;
             nextStatus = 'active';
+            nextPhaseStartBal = nextBal;
             const stepRules = resolveChallengeRulesForAccount({
               ...tempAcc,
               currentStep: nextCurrentStep,
               totalSteps,
             });
             nextProfitTargetPct = stepRules.profitTargetPct;
-            promotedPhaseMsg = `Account #${acc.accountNumber} passed Phase ${nextCurrentStep - 1} and advanced to Phase ${nextCurrentStep} of ${totalSteps}!`;
+            promotedPhaseMsg = `Account #${acc.accountNumber} passed Phase ${nextCurrentStep - 1} (+${metrics.profitTargetPct}%) and advanced to Phase ${nextCurrentStep} of ${totalSteps}!`;
           } else {
             nextStatus = 'passed';
             nextCurrentStep = totalSteps;
@@ -4004,6 +4129,7 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
         return {
           ...tempAcc,
+          phaseStartingBalance: nextPhaseStartBal,
           equity: isBreachedNow ? nextBal : metrics.equity,
           usedMargin: isBreachedNow ? 0 : metrics.usedMargin,
           freeMargin: isBreachedNow ? nextBal : metrics.freeMargin,

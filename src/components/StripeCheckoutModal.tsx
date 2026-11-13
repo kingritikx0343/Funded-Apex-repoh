@@ -436,10 +436,10 @@ export const StripeCheckoutModal: React.FC = () => {
           animate={{ opacity: 1, y: 0, scale: 1 }}
           exit={{ opacity: 0, y: 8, scale: 0.985 }}
           transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
-          className="w-full max-w-lg rounded-[24px] bg-[#071318]/98 border border-[#00E5B0]/35 shadow-[0_32px_95px_rgba(0,0,0,0.96),inset_0_1px_0_rgba(56,248,210,0.18)] overflow-hidden my-auto"
+          className="w-full max-w-lg max-h-[92dvh] flex flex-col rounded-[24px] bg-[#071318]/98 border border-[#00E5B0]/35 shadow-[0_32px_95px_rgba(0,0,0,0.96),inset_0_1px_0_rgba(56,248,210,0.18)] overflow-hidden my-auto"
         >
         {/* HEADER BAR — Compact 1-Line "Secure checkout" badge */}
-        <div className="flex items-center justify-between gap-2 px-4 sm:px-5 py-3.5 border-b border-[#00E5B0]/18 bg-[#050E13]">
+        <div className="flex items-center justify-between gap-2 px-4 sm:px-5 py-3.5 border-b border-[#00E5B0]/18 bg-[#050E13] shrink-0">
           <div className="flex items-center gap-2 min-w-0 shrink">
             <FundedApexLogo size="sm" showText={true} />
           </div>
@@ -462,7 +462,7 @@ export const StripeCheckoutModal: React.FC = () => {
 
         {/* STEP PROGRESS SEGMENTS */}
         {step !== 'INITIAL_LOADING' && step !== 'PREPARING_STRINGS' && (
-          <div className="flex items-center justify-center gap-2 py-2.5 px-4 bg-[#050B0E] border-b border-[#00E5B0]/12">
+          <div className="flex items-center justify-center gap-2 py-2.5 px-4 bg-[#050B0E] border-b border-[#00E5B0]/12 shrink-0">
             <div className="flex items-center gap-1.5 text-[11px] font-mono font-bold">
               <span
                 className={`inline-flex items-center justify-center w-5 h-5 rounded-full text-[10px] ${
@@ -518,7 +518,7 @@ export const StripeCheckoutModal: React.FC = () => {
           initial={{ opacity: 0.9, y: 4 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.16, ease: [0.22, 1, 0.36, 1] }}
-          className="p-5 sm:p-6 space-y-5"
+          className="flex-1 min-h-0 overflow-y-auto overscroll-contain p-5 sm:p-6 space-y-5 custom-scrollbar"
         >
           {/* 1. INITIAL LOADING STATE */}
           {step === 'INITIAL_LOADING' && (
@@ -826,7 +826,7 @@ export const StripeCheckoutModal: React.FC = () => {
                   </button>
 
                   {isDropdownOpen && (
-                    <div className="absolute top-full left-0 right-0 mt-1.5 max-h-60 overflow-y-auto rounded-[16px] bg-[#071318] border border-[#00E5B0]/30 shadow-2xl z-20 divide-y divide-white/5 custom-scrollbar">
+                    <div className="mt-2 max-h-[250px] overflow-y-auto overscroll-contain rounded-[16px] bg-[#050E13] border border-[#00E5B0]/40 shadow-[0_16px_40px_rgba(0,0,0,0.85)] divide-y divide-white/5 custom-scrollbar">
                       {CRYPTO_NETWORKS.map((opt) => (
                         <button
                           key={opt.id}

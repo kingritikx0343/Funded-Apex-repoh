@@ -1170,5 +1170,70 @@ test('mergeUserDirectories preserves passwords, deduplicates by email, and never
   assert.equal(validLogin.ok, true);
 });
 
+test('2-Step evaluation preserves Step 1 profit when advancing to Step 2 and keeps payouts locked until Step 2 (+5%) is passed', async () => {
+  const { evaluateAccountRiskMetrics, evaluateAccountPayoutEligibility } = await import(
+    './tradingEngine'
+  );
+
+  // Step 1 ($50,000 2-Step): Trader earns +$4,000 (+8%) realized profit -> Step 1 completed
+  const step1DoneAcc: TradingAccountRecord = {
+    ...sampleAccount,
+    id: 'acc-2step-prog',
+    challengeType: 'two_step',
+    startingBalance: 50000,
+    phaseStartingBalance: 50000,
+    balance: 54000,
+    equity: 54000,
+    currentStep: 1,
+    totalSteps: 2,
+    profitTargetPct: 8,
+    profitSplitPct: 90,
+    status: 'active',
+  };
+  const m1 = evaluateAccountRiskMetrics(step1DoneAcc, []);
+  assert.equal(m1.stepCompleted, true);
+  assert.equal(m1.realizedPnl, 4000);
+  assert.equal(evaluateAccountPayoutEligibility(step1DoneAcc, []).eligible, false);
+
+  // Advance to Step 2: phaseStartingBalance becomes $54,000, Step 1 profit (+$4,000) is preserved, Step 2 target is +5% ($2,500)
+  const step2ActiveAcc: TradingAccountRecord = {
+    ...step1DoneAcc,
+    currentStep: 2,
+    phaseStartingBalance: 54000,
+    profitTargetPct: 5,
+    status: 'active',
+  };
+  const m2Start = evaluateAccountRiskMetrics(step2ActiveAcc, []);
+  assert.equal(m2Start.realizedPnl, 4000); // Step 1 profit is NOT cut!
+  assert.equal(m2Start.netGainUsd, 0); // Step 2 progress starts at $0 of $2,500
+  assert.equal(m2Start.profitTargetUsd, 2500);
+  assert.equal(m2Start.stepCompleted, false); // Does NOT auto-pass Step 2!
+
+  const step2PayoutCheck = evaluateAccountPayoutEligibility(step2ActiveAcc, []);
+  assert.equal(step2PayoutCheck.eligible, false);
+  assert.equal(step2PayoutCheck.maxWithdrawableUsd, 0);
+  assert.ok(step2PayoutCheck.reason.includes('Step 2 of 2'));
+
+  // Earn +$2,500 (+5%) in Step 2 -> reaches $56,500 -> passes Step 2 -> Funded & Payout Unlocked!
+  const step2CompletedMetrics = evaluateAccountRiskMetrics(
+    { ...step2ActiveAcc, balance: 56500, equity: 56500 },
+    []
+  );
+  assert.equal(step2CompletedMetrics.stepCompleted, true);
+  assert.equal(step2CompletedMetrics.nextStatus, 'passed');
+
+  const fundedPassedAcc: TradingAccountRecord = {
+    ...step2ActiveAcc,
+    balance: 56500,
+    equity: 56500,
+    status: 'passed',
+  };
+  const fundedPayoutCheck = evaluateAccountPayoutEligibility(fundedPassedAcc, []);
+  assert.equal(fundedPayoutCheck.eligible, true);
+  assert.equal(fundedPayoutCheck.realizedProfitUsd, 6500);
+  assert.equal(fundedPayoutCheck.maxWithdrawableUsd, 5850); // 90% of $6,500
+});
+
+
 
 

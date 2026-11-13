@@ -342,9 +342,9 @@ export const TradingTerminalView: React.FC = () => {
         .filter((p) => p.accountId === ownedAcc.id)
         .reduce((sum, p) => sum + p.amountUsd / ((rules.profitSplitPct || 80) / 100), 0);
       const reconciledBalance =
-        closedForOwned.length > 0
-          ? Math.round((ownedAcc.startingBalance + realizedOwnedPnl - withdrawnGross) * 100) / 100
-          : Math.round(ownedAcc.balance * 100) / 100;
+        ownedAcc.status === 'failed'
+          ? Math.round(ownedAcc.balance * 100) / 100
+          : Math.round((ownedAcc.startingBalance + realizedOwnedPnl - withdrawnGross) * 100) / 100;
 
       return {
         ...ownedAcc,
@@ -654,21 +654,33 @@ export const TradingTerminalView: React.FC = () => {
     Math.abs(currentQuote.ask - currentQuote.bid)
   );
 
-  // Sync Balance, Equity, P&L, Max Drawdown (DD), and Profit Target (TARGET) at 60fps
+  // Sync Balance, Equity, P&L, Max Drawdown (DD), and Profit Target (TARGET) with dirty-checking so DOM only mutates when values change
   useEffect(() => {
     let rafId: number;
-    const updateHeader = () => {
-      if (!balanceRef.current || !equityRef.current || !effectiveAccount) return;
+    let lastBalance = NaN;
+    let lastEquity = NaN;
+    let lastBid = NaN;
+    let lastAsk = NaN;
 
-      balanceRef.current.textContent = `$${effectiveAccount.balance.toLocaleString('en-US', {
-        minimumFractionDigits: 2,
-        maximumFractionDigits: 2,
-      })}`;
+    const updateHeader = () => {
+      if (!balanceRef.current || !equityRef.current || !effectiveAccount) {
+        rafId = requestAnimationFrame(updateHeader);
+        return;
+      }
+
+      if (effectiveAccount.balance !== lastBalance) {
+        lastBalance = effectiveAccount.balance;
+        balanceRef.current.textContent = `$${effectiveAccount.balance.toLocaleString('en-US', {
+          minimumFractionDigits: 2,
+          maximumFractionDigits: 2,
+        })}`;
+      }
 
       const latestQuotes = quotesRef.current;
       let totalFloatingPnl = 0;
 
-      openPositions.forEach((pos) => {
+      for (let i = 0; i < openPositions.length; i++) {
+        const pos = openPositions[i];
         const quote = latestQuotes[pos.symbol];
         if (quote) {
           const markPrice = pos.side === 'BUY' ? quote.bid : quote.ask;
@@ -680,75 +692,84 @@ export const TradingTerminalView: React.FC = () => {
             totalFloatingPnl += grossPnl - pos.commission;
           }
         }
-      });
+      }
 
       const liveEquity = Math.round((effectiveAccount.balance + totalFloatingPnl) * 100) / 100;
-      equityRef.current.textContent = `$${liveEquity.toLocaleString('en-US', {
-        minimumFractionDigits: 2,
-        maximumFractionDigits: 2,
-      })}`;
-
-      const liveNetPnl = Math.round((liveEquity - effectiveAccount.startingBalance) * 100) / 100;
-      if (pnlRef.current) {
-        const sign = liveNetPnl >= 0 ? '+' : '-';
-        pnlRef.current.textContent = `${sign}$${Math.abs(liveNetPnl).toLocaleString('en-US', {
+      if (liveEquity !== lastEquity) {
+        lastEquity = liveEquity;
+        equityRef.current.textContent = `$${liveEquity.toLocaleString('en-US', {
           minimumFractionDigits: 2,
           maximumFractionDigits: 2,
         })}`;
-        pnlRef.current.className =
-          liveNetPnl >= 0
-            ? 'text-[#28D6B0] font-sans font-bold tabular-nums text-xs sm:text-sm'
-            : 'text-[#F01650] font-sans font-bold tabular-nums text-xs sm:text-sm';
-      }
 
-      const liveDdUsed =
-        liveEquity < effectiveAccount.startingBalance
-          ? Math.max(0, Math.round((effectiveAccount.startingBalance - liveEquity) * 100) / 100)
+        const liveNetPnl = Math.round((liveEquity - effectiveAccount.startingBalance) * 100) / 100;
+        if (pnlRef.current) {
+          const sign = liveNetPnl >= 0 ? '+' : '-';
+          pnlRef.current.textContent = `${sign}$${Math.abs(liveNetPnl).toLocaleString('en-US', {
+            minimumFractionDigits: 2,
+            maximumFractionDigits: 2,
+          })}`;
+          pnlRef.current.className =
+            liveNetPnl >= 0
+              ? 'text-[#28D6B0] font-sans font-bold tabular-nums text-xs sm:text-sm'
+              : 'text-[#F01650] font-sans font-bold tabular-nums text-xs sm:text-sm';
+        }
+
+        const liveDdUsed =
+          liveEquity < effectiveAccount.startingBalance
+            ? Math.max(0, Math.round((effectiveAccount.startingBalance - liveEquity) * 100) / 100)
+            : 0;
+        const liveDdPct =
+          ddLimitUsd > 0 ? Math.min(100, Math.max(0, (liveDdUsed / ddLimitUsd) * 100)) : 0;
+
+        if (ddPctRef.current) {
+          ddPctRef.current.textContent = `${liveDdPct.toFixed(0)}%`;
+        }
+        if (ddBarRef.current) {
+          ddBarRef.current.style.width = `${Math.min(100, liveDdPct)}%`;
+        }
+        if (ddTextRef.current) {
+          ddTextRef.current.textContent = `$${liveDdUsed.toFixed(0)} / $${ddLimitUsd.toFixed(0)}`;
+        }
+
+        const phaseBase =
+          effectiveAccount.phaseStartingBalance && effectiveAccount.phaseStartingBalance > 0
+            ? effectiveAccount.phaseStartingBalance
+            : effectiveAccount.startingBalance;
+        const liveGainUsd =
+          liveEquity > phaseBase
+            ? Math.max(0, Math.round((liveEquity - phaseBase) * 100) / 100)
+            : 0;
+        const liveTargetPct = isInstantAccount
+          ? 0
+          : targetLimitUsd > 0
+          ? Math.min(100, Math.max(0, (liveGainUsd / targetLimitUsd) * 100))
           : 0;
-      const liveDdPct =
-        ddLimitUsd > 0 ? Math.min(100, Math.max(0, (liveDdUsed / ddLimitUsd) * 100)) : 0;
 
-      if (ddPctRef.current) {
-        ddPctRef.current.textContent = `${liveDdPct.toFixed(0)}%`;
-      }
-      if (ddBarRef.current) {
-        ddBarRef.current.style.width = `${Math.min(100, liveDdPct)}%`;
-      }
-      if (ddTextRef.current) {
-        ddTextRef.current.textContent = `$${liveDdUsed.toFixed(0)} / $${ddLimitUsd.toFixed(0)}`;
-      }
-
-      const liveGainUsd =
-        liveEquity > effectiveAccount.startingBalance
-          ? Math.max(0, Math.round((liveEquity - effectiveAccount.startingBalance) * 100) / 100)
-          : 0;
-      const liveTargetPct = isInstantAccount
-        ? 0
-        : targetLimitUsd > 0
-        ? Math.min(100, Math.max(0, (liveGainUsd / targetLimitUsd) * 100))
-        : 0;
-
-      if (targetPctRef.current) {
-        targetPctRef.current.textContent = isInstantAccount ? 'N/A' : `${liveTargetPct.toFixed(0)}%`;
-      }
-      if (targetBarRef.current) {
-        targetBarRef.current.style.width = `${Math.min(100, liveTargetPct)}%`;
-      }
-      if (targetTextRef.current) {
-        targetTextRef.current.textContent = isInstantAccount
-          ? 'Funded account'
-          : `$${liveGainUsd.toFixed(0)} / $${targetLimitUsd.toFixed(0)}`;
+        if (targetPctRef.current) {
+          targetPctRef.current.textContent = isInstantAccount ? 'N/A' : `${liveTargetPct.toFixed(0)}%`;
+        }
+        if (targetBarRef.current) {
+          targetBarRef.current.style.width = `${Math.min(100, liveTargetPct)}%`;
+        }
+        if (targetTextRef.current) {
+          targetTextRef.current.textContent = isInstantAccount
+            ? 'Funded account'
+            : `$${liveGainUsd.toFixed(0)} / $${targetLimitUsd.toFixed(0)}`;
+        }
       }
 
       const symbolQuote = latestQuotes[symbol];
       if (symbolQuote) {
-        if (bidRef.current) {
+        if (symbolQuote.bid !== lastBid && bidRef.current) {
+          lastBid = symbolQuote.bid;
           bidRef.current.textContent = symbolQuote.bid.toLocaleString('en-US', {
             minimumFractionDigits: spec.decimals,
             maximumFractionDigits: spec.decimals,
           });
         }
-        if (askRef.current) {
+        if (symbolQuote.ask !== lastAsk && askRef.current) {
+          lastAsk = symbolQuote.ask;
           askRef.current.textContent = symbolQuote.ask.toLocaleString('en-US', {
             minimumFractionDigits: spec.decimals,
             maximumFractionDigits: spec.decimals,
