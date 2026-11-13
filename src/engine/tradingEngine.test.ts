@@ -1234,6 +1234,85 @@ test('2-Step evaluation preserves Step 1 profit when advancing to Step 2 and kee
   assert.equal(fundedPayoutCheck.maxWithdrawableUsd, 5850); // 90% of $6,500
 });
 
+test('all challenge programs strictly enforce evaluation gates, open position locks, and Instant 15% consistency rule', async () => {
+  const {
+    getMinimumPhaseStartBalance,
+    getRequiredCumulativeEvaluationProfitUsd,
+    evaluateAccountRiskMetrics,
+    evaluateAccountPayoutEligibility,
+  } = await import('./tradingEngine');
+
+  // 1. Cumulative evaluation profit requirements
+  assert.equal(getRequiredCumulativeEvaluationProfitUsd(100000, 'instant'), 0);
+  assert.equal(getRequiredCumulativeEvaluationProfitUsd(100000, 'one_step'), 10000);
+  assert.equal(getRequiredCumulativeEvaluationProfitUsd(100000, 'two_step'), 13000);
+  assert.equal(getRequiredCumulativeEvaluationProfitUsd(100000, 'three_step'), 18000);
+
+  // 2. Even if phaseStartingBalance was missing on a Step 2 account, getMinimumPhaseStartBalance enforces $108,000 on $100k 2-step
+  assert.equal(getMinimumPhaseStartBalance(100000, 'two_step', 2, undefined), 108000);
+  assert.equal(getMinimumPhaseStartBalance(100000, 'three_step', 2, undefined), 106000);
+  assert.equal(getMinimumPhaseStartBalance(100000, 'three_step', 3, undefined), 112000);
+
+  const step2MissingPhaseBase: TradingAccountRecord = {
+    ...sampleAccount,
+    id: 'acc-2s-missing-base',
+    challengeType: 'two_step',
+    startingBalance: 100000,
+    phaseStartingBalance: 100000, // stale/unupdated value
+    balance: 108500, // Only +8.5% total (+0.5% in Step 2, needs +5% = $113,000)
+    equity: 108500,
+    currentStep: 2,
+    totalSteps: 2,
+    status: 'active',
+  };
+  const step2Metrics = evaluateAccountRiskMetrics(step2MissingPhaseBase, []);
+  assert.equal(step2Metrics.stepCompleted, false);
+  assert.equal(step2Metrics.nextStatus, 'active');
+  assert.equal(evaluateAccountPayoutEligibility(step2MissingPhaseBase, []).eligible, false);
+
+  // 3. Instant Funding: 7 consistent closed trades of $100 each ($700 total -> 14.29% max single trade <= 15%) unlocks payout
+  const instantConsistentAcc: TradingAccountRecord = {
+    ...sampleAccount,
+    id: 'acc-inst-7trades',
+    challengeId: 'instant-50000',
+    challengeType: 'instant',
+    startingBalance: 50000,
+    balance: 50700,
+    equity: 50700,
+    status: 'active',
+  };
+  const sevenConsistentTrades: TradeOrderRecord[] = Array.from({ length: 7 }, (_, i) => ({
+    id: `ord-c-${i + 1}`,
+    ticketId: `TKT-C-${i + 1}`,
+    accountId: 'acc-inst-7trades',
+    userId: 'user-1',
+    symbol: 'XAUUSD',
+    side: 'BUY',
+    orderType: 'MARKET',
+    volume: 0.5,
+    entryPrice: 2740,
+    currentPrice: 2742,
+    exitPrice: 2742,
+    stopLoss: 0,
+    takeProfit: 0,
+    grossPnl: 102.5,
+    commission: 2.5,
+    netPnl: 100,
+    status: 'CLOSED',
+    openTime: '2026-11-10T00:00:00Z',
+    closeTime: '2026-11-10T01:00:00Z',
+  }));
+  const instantConsistentElig = evaluateAccountPayoutEligibility(
+    instantConsistentAcc,
+    [],
+    sevenConsistentTrades
+  );
+  assert.equal(instantConsistentElig.isConsistencyViolated, false);
+  assert.equal(instantConsistentElig.highestTradeSharePct, 14.29);
+  assert.equal(instantConsistentElig.eligible, true);
+});
+
+
 
 
 

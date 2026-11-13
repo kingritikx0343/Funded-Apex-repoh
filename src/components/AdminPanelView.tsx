@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { usePlatform, UserRole, PaymentGatewaySettings } from '../context/PlatformContext';
 import { AccountStatus, ChallengeType } from '../engine/tradingEngine';
 import { ACCOUNT_SIZES, ChallengeTemplate, COUNTRIES } from '../data/platformData';
@@ -72,6 +72,8 @@ export const AdminPanelView: React.FC = () => {
     adminGenerateAllAccountPasscodes,
     adminUpdateUserRole,
     adminAddOrVerifyPayout,
+    adminApprovePayoutRequest,
+    adminRejectPayoutRequest,
     adminCreateUserAndAccount,
     adminResetUserPassword,
     adminDeleteUser,
@@ -270,6 +272,12 @@ export const AdminPanelView: React.FC = () => {
     return res;
   };
 
+  useEffect(() => {
+    if (tab === 'payouts' || tab === 'confirmations') {
+      void refreshVaultData();
+    }
+  }, [tab, refreshVaultData]);
+
   if (!user || !['admin', 'super_admin'].includes(user.role)) {
     return (
       <main className="max-w-3xl mx-auto px-6 py-24 text-center space-y-5">
@@ -296,6 +304,7 @@ export const AdminPanelView: React.FC = () => {
 
   const isFullAdmin = ['admin', 'super_admin'].includes(user.role);
   const pendingOrdersCount = purchaseRequests.filter((r) => r.status === 'pending').length;
+  const pendingPayoutsCount = payouts.filter((p) => p.status === 'Pending').length;
 
   const handleManualAllocate = (e: React.FormEvent) => {
     e.preventDefault();
@@ -629,6 +638,7 @@ export const AdminPanelView: React.FC = () => {
             {isFullAdmin && (
               <button
                 type="button"
+                data-testid="admin-tab-payouts"
                 onClick={() => setTab('payouts')}
                 className={`px-3.5 py-2 rounded-[8px] text-xs font-medium whitespace-nowrap transition-all flex items-center gap-2 cursor-pointer ${
                   tab === 'payouts'
@@ -638,7 +648,13 @@ export const AdminPanelView: React.FC = () => {
               >
                 <CreditCard className="w-3.5 h-3.5" />
                 <span>Payouts</span>
-                <span className="font-mono text-[11px] opacity-75">({payouts.length})</span>
+                {pendingPayoutsCount > 0 ? (
+                  <span className="px-1.5 py-0.2 rounded-[5px] bg-amber-400 text-[#000000] font-mono text-[10px] font-black">
+                    {pendingPayoutsCount}
+                  </span>
+                ) : (
+                  <span className="font-mono text-[11px] opacity-75">({payouts.length})</span>
+                )}
               </button>
             )}
 
@@ -2589,98 +2605,279 @@ export const AdminPanelView: React.FC = () => {
         </section>
       )}
 
-      {/* TAB 7: VERIFIED PAYOUTS MANAGEMENT */}
+      {/* TAB 7: VERIFIED PAYOUTS & TRADER PAYOUT REQUESTS MANAGEMENT */}
       {tab === 'payouts' && isFullAdmin && (
-        <section className="grid grid-cols-1 lg:grid-cols-3 gap-7 apex-fade-up">
-          <form
-            onSubmit={handleAddVerifiedPayout}
-            className="bg-[#06140E]/95 border border-emerald-500/30 rounded-3xl p-6 space-y-4 h-fit"
-          >
-            <h2 className="font-display text-base font-extrabold text-white">
-              Verify &amp; Publish Trader Payout
-            </h2>
-            <div>
-              <label className="block text-xs text-slate-300 mb-1">Trader Full Name</label>
-              <input
-                type="text"
-                required
-                value={poTrader}
-                onChange={(e) => setPoTrader(e.target.value)}
-                placeholder="Alex Mercer"
-                className="w-full px-3 py-2 rounded-xl bg-[#030A07] border border-emerald-500/35 text-xs text-white"
-              />
-            </div>
-            <div>
-              <label className="block text-xs text-slate-300 mb-1">Trader Username</label>
-              <input
-                type="text"
-                value={poUser}
-                onChange={(e) => setPoUser(e.target.value)}
-                placeholder="@alex_fx"
-                className="w-full px-3 py-2 rounded-xl bg-[#030A07] border border-emerald-500/35 text-xs font-mono text-white"
-              />
-            </div>
-            <div className="grid grid-cols-2 gap-3">
+        <section className="space-y-6 apex-fade-up">
+          {/* Incoming Trader Payout Requests Bar & Quick Approvals */}
+          <div className="bg-[#06140E]/95 border border-emerald-500/30 rounded-3xl p-6 space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-emerald-500/20 pb-3">
               <div>
-                <label className="block text-xs text-slate-300 mb-1">Payout Amount ($)</label>
+                <h2 className="font-display text-lg font-extrabold text-white">
+                  Trader Payout Withdrawal Requests &amp; Settlement Queue
+                </h2>
+                <p className="text-xs text-slate-400">
+                  Every payout submitted from a trader&apos;s Dashboard appears here in real time. Verify wallet details and click Approve &amp; Verify or Reject &amp; Refund.
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                {pendingPayoutsCount > 0 && (
+                  <span className="px-3 py-1 rounded-full bg-amber-400/20 border border-amber-400/40 text-xs font-mono font-bold text-amber-300">
+                    {pendingPayoutsCount} Pending Approval
+                  </span>
+                )}
+                <button
+                  type="button"
+                  onClick={async () => {
+                    setIsRefreshingOrders(true);
+                    await refreshVaultData();
+                    setTimeout(() => setIsRefreshingOrders(false), 500);
+                  }}
+                  disabled={isRefreshingOrders}
+                  className="px-3 py-1.5 rounded-full bg-[#030A07] hover:bg-emerald-500/20 border border-emerald-500/30 text-xs font-mono font-bold text-white hover:text-[#00FFA3] flex items-center gap-1.5 cursor-pointer transition-colors"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${isRefreshingOrders ? 'animate-spin text-[#00FFA3]' : ''}`} />
+                  <span>{isRefreshingOrders ? 'Syncing...' : 'Sync Payouts Now'}</span>
+                </button>
+              </div>
+            </div>
+
+            {payouts.filter((p) => p.isTraderRequest || p.status === 'Pending' || Boolean(p.accountNumber)).length === 0 ? (
+              <div className="p-5 rounded-2xl bg-[#030A07] border border-dashed border-emerald-500/25 text-center text-xs text-slate-400">
+                No trader payout withdrawal requests submitted yet. Once a trader passes their challenge rules (or satisfies the Instant 15% Consistency Rule) and submits a payout request, it will appear here immediately.
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {payouts
+                  .filter((p) => p.isTraderRequest || p.status === 'Pending' || Boolean(p.accountNumber))
+                  .sort((a, b) => {
+                    if (a.status === 'Pending' && b.status !== 'Pending') return -1;
+                    if (a.status !== 'Pending' && b.status === 'Pending') return 1;
+                    return (b.createdAt || b.paymentDate || '').localeCompare(a.createdAt || a.paymentDate || '');
+                  })
+                  .map((p) => (
+                    <div
+                      key={p.id}
+                      className={`p-4 rounded-2xl border flex flex-col lg:flex-row lg:items-center justify-between gap-4 ${
+                        p.status === 'Pending'
+                          ? 'bg-amber-500/10 border-amber-400/40'
+                          : p.status === 'Verified'
+                          ? 'bg-emerald-500/10 border-emerald-500/35'
+                          : 'bg-rose-500/10 border-rose-500/30 opacity-80'
+                      }`}
+                    >
+                      <div className="space-y-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="font-mono text-xs font-extrabold text-[#00FFA3]">
+                            #{p.accountNumber || 'FUNDED'}
+                          </span>
+                          <span className="px-2 py-0.5 rounded-md bg-[#030A07] border border-emerald-500/30 text-[10px] font-mono font-bold text-white uppercase">
+                            {p.programType}
+                          </span>
+                          <span
+                            className={`px-2 py-0.5 rounded-full text-[10px] font-mono font-bold uppercase ${
+                              p.status === 'Pending'
+                                ? 'bg-amber-400/20 text-amber-300 border border-amber-400/40'
+                                : p.status === 'Verified'
+                                ? 'bg-emerald-500/20 text-[#00FFA3] border border-emerald-500/40'
+                                : 'bg-rose-500/20 text-rose-300 border border-rose-500/40'
+                            }`}
+                          >
+                            {p.status}
+                          </span>
+                        </div>
+                        <div className="font-display text-sm font-extrabold text-white">
+                          {p.traderName}{' '}
+                          <span className="text-xs font-mono text-slate-300">
+                            ({p.userEmail || p.username})
+                          </span>{' '}
+                          —{' '}
+                          <span className="text-[#00FFA3] font-mono">
+                            ${p.amountUsd.toLocaleString('en-US', { minimumFractionDigits: 2 })} USD
+                          </span>
+                          {p.profitSplitPct && (
+                            <span className="ml-2 text-[11px] font-mono text-emerald-300">
+                              ({p.profitSplitPct}% Split)
+                            </span>
+                          )}
+                        </div>
+                        <div className="text-xs text-slate-300 flex flex-wrap items-center gap-x-4 gap-y-1">
+                          <span>
+                            Method: <strong className="text-white">{p.currency}</strong>
+                          </span>
+                          <span>
+                            Destination Wallet:{' '}
+                            <strong className="font-mono text-amber-300 bg-[#030A07] px-2 py-0.5 rounded">
+                              {p.destination || 'On-file Settlement Address'}
+                            </strong>
+                          </span>
+                          <span className="font-mono text-slate-400">{p.paymentDate}</span>
+                        </div>
+                      </div>
+
+                      {p.status === 'Pending' ? (
+                        <div className="flex items-center gap-2 shrink-0">
+                          <button
+                            type="button"
+                            onClick={() => adminApprovePayoutRequest(p.id)}
+                            className="px-4 py-2 rounded-xl bg-gradient-to-r from-[#00FFA3] to-[#10B981] text-[#02120A] font-display font-extrabold text-xs flex items-center gap-1.5 cursor-pointer shadow-md"
+                          >
+                            <CheckCircle2 className="w-4 h-4" />
+                            <span>Approve &amp; Verify</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => adminRejectPayoutRequest(p.id)}
+                            className="px-3 py-2 rounded-xl bg-rose-500/20 hover:bg-rose-500/35 border border-rose-500/40 text-rose-200 font-display font-bold text-xs flex items-center gap-1 cursor-pointer"
+                          >
+                            <XCircle className="w-4 h-4" />
+                            <span>Reject &amp; Refund</span>
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="text-right font-mono text-xs text-slate-300 shrink-0">
+                          {p.status === 'Verified' ? 'Verified & Paid ✓' : 'Rejected & Refunded'}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+              </div>
+            )}
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-7">
+            <form
+              onSubmit={handleAddVerifiedPayout}
+              className="bg-[#06140E]/95 border border-emerald-500/30 rounded-3xl p-6 space-y-4 h-fit"
+            >
+              <h2 className="font-display text-base font-extrabold text-white">
+                Verify &amp; Publish Trader Payout
+              </h2>
+              <div>
+                <label className="block text-xs text-slate-300 mb-1">Trader Full Name</label>
                 <input
-                  type="number"
-                  min={50}
-                  value={poAmount}
-                  onChange={(e) => setPoAmount(Number(e.target.value))}
-                  className="w-full px-3 py-2 rounded-xl bg-[#030A07] border border-emerald-500/35 text-xs font-mono text-white"
+                  type="text"
+                  required
+                  value={poTrader}
+                  onChange={(e) => setPoTrader(e.target.value)}
+                  placeholder="Alex Mercer"
+                  className="w-full px-3 py-2 rounded-xl bg-[#030A07] border border-emerald-500/35 text-xs text-white"
                 />
               </div>
               <div>
-                <label className="block text-xs text-slate-300 mb-1">Currency</label>
-                <select
-                  value={poCurrency}
-                  onChange={(e) => setPoCurrency(e.target.value)}
-                  className="w-full px-3 py-2 rounded-xl bg-[#030A07] border border-emerald-500/35 text-xs text-white"
-                >
-                  <option value="USD (USDC)">USD (USDC)</option>
-                  <option value="USD (USDT)">USD (USDT)</option>
-                  <option value="USD (Wire)">USD (Wire)</option>
-                </select>
+                <label className="block text-xs text-slate-300 mb-1">Trader Username</label>
+                <input
+                  type="text"
+                  value={poUser}
+                  onChange={(e) => setPoUser(e.target.value)}
+                  placeholder="@alex_fx"
+                  className="w-full px-3 py-2 rounded-xl bg-[#030A07] border border-emerald-500/35 text-xs font-mono text-white"
+                />
               </div>
-            </div>
-            <button
-              type="submit"
-              className="w-full py-3 rounded-xl bg-gradient-to-r from-[#00FFA3] to-[#10B981] text-[#02120A] font-display font-extrabold text-xs cursor-pointer"
-            >
-              Verify &amp; Publish Payout
-            </button>
-          </form>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs text-slate-300 mb-1">Payout Amount ($)</label>
+                  <input
+                    type="number"
+                    min={50}
+                    value={poAmount}
+                    onChange={(e) => setPoAmount(Number(e.target.value))}
+                    className="w-full px-3 py-2 rounded-xl bg-[#030A07] border border-emerald-500/35 text-xs font-mono text-white"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs text-slate-300 mb-1">Currency</label>
+                  <select
+                    value={poCurrency}
+                    onChange={(e) => setPoCurrency(e.target.value)}
+                    className="w-full px-3 py-2 rounded-xl bg-[#030A07] border border-emerald-500/35 text-xs text-white"
+                  >
+                    <option value="USD (USDC)">USD (USDC)</option>
+                    <option value="USD (USDT)">USD (USDT)</option>
+                    <option value="USD (Wire)">USD (Wire)</option>
+                  </select>
+                </div>
+              </div>
+              <button
+                type="submit"
+                className="w-full py-3 rounded-xl bg-gradient-to-r from-[#00FFA3] to-[#10B981] text-[#02120A] font-display font-extrabold text-xs cursor-pointer"
+              >
+                Verify &amp; Publish Payout
+              </button>
+            </form>
 
-          <div className="lg:col-span-2 bg-[#06140E]/95 border border-emerald-500/30 rounded-3xl overflow-x-auto p-4">
-            <table className="w-full text-left border-collapse">
-              <thead>
-                <tr className="border-b border-emerald-500/25 text-xs text-slate-400">
-                  <th className="py-3 px-4">Trader</th>
-                  <th className="py-3 px-4">Username</th>
-                  <th className="py-3 px-4 text-right">Amount</th>
-                  <th className="py-3 px-4">Currency</th>
-                  <th className="py-3 px-4">Status</th>
-                  <th className="py-3 px-4 text-right">Date</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-emerald-500/15 text-xs">
-                {payouts.map((p) => (
-                  <tr key={p.id} className="hover:bg-emerald-500/5">
-                    <td className="py-3 px-4 font-bold text-white">{p.traderName}</td>
-                    <td className="py-3 px-4 font-mono text-[#00FFA3]">{p.username}</td>
-                    <td className="py-3 px-4 font-mono font-extrabold text-right text-white">
-                      ${p.amountUsd.toLocaleString()}
-                    </td>
-                    <td className="py-3 px-4 text-slate-300">{p.currency}</td>
-                    <td className="py-3 px-4 font-bold text-[#00FFA3]">{p.status}</td>
-                    <td className="py-3 px-4 font-mono text-right text-slate-400">
-                      {p.paymentDate}
-                    </td>
+            <div className="lg:col-span-2 bg-[#06140E]/95 border border-emerald-500/30 rounded-3xl overflow-x-auto p-4">
+              <table className="w-full text-left border-collapse">
+                <thead>
+                  <tr className="border-b border-emerald-500/25 text-xs text-slate-400">
+                    <th className="py-3 px-4">Trader</th>
+                    <th className="py-3 px-4">Account / User</th>
+                    <th className="py-3 px-4 text-right">Amount</th>
+                    <th className="py-3 px-4">Method &amp; Wallet</th>
+                    <th className="py-3 px-4">Status</th>
+                    <th className="py-3 px-4 text-right">Actions / Date</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody className="divide-y divide-emerald-500/15 text-xs">
+                  {payouts.map((p) => (
+                    <tr key={p.id} className="hover:bg-emerald-500/5">
+                      <td className="py-3 px-4">
+                        <div className="font-bold text-white">{p.traderName}</div>
+                        <div className="text-[11px] text-slate-400">{p.userEmail || p.programType}</div>
+                      </td>
+                      <td className="py-3 px-4 font-mono text-[#00FFA3]">
+                        {p.accountNumber ? `#${p.accountNumber}` : p.username}
+                      </td>
+                      <td className="py-3 px-4 font-mono font-extrabold text-right text-white">
+                        ${p.amountUsd.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                      </td>
+                      <td className="py-3 px-4 text-slate-300">
+                        <div>{p.currency}</div>
+                        {p.destination && (
+                          <div className="text-[10px] font-mono text-slate-400 truncate max-w-[160px]">
+                            {p.destination}
+                          </div>
+                        )}
+                      </td>
+                      <td className="py-3 px-4">
+                        <span
+                          className={`font-bold ${
+                            p.status === 'Verified'
+                              ? 'text-[#00FFA3]'
+                              : p.status === 'Pending'
+                              ? 'text-amber-300'
+                              : 'text-rose-300'
+                          }`}
+                        >
+                          {p.status}
+                        </span>
+                      </td>
+                      <td className="py-3 px-4 font-mono text-right text-slate-400">
+                        {p.status === 'Pending' ? (
+                          <div className="inline-flex items-center gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() => adminApprovePayoutRequest(p.id)}
+                              className="px-2.5 py-1 rounded-lg bg-[#00FFA3] text-[#02120A] font-bold text-[10px] cursor-pointer"
+                            >
+                              Approve
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => adminRejectPayoutRequest(p.id)}
+                              className="px-2.5 py-1 rounded-lg bg-rose-500/20 text-rose-200 border border-rose-500/40 font-bold text-[10px] cursor-pointer"
+                            >
+                              Reject
+                            </button>
+                          </div>
+                        ) : (
+                          p.paymentDate
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </div>
         </section>
       )}

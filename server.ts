@@ -85,6 +85,15 @@ async function startServer() {
         incomingPurchaseRequests = [incoming.purchaseRequest, ...(Array.isArray(incomingPurchaseRequests) ? incomingPurchaseRequests : [])];
       }
 
+      // Normalize incoming payout requests (support array, single item, and snake_case alias)
+      let incomingPayouts = incoming.payouts || incoming.payout_requests || [];
+      if (incoming.payoutRequest && typeof incoming.payoutRequest === 'object') {
+        incomingPayouts = [
+          incoming.payoutRequest,
+          ...(Array.isArray(incomingPayouts) ? incomingPayouts : []),
+        ];
+      }
+
       const merged = {
         ...existing,
         ...incoming,
@@ -94,7 +103,7 @@ async function startServer() {
         purchaseRequests: mergeById(existing.purchaseRequests, incomingPurchaseRequests, 'id'),
         coupons: mergeById(existing.coupons, incoming.coupons, 'id'),
         adminCoupons: mergeById(existing.adminCoupons, incoming.adminCoupons, 'id'),
-        payouts: mergeById(existing.payouts, incoming.payouts, 'id'),
+        payouts: mergeById(existing.payouts, incomingPayouts, 'id'),
         emailNotifications: mergeById(
           existing.emailNotifications,
           incoming.emailNotifications,
@@ -150,6 +159,30 @@ async function startServer() {
     res.status(200).json({
       ok: true,
       purchaseRequests: Array.isArray(data.purchaseRequests) ? data.purchaseRequests : [],
+    });
+  });
+
+  // Dedicated instant trader payout request receiver for real-time Admin Panel sync
+  app.post('/api/vault/payout-request', (req, res) => {
+    const payload = req.body;
+    if (!payload || !payload.id) {
+      res.status(400).json({ ok: false, error: 'Invalid payout request payload.' });
+      return;
+    }
+    const merged = writeServerVault({ payoutRequest: payload });
+    res.status(200).json({
+      ok: true,
+      message: 'Payout request received and synced to Admin Panel vault.',
+      payouts: merged.payouts,
+    });
+  });
+
+  // Dedicated query endpoint for Admin Panel to fetch all payouts
+  app.get('/api/vault/payouts', (_req, res) => {
+    const data = readServerVault();
+    res.status(200).json({
+      ok: true,
+      payouts: Array.isArray(data.payouts) ? data.payouts : [],
     });
   });
 

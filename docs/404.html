@@ -1,97 +1,24 @@
-<!doctype html>
-<html lang="en" class="dark" style="background-color: #04080A; color: #FFFFFF;">
+<!DOCTYPE html>
+<html lang="en">
   <head>
-    <meta charset="UTF-8" />
+    <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>FUNDED APEX</title>
     <script type="text/javascript">
-      // 1. Immediately normalize trailing slash for GitHub Pages project repositories
-      // If visited as https://user.github.io/repo without trailing slash, relative assets fail (404 white screen).
-      (function() {
-        var p = window.location.pathname;
-        if (p && !p.endsWith('/') && !p.split('/').pop().includes('.')) {
-          window.location.replace(p + '/' + window.location.search + window.location.hash);
-        }
-      })();
+      // GitHub Pages SPA router fallback
+      // Preserves subroute in query parameter and redirects to index.html
+      var pathSegmentsToKeep = 0;
+      var l = window.location;
+      l.replace(
+        l.protocol + '//' + l.hostname + (l.port ? ':' + l.port : '') +
+        l.pathname.split('/').slice(0, 1 + pathSegmentsToKeep).join('/') + '/?/' +
+        l.pathname.slice(1).split('/').slice(pathSegmentsToKeep).join('/').replace(/&/g, '~and~') +
+        (l.search ? '&' + l.search.slice(1).replace(/&/g, '~and~') : '') +
+        l.hash
+      );
     </script>
-    <title>FUNDED APEX — Institutional Prop Trading Simulation &amp; Evaluation Platform</title>
-    <meta name="description" content="Trade Big. Think Smart. Get Funded. Unlock professional trading opportunities with structured challenges, transparent rules, and a modern trading environment at FUNDED APEX." />
-    <meta property="og:title" content="FUNDED APEX — Institutional Prop Trading Platform" />
-    <meta property="og:description" content="Trade Big. Think Smart. Get Funded. Unlock professional trading opportunities with structured challenges, transparent rules, and a modern trading environment." />
-    <meta property="og:type" content="website" />
-    <meta name="twitter:card" content="summary_large_image" />
-    <link
-      rel="icon"
-      type="image/svg+xml"
-      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%23000000'/%3E%3Crect x='2' y='2' width='60' height='60' rx='10' fill='%23070B08' stroke='%2300E676' stroke-opacity='0.35' stroke-width='1.5'/%3E%3Cpath d='M32 10L52 52H41.5L32 31L22.5 52H12L32 10Z' fill='%23FFFFFF'/%3E%3Cpath d='M32 10L42 31H22L32 10Z' fill='%23A7B1AA' fill-opacity='0.4'/%3E%3Cpolygon points='23,41 41,41 44,47 20,47' fill='%2300E676'/%3E%3C/svg%3E"
-    />
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link
-      href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800;900&family=Syne:wght@600;700;800&family=Playfair+Display:ital,wght@0,600;0,700;1,600&family=Inter:wght@400;500;600;700&family=Manrope:wght@600;700;800&family=Space+Grotesk:wght@500;600;700&display=swap"
-      rel="stylesheet"
-    />
-    <script type="text/javascript">
-      // Restore path from 404.html redirect when deployed on GitHub Pages
-      (function(l) {
-        if (l.search[1] === '/' ) {
-          var decoded = l.search.slice(1).split('&').map(function(s) { 
-            return s.replace(/~and~/g, '&');
-          }).join('?');
-          window.history.replaceState(null, null,
-              l.pathname.slice(0, -1) + decoded + l.hash
-          );
-        }
-      }(window.location));
-    </script>
-    <script>
-      // Guard against FedCM NotAllowedError and GSI logger notices when embedded in iframes
-      (function() {
-        if (typeof navigator !== 'undefined' && navigator.credentials) {
-          const _origGet = navigator.credentials.get ? navigator.credentials.get.bind(navigator.credentials) : null;
-          if (_origGet) {
-            navigator.credentials.get = function(options) {
-              if (options && options.identity) {
-                return Promise.resolve(null);
-              }
-              return _origGet(options);
-            };
-          }
-        }
-        const filterGsi = function(args) {
-          return args.some(a => {
-            const str = typeof a === 'string' ? a : ((a && a.message) || String(a || ''));
-            return str.includes('GSI_LOGGER') ||
-                   str.includes('identity-credentials-get') ||
-                   str.includes('FedCM get()') ||
-                   str.includes('Failed to open popup window');
-          });
-        };
-        ['error', 'warn', 'log', 'info'].forEach(function(method) {
-          const orig = console[method];
-          console[method] = function(...args) {
-            if (filterGsi(args)) return;
-            return orig.apply(console, args);
-          };
-        });
-        window.addEventListener('error', function(event) {
-          const msg = (event && (event.message || '')) || '';
-          if (msg.includes('GSI_LOGGER') || msg.includes('identity-credentials-get') || msg.includes('Failed to open popup window')) {
-            event.stopImmediatePropagation();
-            event.preventDefault();
-          }
-        }, true);
-      })();
-    </script>
-    <script src="https://accounts.google.com/gsi/client" async defer></script>
-    <script type="module" crossorigin src="./assets/index-C_61ZAtj.js"></script>
-    <link rel="modulepreload" crossorigin href="./assets/vendor-motion--CzgsWSo.js">
-    <link rel="modulepreload" crossorigin href="./assets/vendor-charts-CvLvXTOH.js">
-    <link rel="modulepreload" crossorigin href="./assets/vendor-firebase-B8ILpFsr.js">
-    <link rel="modulepreload" crossorigin href="./assets/vendor-icons-M7w7loNT.js">
-    <link rel="modulepreload" crossorigin href="./assets/vendor-three-DhLZPRT5.js">
-    <link rel="stylesheet" crossorigin href="./assets/index-v_ADAerh.css">
   </head>
-  <body style="background-color: #04080A; color: #FFFFFF; min-height: 100vh; margin: 0;" class="bg-[#04080A] text-[#FFFFFF] antialiased selection:bg-[#00E676]/25 selection:text-[#00E676]">
-    <div id="root"></div>
+  <body style="background-color: #04080A; color: #00E5B0; font-family: sans-serif; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0;">
+    <p>Redirecting to FUNDED APEX...</p>
   </body>
 </html>

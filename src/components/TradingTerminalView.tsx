@@ -339,8 +339,12 @@ export const TradingTerminalView: React.FC = () => {
       );
       const realizedOwnedPnl = closedForOwned.reduce((sum, o) => sum + (o.netPnl || 0), 0);
       const withdrawnGross = payouts
-        .filter((p) => p.accountId === ownedAcc.id)
-        .reduce((sum, p) => sum + p.amountUsd / ((rules.profitSplitPct || 80) / 100), 0);
+        .filter((p) => p.accountId === ownedAcc.id && p.status !== 'Rejected')
+        .reduce(
+          (sum, p) =>
+            sum + (p.grossProfitDeducted || p.amountUsd / ((rules.profitSplitPct || 80) / 100)),
+          0
+        );
       const reconciledBalance =
         ownedAcc.status === 'failed'
           ? Math.round(ownedAcc.balance * 100) / 100

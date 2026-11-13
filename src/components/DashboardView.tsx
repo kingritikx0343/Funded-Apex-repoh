@@ -61,6 +61,7 @@ export const DashboardView: React.FC = () => {
     challenges,
     notifications,
     payouts,
+    userPayoutRequests,
     verifiedPayouts,
     paymentSettings,
     userCoupons,
@@ -147,8 +148,12 @@ export const DashboardView: React.FC = () => {
     const rules = resolveChallengeRulesForAccount(activeAccount);
     const realizedNet = closedOrders.reduce((s, o) => s + (o.netPnl || 0), 0);
     const withdrawnGross = payouts
-      .filter((p) => p.accountId === activeAccount.id)
-      .reduce((s, p) => s + p.amountUsd / ((rules.profitSplitPct || 80) / 100), 0);
+      .filter((p) => p.accountId === activeAccount.id && p.status !== 'Rejected')
+      .reduce(
+        (s, p) =>
+          s + (p.grossProfitDeducted || p.amountUsd / ((rules.profitSplitPct || 80) / 100)),
+        0
+      );
     const syncedBalance =
       activeAccount.status === 'failed'
         ? Math.round(activeAccount.balance * 100) / 100
@@ -216,8 +221,12 @@ export const DashboardView: React.FC = () => {
     );
     const realizedNet = closedForAcc.reduce((s, o) => s + (o.netPnl || 0), 0);
     const withdrawnGross = payouts
-      .filter((p) => p.accountId === rawAcc.id)
-      .reduce((s, p) => s + p.amountUsd / ((accRules.profitSplitPct || 80) / 100), 0);
+      .filter((p) => p.accountId === rawAcc.id && p.status !== 'Rejected')
+      .reduce(
+        (s, p) =>
+          s + (p.grossProfitDeducted || p.amountUsd / ((accRules.profitSplitPct || 80) / 100)),
+        0
+      );
     const syncedBalance =
       rawAcc.status === 'failed'
         ? Math.round(rawAcc.balance * 100) / 100
@@ -313,9 +322,9 @@ export const DashboardView: React.FC = () => {
       return;
     }
     setPayoutSubmittedMsg(
-      `Approved & Disbursed $${payoutAmount.toLocaleString('en-US', {
+      `Payout Request Submitted ($${payoutAmount.toLocaleString('en-US', {
         minimumFractionDigits: 2,
-      })} USD from Account #${selectedPayoutAccount.accountNumber} (${selectedPayoutAccount.challengeTitle}) via ${payoutMethod.replace('_', ' ')}!`
+      })} USD from Account #${selectedPayoutAccount.accountNumber} via ${payoutMethod.replace('_', ' ')}). Sent to Admin Panel for verification & settlement!`
     );
     setPayoutWalletAddress('');
   };
@@ -2098,8 +2107,14 @@ export const DashboardView: React.FC = () => {
                           );
                           const accRealizedNet = accClosed.reduce((s, o) => s + (o.netPnl || 0), 0);
                           const accWithdrawnGross = payouts
-                            .filter((p) => p.accountId === acc.id)
-                            .reduce((s, p) => s + p.amountUsd / ((accRules.profitSplitPct || 80) / 100), 0);
+                            .filter((p) => p.accountId === acc.id && p.status !== 'Rejected')
+                            .reduce(
+                              (s, p) =>
+                                s +
+                                (p.grossProfitDeducted ||
+                                  p.amountUsd / ((accRules.profitSplitPct || 80) / 100)),
+                              0
+                            );
                           const syncedBal =
                             acc.status === 'failed'
                               ? acc.balance
@@ -2108,8 +2123,10 @@ export const DashboardView: React.FC = () => {
                           const stepBadge =
                             acc.status === 'passed' || acc.status === 'completed'
                               ? 'FUNDED'
-                              : (acc.totalSteps || accRules.totalSteps) > 1
-                              ? `STEP ${acc.currentStep || 1}/${acc.totalSteps || accRules.totalSteps}`
+                              : accRules.challengeType === 'instant'
+                              ? 'INSTANT 15% RULE'
+                              : accRules.totalSteps > 1
+                              ? `STEP ${acc.currentStep || 1}/${accRules.totalSteps}`
                               : 'PHASE 1';
                           return (
                             <option key={acc.id} value={acc.id}>
@@ -2133,30 +2150,158 @@ export const DashboardView: React.FC = () => {
                                 : 'bg-amber-500/15 text-amber-300 border border-amber-500/35'
                             }`}
                           >
-                            {payoutEligibility.eligible ? 'PAYOUT UNLOCKED ✓' : 'OBJECTIVES PENDING'}
+                            {payoutEligibility.eligible ? 'PAYOUT UNLOCKED ✓' : 'RULES PENDING'}
                           </span>
                         </div>
 
-                        {/* Multi-Step Challenge Gate Indicator (1-Step / 2-Step / 3-Step) */}
+                        {/* Challenge Rules Gate & Instant 15% Consistency Rule Breakdown */}
                         {(() => {
                           const rules = resolveChallengeRulesForAccount(selectedPayoutAccount);
-                          const totalSteps = selectedPayoutAccount.totalSteps || rules.totalSteps || 1;
+                          const totalSteps = rules.totalSteps;
                           const currentStep = selectedPayoutAccount.currentStep || rules.currentStep || 1;
                           const isFunded =
                             selectedPayoutAccount.status === 'passed' ||
                             selectedPayoutAccount.status === 'completed';
+
+                          if (rules.challengeType === 'instant') {
+                            return (
+                              <div className="p-3 rounded-[9px] bg-[#090D0A] border border-[#00E676]/25 space-y-2">
+                                <div className="flex items-center justify-between text-[10px] font-mono">
+                                  <span className="text-[#A7B1AA] uppercase font-bold">
+                                    Instant Funding · 15% Consistency Rule
+                                  </span>
+                                  <span
+                                    className={
+                                      payoutEligibility.isConsistencyViolated
+                                        ? 'text-amber-300 font-bold'
+                                        : payoutEligibility.hasPositiveProfit
+                                        ? 'text-[#00E676] font-bold'
+                                        : 'text-slate-400 font-bold'
+                                    }
+                                  >
+                                    {payoutEligibility.isConsistencyViolated
+                                      ? `Share: ${payoutEligibility.highestTradeSharePct.toFixed(1)}% / 15% Max`
+                                      : payoutEligibility.hasPositiveProfit
+                                      ? `Passed (${payoutEligibility.highestTradeSharePct.toFixed(1)}% <= 15%) ✓`
+                                      : 'Only 15% Consistency + >$0 Profit'}
+                                  </span>
+                                </div>
+                                <div className="grid grid-cols-3 gap-1.5 text-[10px] font-mono">
+                                  <div className="p-2 rounded-[6px] bg-[#030504] border border-white/10">
+                                    <span className="text-[#77837B] block">Best Single Trade</span>
+                                    <strong className="text-white">
+                                      +${payoutEligibility.maxSingleTradeProfitUsd.toFixed(2)}
+                                    </strong>
+                                  </div>
+                                  <div className="p-2 rounded-[6px] bg-[#030504] border border-white/10">
+                                    <span className="text-[#77837B] block">Single Trade Share</span>
+                                    <strong
+                                      className={
+                                        payoutEligibility.isConsistencyViolated
+                                          ? 'text-amber-300'
+                                          : 'text-[#00E676]'
+                                      }
+                                    >
+                                      {payoutEligibility.highestTradeSharePct.toFixed(1)}% / 15%
+                                    </strong>
+                                  </div>
+                                  <div className="p-2 rounded-[6px] bg-[#030504] border border-white/10">
+                                    <span className="text-[#77837B] block">Target Profit</span>
+                                    <strong className="text-[#00E676]">
+                                      ${payoutEligibility.requiredConsistentProfitUsd.toFixed(2)}
+                                    </strong>
+                                  </div>
+                                </div>
+                              </div>
+                            );
+                          }
+
+                          if (totalSteps === 1) {
+                            return (
+                              <div className="p-2.5 rounded-[9px] bg-[#090D0A] border border-white/10 space-y-2">
+                                <div className="flex items-center justify-between text-[10px] font-mono">
+                                  <span className="text-[#A7B1AA] uppercase font-bold">
+                                    1-Step Evaluation Gate
+                                  </span>
+                                  <span className={isFunded ? 'text-[#00E676] font-bold' : 'text-amber-300 font-bold'}>
+                                    {isFunded ? 'Step 1 (+10%) Passed — Funded ✓' : 'Step 1 (+10%) Active'}
+                                  </span>
+                                </div>
+                                <div className="grid grid-cols-2 gap-1.5 text-[10px] font-mono">
+                                  <div
+                                    className={`px-2 py-1.5 rounded-[6px] border text-center font-bold ${
+                                      isFunded
+                                        ? 'bg-[#00E676]/15 border-[#00E676]/40 text-[#00E676]'
+                                        : 'bg-amber-500/15 border-amber-500/40 text-amber-300'
+                                    }`}
+                                  >
+                                    Phase 1 (+10% Target) {isFunded ? '✓' : '•'}
+                                  </div>
+                                  <div
+                                    className={`px-2 py-1.5 rounded-[6px] border text-center font-bold ${
+                                      isFunded
+                                        ? 'bg-[#00E676]/20 border-[#00E676]/50 text-[#00E676]'
+                                        : 'bg-[#030504] border-white/10 text-[#77837B]'
+                                    }`}
+                                  >
+                                    Payouts {isFunded ? '✓' : '🔒'}
+                                  </div>
+                                </div>
+                              </div>
+                            );
+                          }
+
+                          if (totalSteps === 3) {
+                            return (
+                              <div className="p-2.5 rounded-[9px] bg-[#090D0A] border border-white/10 space-y-2">
+                                <div className="flex items-center justify-between text-[10px] font-mono">
+                                  <span className="text-[#A7B1AA] uppercase font-bold">
+                                    3-Step Evaluation Gate
+                                  </span>
+                                  <span className={isFunded ? 'text-[#00E676] font-bold' : 'text-amber-300 font-bold'}>
+                                    {isFunded ? 'All 3 Steps Passed — Funded ✓' : `Step ${currentStep} of 3 Active`}
+                                  </span>
+                                </div>
+                                <div className="grid grid-cols-4 gap-1.5 text-[10px] font-mono">
+                                  {[1, 2, 3].map((stepIdx) => (
+                                    <div
+                                      key={stepIdx}
+                                      className={`px-1.5 py-1.5 rounded-[6px] border text-center font-bold ${
+                                        isFunded || currentStep > stepIdx
+                                          ? 'bg-[#00E676]/15 border-[#00E676]/40 text-[#00E676]'
+                                          : currentStep === stepIdx
+                                          ? 'bg-amber-500/15 border-amber-500/40 text-amber-300'
+                                          : 'bg-[#030504] border-white/10 text-[#77837B]'
+                                      }`}
+                                    >
+                                      S{stepIdx} (+6%) {isFunded || currentStep > stepIdx ? '✓' : currentStep === stepIdx ? '•' : '🔒'}
+                                    </div>
+                                  ))}
+                                  <div
+                                    className={`px-1.5 py-1.5 rounded-[6px] border text-center font-bold ${
+                                      isFunded
+                                        ? 'bg-[#00E676]/20 border-[#00E676]/50 text-[#00E676]'
+                                        : 'bg-[#030504] border-white/10 text-[#77837B]'
+                                    }`}
+                                  >
+                                    Payout {isFunded ? '✓' : '🔒'}
+                                  </div>
+                                </div>
+                              </div>
+                            );
+                          }
 
                           if (totalSteps >= 2) {
                             return (
                               <div className="p-2.5 rounded-[9px] bg-[#090D0A] border border-white/10 space-y-2">
                                 <div className="flex items-center justify-between text-[10px] font-mono">
                                   <span className="text-[#A7B1AA] uppercase font-bold">
-                                    {totalSteps}-Step Evaluation Gate
+                                    2-Step Evaluation Gate
                                   </span>
                                   <span className={isFunded ? 'text-[#00E676] font-bold' : 'text-amber-300 font-bold'}>
                                     {isFunded
                                       ? 'All Steps Passed — Funded ✓'
-                                      : `Step ${currentStep} of ${totalSteps} Active`}
+                                      : `Step ${currentStep} of 2 Active`}
                                   </span>
                                 </div>
                                 <div className="grid grid-cols-3 gap-1.5 text-[10px] font-mono">
@@ -2171,14 +2316,14 @@ export const DashboardView: React.FC = () => {
                                   </div>
                                   <div
                                     className={`px-2 py-1.5 rounded-[6px] border text-center font-bold ${
-                                      isFunded || (totalSteps > 2 && currentStep > 2)
+                                      isFunded
                                         ? 'bg-[#00E676]/15 border-[#00E676]/40 text-[#00E676]'
                                         : currentStep === 2
                                         ? 'bg-amber-500/15 border-amber-500/40 text-amber-300'
                                         : 'bg-[#030504] border-white/10 text-[#77837B]'
                                     }`}
                                   >
-                                    Step 2 (+5%) {isFunded || (totalSteps > 2 && currentStep > 2) ? '✓' : currentStep === 2 ? '•' : '🔒'}
+                                    Step 2 (+5%) {isFunded ? '✓' : currentStep === 2 ? '•' : '🔒'}
                                   </div>
                                   <div
                                     className={`px-2 py-1.5 rounded-[6px] border text-center font-bold ${
@@ -2284,33 +2429,87 @@ export const DashboardView: React.FC = () => {
                         className="w-full py-3 rounded-[9px] apex-glow-btn text-xs cursor-pointer disabled:opacity-40"
                       >
                         {payoutEligibility?.eligible
-                          ? `Withdraw $${payoutAmount.toFixed(2)} USD Profit →`
-                          : 'Payout Locked — Complete Challenge Objectives'}
+                          ? `Submit $${payoutAmount.toFixed(2)} USD Payout Request →`
+                          : 'Payout Locked — Complete Challenge Rules'}
                       </button>
                     </form>
                   </>
                 )}
               </div>
 
-              <div className="bg-[#090D0A] border border-[#00E676]/15 rounded-[14px] p-6 sm:p-7 space-y-4">
-                <h2 className="text-xl font-display font-bold text-white">
-                  Verified Payout Registry
-                </h2>
-                <div className="space-y-2.5 max-h-[420px] overflow-y-auto pr-1 custom-scrollbar">
-                  {verifiedPayouts.map((p) => (
-                    <div
-                      key={p.id}
-                      className="p-3.5 rounded-[10px] bg-[#030504] border border-white/10 flex items-center justify-between gap-3 text-xs"
-                    >
-                      <div>
-                        <div className="font-display font-bold text-white">{p.traderName}</div>
-                        <div className="text-[11px] text-[#77837B] font-mono">{p.currency} · {p.paymentDate}</div>
-                      </div>
-                      <div className="font-mono text-[#00E676] font-extrabold text-sm tabular-nums">
-                        +${p.amountUsd.toLocaleString('en-US', { minimumFractionDigits: 2 })}
-                      </div>
+              <div className="space-y-6">
+                {/* My Payout Requests & Admin Verification Status */}
+                <div className="bg-[#090D0A] border border-[#00E676]/25 rounded-[14px] p-6 space-y-4">
+                  <div className="flex items-center justify-between gap-2">
+                    <h2 className="text-lg font-display font-bold text-white">
+                      My Payout Requests ({userPayoutRequests.length})
+                    </h2>
+                    <span className="px-2.5 py-0.5 rounded-[6px] bg-[#00E676]/15 border border-[#00E676]/30 text-[10px] font-mono font-bold text-[#00E676]">
+                      Synced to Admin Panel
+                    </span>
+                  </div>
+                  {userPayoutRequests.length === 0 ? (
+                    <div className="p-4 rounded-[10px] bg-[#030504] border border-white/10 text-xs text-[#A7B1AA]">
+                      No payout withdrawals submitted yet from your accounts. Once your challenge rules are passed and profits are eligible, submitted requests appear here and in the Admin Panel.
                     </div>
-                  ))}
+                  ) : (
+                    <div className="space-y-2.5 max-h-[260px] overflow-y-auto pr-1 custom-scrollbar">
+                      {userPayoutRequests.map((p) => (
+                        <div
+                          key={p.id}
+                          className="p-3.5 rounded-[10px] bg-[#030504] border border-white/10 flex items-center justify-between gap-3 text-xs"
+                        >
+                          <div className="space-y-0.5 min-w-0">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className="font-mono font-bold text-white">
+                                #{p.accountNumber || 'FUNDED'}
+                              </span>
+                              <span
+                                className={`px-2 py-0.5 rounded-[5px] text-[10px] font-mono font-bold uppercase ${
+                                  p.status === 'Verified'
+                                    ? 'bg-[#00E676]/20 text-[#00E676] border border-[#00E676]/40'
+                                    : p.status === 'Pending'
+                                    ? 'bg-amber-500/20 text-amber-300 border border-amber-400/40'
+                                    : 'bg-red-500/20 text-red-300 border border-red-400/40'
+                                }`}
+                              >
+                                {p.status}
+                              </span>
+                            </div>
+                            <div className="text-[11px] text-[#77837B] font-mono truncate">
+                              {p.currency} · {p.destination || 'On-File'} · {p.paymentDate}
+                            </div>
+                          </div>
+                          <div className="font-mono text-[#00E676] font-extrabold text-sm tabular-nums shrink-0">
+                            ${p.amountUsd.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* Global Verified Payout Registry */}
+                <div className="bg-[#090D0A] border border-[#00E676]/15 rounded-[14px] p-6 sm:p-7 space-y-4">
+                  <h2 className="text-xl font-display font-bold text-white">
+                    Verified Payout Registry
+                  </h2>
+                  <div className="space-y-2.5 max-h-[300px] overflow-y-auto pr-1 custom-scrollbar">
+                    {verifiedPayouts.map((p) => (
+                      <div
+                        key={p.id}
+                        className="p-3.5 rounded-[10px] bg-[#030504] border border-white/10 flex items-center justify-between gap-3 text-xs"
+                      >
+                        <div>
+                          <div className="font-display font-bold text-white">{p.traderName}</div>
+                          <div className="text-[11px] text-[#77837B] font-mono">{p.currency} · {p.paymentDate}</div>
+                        </div>
+                        <div className="font-mono text-[#00E676] font-extrabold text-sm tabular-nums">
+                          +${p.amountUsd.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               </div>
             </section>

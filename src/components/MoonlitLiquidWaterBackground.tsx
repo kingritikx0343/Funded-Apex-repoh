@@ -73,7 +73,7 @@ export const MoonlitLiquidWaterBackground: React.FC = memo(() => {
     camera.lookAt(0, 0, 0);
 
     // 1. 120FPS Hardware-Line 3D Wireframe Wave Mesh ("Jal" Net) — Starts at the bottom (-4.65) and rises upward on scroll
-    const basePlaneGeo = new THREE.PlaneGeometry(50, 32, 28, 18);
+    const basePlaneGeo = new THREE.PlaneGeometry(54, 34, 34, 22);
     const waveWireGeo = new THREE.WireframeGeometry(basePlaneGeo);
     basePlaneGeo.dispose();
 
@@ -83,29 +83,34 @@ export const MoonlitLiquidWaterBackground: React.FC = memo(() => {
       depthTest: false,
       uniforms: {
         uTime: { value: 0 },
+        uScrollPhase: { value: 0 },
         uColorA: { value: new THREE.Color(0x38f8d2) },
         uColorB: { value: new THREE.Color(0x00e5b0) },
       },
       vertexShader: `
+        precision highp float;
         uniform float uTime;
+        uniform float uScrollPhase;
         varying float vElevation;
         void main() {
           vec3 pos = position;
-          float w1 = sin(pos.x * 0.34 + uTime * 1.35) * 0.78;
-          float w2 = cos(pos.y * 0.38 + uTime * 1.08) * 0.64;
-          float w3 = sin((pos.x + pos.y) * 0.25 - uTime * 0.92) * 0.42;
+          float phase = uTime + uScrollPhase * 0.35;
+          float w1 = sin(pos.x * 0.32 + phase * 1.15) * 0.82;
+          float w2 = cos(pos.y * 0.36 + phase * 0.92) * 0.66;
+          float w3 = sin((pos.x + pos.y) * 0.24 - phase * 0.78) * 0.44;
           pos.z += w1 + w2 + w3;
-          vElevation = clamp((pos.z + 1.8) * 0.32, 0.0, 1.0);
+          vElevation = clamp((pos.z + 1.9) * 0.31, 0.0, 1.0);
           gl_Position = projectionMatrix * modelViewMatrix * vec4(pos, 1.0);
         }
       `,
       fragmentShader: `
+        precision mediump float;
         uniform vec3 uColorA;
         uniform vec3 uColorB;
         varying float vElevation;
         void main() {
           vec3 col = mix(uColorB, uColorA, vElevation);
-          float alpha = mix(0.24, 0.44, vElevation);
+          float alpha = mix(0.24, 0.45, vElevation);
           gl_FragColor = vec4(col, alpha);
         }
       `,
@@ -323,30 +328,34 @@ export const MoonlitLiquidWaterBackground: React.FC = memo(() => {
       lastTimeMs = nowMs;
       const elapsed = (nowMs - startTimeMs) * 0.001;
 
-      // High-frequency 120Hz damping (24) for immediate, zero-lag scroll response
-      smoothScrollY = THREE.MathUtils.damp(smoothScrollY, targetScrollY, 24, delta);
-      const rawVelocity = THREE.MathUtils.clamp(targetScrollY - smoothScrollY, -2800, 2800);
-      smoothVelocity = THREE.MathUtils.damp(smoothVelocity, rawVelocity, 18, delta);
-      smoothMouseX = THREE.MathUtils.damp(smoothMouseX, targetMouseX, 12, delta);
-      smoothMouseY = THREE.MathUtils.damp(smoothMouseY, targetMouseY, 12, delta);
+      // Silky 120Hz exponential smoothing so scroll transitions & wave ripples never micro-stutter
+      const scrollLerp = 1 - Math.exp(-14 * delta);
+      const mouseLerp = 1 - Math.exp(-10 * delta);
+      const prevSmoothScrollY = smoothScrollY;
+      smoothScrollY += (targetScrollY - smoothScrollY) * scrollLerp;
+      const instantVel = THREE.MathUtils.clamp((smoothScrollY - prevSmoothScrollY) / delta, -2400, 2400);
+      smoothVelocity += (instantVel - smoothVelocity) * scrollLerp;
+      smoothMouseX += (targetMouseX - smoothMouseX) * mouseLerp;
+      smoothMouseY += (targetMouseY - smoothMouseY) * mouseLerp;
 
-      const scrollPhase = smoothScrollY * 0.0046;
-      const velNorm = Math.min(1, Math.abs(smoothVelocity) / 650);
+      const scrollPhase = smoothScrollY * 0.0044;
+      const velNorm = Math.min(1, Math.abs(smoothVelocity) / 900);
 
-      waveMat.uniforms.uTime.value = elapsed * 1.65 + smoothScrollY * 0.0045;
-      particleMat.uniforms.uTime.value = elapsed * 1.35 + smoothScrollY * 0.0024;
+      waveMat.uniforms.uTime.value = elapsed * 1.35;
+      waveMat.uniforms.uScrollPhase.value = smoothScrollY * 0.0038;
+      particleMat.uniforms.uTime.value = elapsed * 1.25 + smoothScrollY * 0.0012;
 
       // Camera parallax
-      camera.position.x = smoothMouseX * 0.58;
-      camera.position.y = 2.3 - smoothMouseY * 0.36;
-      camera.rotation.x = -smoothMouseY * 0.018 - smoothVelocity * 0.00003;
-      camera.rotation.y = -smoothMouseX * 0.022;
+      camera.position.x = smoothMouseX * 0.54;
+      camera.position.y = 2.3 - smoothMouseY * 0.34;
+      camera.rotation.x = -smoothMouseY * 0.016 - smoothVelocity * 0.000018;
+      camera.rotation.y = -smoothMouseX * 0.02;
 
-      // Wireframe "Jal" starts at the bottom (-4.65) when scrollY = 0, and smoothly rises upward as the user scrolls down
+      // Wireframe "Jal" starts at the bottom (-4.65) when scrollY = 0, and rises upward smoothly on scroll
       const scrollRiseY = Math.min(6.6, smoothScrollY * 0.0042);
-      waveMesh.position.y = -4.65 + scrollRiseY + Math.sin(elapsed * 0.9) * 0.16;
+      waveMesh.position.y = -4.65 + scrollRiseY + Math.sin(elapsed * 0.85) * 0.16;
       waveMesh.rotation.x = -Math.PI * 0.42 + Math.min(0.28, smoothScrollY * 0.00018);
-      waveMesh.rotation.z = Math.sin(scrollPhase * 0.55) * 0.06 + smoothMouseX * 0.025;
+      waveMesh.rotation.z = Math.sin(scrollPhase * 0.52) * 0.05 + smoothMouseX * 0.022;
 
       // Scroll-choreographed 3D wireframe shapes
       for (let i = 0; i < shapeNodes.length; i++) {
@@ -355,10 +364,10 @@ export const MoonlitLiquidWaterBackground: React.FC = memo(() => {
         const t = elapsed * node.floatSpeed + node.phase;
 
         const scrollOrbitX =
-          dir * Math.sin(scrollPhase * 1.08 + node.phase) * 1.7 + smoothMouseX * 0.65;
+          dir * Math.sin(scrollPhase * 1.05 + node.phase) * 1.6 + smoothMouseX * 0.6;
         const scrollOrbitY =
-          Math.sin(scrollPhase * 1.28 + node.phase * 1.3) * 2.4 * dir - smoothMouseY * 0.42;
-        const scrollDepthZ = Math.cos(scrollPhase * 0.98 + node.phase) * 1.5;
+          Math.sin(scrollPhase * 1.22 + node.phase * 1.3) * 2.2 * dir - smoothMouseY * 0.38;
+        const scrollDepthZ = Math.cos(scrollPhase * 0.94 + node.phase) * 1.4;
 
         node.group.position.x =
           node.basePos.x + Math.cos(t * 0.88) * node.orbitRadius + scrollOrbitX;
@@ -369,22 +378,22 @@ export const MoonlitLiquidWaterBackground: React.FC = memo(() => {
 
         const dynamicScale =
           node.baseScale *
-          (1 + Math.sin(scrollPhase * 1.08 + node.phase) * 0.09 + velNorm * 0.15);
+          (1 + Math.sin(scrollPhase * 1.04 + node.phase) * 0.08 + velNorm * 0.12);
         node.group.scale.setScalar(dynamicScale);
 
         node.group.rotation.x =
-          Math.sin(scrollPhase * 0.88 + node.phase) * 0.44 + smoothVelocity * 0.00115 * dir;
-        node.group.rotation.y = scrollPhase * 1.2 * dir + smoothMouseX * 0.26;
+          Math.sin(scrollPhase * 0.85 + node.phase) * 0.4 + smoothVelocity * 0.0007 * dir;
+        node.group.rotation.y = scrollPhase * 1.15 * dir + smoothMouseX * 0.24;
         node.group.rotation.z =
-          Math.cos(scrollPhase * 0.8 + node.phase) * 0.36 - smoothVelocity * 0.0008 * dir;
+          Math.cos(scrollPhase * 0.78 + node.phase) * 0.32 - smoothVelocity * 0.0005 * dir;
 
-        node.outer.rotation.x = elapsed * node.rotSpeed.x * 1.4 + scrollPhase * 1.5;
-        node.outer.rotation.y = elapsed * node.rotSpeed.y * 1.4 + scrollPhase * 1.9 * dir;
-        node.inner.rotation.x = -elapsed * node.rotSpeed.y * 1.6 - scrollPhase * 1.65;
-        node.inner.rotation.z = elapsed * node.rotSpeed.z * 1.65 + scrollPhase * 1.2 * dir;
-        node.ring.rotation.z = elapsed * 0.65 + node.phase + scrollPhase * 2.15 * dir;
+        node.outer.rotation.x = elapsed * node.rotSpeed.x * 1.35 + scrollPhase * 1.4;
+        node.outer.rotation.y = elapsed * node.rotSpeed.y * 1.35 + scrollPhase * 1.8 * dir;
+        node.inner.rotation.x = -elapsed * node.rotSpeed.y * 1.55 - scrollPhase * 1.55;
+        node.inner.rotation.z = elapsed * node.rotSpeed.z * 1.55 + scrollPhase * 1.15 * dir;
+        node.ring.rotation.z = elapsed * 0.62 + node.phase + scrollPhase * 2.0 * dir;
         node.ring.rotation.x =
-          Math.PI * 0.35 + Math.sin(elapsed * 0.88 + scrollPhase * 0.98) * 0.3;
+          Math.PI * 0.35 + Math.sin(elapsed * 0.85 + scrollPhase * 0.92) * 0.28;
       }
 
       renderer.render(scene, camera);
@@ -392,7 +401,7 @@ export const MoonlitLiquidWaterBackground: React.FC = memo(() => {
       if (isSoftwareGl) {
         timerId = window.setTimeout(() => {
           if (!disposed) frameId = requestAnimationFrame(tick);
-        }, 65);
+        }, 32);
       } else {
         frameId = requestAnimationFrame(tick);
       }

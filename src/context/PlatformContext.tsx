@@ -47,6 +47,7 @@ import {
   filterVerifiedPayouts,
   computeLivePlatformStatistics,
   resolveChallengeRulesForAccount,
+  getMinimumPhaseStartBalance,
 } from '../engine/tradingEngine';
 import {
   buildTerminalCredentialsEmailPayload,
@@ -380,6 +381,7 @@ export interface PlatformContextValue {
     email?: FundedApexEmailPayload;
   };
   payouts: PayoutRecordItem[];
+  userPayoutRequests: PayoutRecordItem[];
   verifiedPayouts: PayoutRecordItem[];
   leaderboard: LeaderboardEntry[];
   testimonials: TestimonialRecord[];
@@ -482,6 +484,8 @@ export interface PlatformContextValue {
   adminGenerateAllAccountPasscodes: () => void;
   adminUpdateUserRole: (targetUid: string, newRole: UserRole) => void;
   adminAddOrVerifyPayout: (payout: PayoutRecordItem) => void;
+  adminApprovePayoutRequest: (payoutId: string) => { ok: boolean; error?: string };
+  adminRejectPayoutRequest: (payoutId: string) => { ok: boolean; error?: string };
   adminSaveSpinReward: (reward: SpinRewardSegment) => void;
   adminAddTestimonial: (testimonial: TestimonialRecord) => void;
   adminCreateUserAndAccount: (input: AdminCreateUserInput) => {
@@ -831,6 +835,25 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     }
   });
 
+  const [payouts, setPayouts] = useState<PayoutRecordItem[]>(() => {
+    try {
+      const recoveredPayouts = readMergedLocalStorageList<PayoutRecordItem>(
+        [STORAGE_KEYS.PAYOUTS, 'funded_apex_payouts_v2', 'funded_apex_payouts_v1'],
+        'id'
+      );
+      if (recoveredPayouts.length > 0) {
+        const existingIds = new Set(recoveredPayouts.map((p) => p.id));
+        return [
+          ...recoveredPayouts,
+          ...INITIAL_PAYOUTS.filter((p) => !existingIds.has(p.id)),
+        ];
+      }
+      return INITIAL_PAYOUTS;
+    } catch {
+      return INITIAL_PAYOUTS;
+    }
+  });
+
   const [accounts, setAccounts] = useState<TradingAccountRecord[]>(() => {
     try {
       const recovered = readMergedLocalStorageList<TradingAccountRecord>(
@@ -868,6 +891,7 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
           termId = `APEX-ID-${numDigits}`;
         }
 
+        const initialRules = resolveChallengeRulesForAccount(acc);
         const accOrders = orders.filter((o) => o.accountId === acc.id);
         const closedOrdersForAcc = accOrders.filter((o) => o.status === 'CLOSED');
         const openOrdersForAcc = accOrders.filter((o) => o.status === 'OPEN');
@@ -879,19 +903,65 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
             (acc.id === 'acc-admin-50k' && acc.balance === 54250) ||
             (acc.status !== 'failed' && closedOrdersForAcc.length === 0 && acc.balance !== acc.startingBalance));
 
-        const healedStatus =
+        const realizedNet = closedOrdersForAcc.reduce((s, o) => s + (o.netPnl || 0), 0);
+        const floatingNet = openOrdersForAcc.reduce((s, o) => s + (o.netPnl || 0), 0);
+        const withdrawnGross = payouts
+          .filter((p) => p.accountId === acc.id && p.status !== 'Rejected')
+          .reduce(
+            (s, p) =>
+              s + (p.grossProfitDeducted || p.amountUsd / ((initialRules.profitSplitPct || 80) / 100)),
+            0
+          );
+
+        let healedStatus: AccountStatus =
           accOrders.length === 0 && acc.id === 'acc-admin-50k' && acc.status === 'passed'
             ? 'active'
             : acc.status;
-        const healedStep =
-          accOrders.length === 0 && acc.id === 'acc-admin-50k' ? 1 : acc.currentStep;
+        let healedStep =
+          accOrders.length === 0 && acc.id === 'acc-admin-50k' ? 1 : acc.currentStep || 1;
 
-        const realizedNet = closedOrdersForAcc.reduce((s, o) => s + (o.netPnl || 0), 0);
-        const floatingNet = openOrdersForAcc.reduce((s, o) => s + (o.netPnl || 0), 0);
+        // Strictly align evaluation account step & status with realized challenge profit rules unless breached/suspended
+        if (healedStatus !== 'failed' && healedStatus !== 'suspended' && withdrawnGross === 0) {
+          if (initialRules.challengeType === 'one_step') {
+            if (realizedNet < acc.startingBalance * 0.10) {
+              healedStatus = 'active';
+              healedStep = 1;
+            } else {
+              healedStatus = 'passed';
+              healedStep = 1;
+            }
+          } else if (initialRules.challengeType === 'two_step') {
+            if (realizedNet < acc.startingBalance * 0.08) {
+              healedStatus = 'active';
+              healedStep = 1;
+            } else if (realizedNet < acc.startingBalance * 0.13) {
+              healedStatus = 'active';
+              healedStep = 2;
+            } else {
+              healedStatus = 'passed';
+              healedStep = 2;
+            }
+          } else if (initialRules.challengeType === 'three_step') {
+            if (realizedNet < acc.startingBalance * 0.06) {
+              healedStatus = 'active';
+              healedStep = 1;
+            } else if (realizedNet < acc.startingBalance * 0.12) {
+              healedStatus = 'active';
+              healedStep = 2;
+            } else if (realizedNet < acc.startingBalance * 0.18) {
+              healedStatus = 'active';
+              healedStep = 3;
+            } else {
+              healedStatus = 'passed';
+              healedStep = 3;
+            }
+          }
+        }
+
         const cleanBalance =
           healedStatus === 'failed'
             ? acc.balance
-            : Math.round((acc.startingBalance + realizedNet) * 100) / 100;
+            : Math.round((acc.startingBalance + realizedNet - withdrawnGross) * 100) / 100;
         const cleanEquity =
           healedStatus === 'failed'
             ? cleanBalance
@@ -903,12 +973,20 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
           currentStep: healedStep,
         });
 
+        const cleanPhaseStart = getMinimumPhaseStartBalance(
+          acc.startingBalance,
+          resolvedRules.challengeType,
+          resolvedRules.currentStep,
+          isPhantomSeed ? acc.startingBalance : acc.phaseStartingBalance
+        );
+
         return {
           ...acc,
+          challengeType: resolvedRules.challengeType,
           balance: isPhantomSeed ? acc.startingBalance : cleanBalance,
           equity: isPhantomSeed ? acc.startingBalance : cleanEquity,
           freeMargin: isPhantomSeed ? acc.startingBalance : cleanEquity - (acc.usedMargin || 0),
-          phaseStartingBalance: acc.phaseStartingBalance || acc.startingBalance,
+          phaseStartingBalance: cleanPhaseStart,
           status: healedStatus,
           terminalUserId: termId,
           terminalPassword: pass,
@@ -940,15 +1018,6 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       return saved ? JSON.parse(saved) : [];
     } catch {
       return [];
-    }
-  });
-
-  const [payouts, setPayouts] = useState<PayoutRecordItem[]>(() => {
-    try {
-      const saved = localStorage.getItem(STORAGE_KEYS.PAYOUTS);
-      return saved ? JSON.parse(saved) : INITIAL_PAYOUTS;
-    } catch {
-      return INITIAL_PAYOUTS;
     }
   });
 
@@ -1191,6 +1260,40 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   }, []);
 
   const verifiedPayouts = useMemo(() => filterVerifiedPayouts(payouts), [payouts]);
+
+  const userPayoutRequests = useMemo(() => {
+    if (!user) return [];
+    const cleanEmail = user.email.toLowerCase();
+    const matchingUids = new Set(
+      allUsers.filter((u) => u.email.toLowerCase() === cleanEmail).map((u) => u.uid)
+    );
+    matchingUids.add(user.uid);
+    const ownedAccIds = new Set(
+      accounts
+        .filter(
+          (a) =>
+            matchingUids.has(a.userId) ||
+            (a.userEmail || '').toLowerCase() === cleanEmail
+        )
+        .map((a) => a.id)
+    );
+    const ownedAccNums = new Set(
+      accounts
+        .filter(
+          (a) =>
+            matchingUids.has(a.userId) ||
+            (a.userEmail || '').toLowerCase() === cleanEmail
+        )
+        .map((a) => a.accountNumber)
+    );
+    return payouts.filter((p) => {
+      if (p.userId && matchingUids.has(p.userId)) return true;
+      if (p.userEmail && p.userEmail.toLowerCase() === cleanEmail) return true;
+      if (p.accountId && ownedAccIds.has(p.accountId)) return true;
+      if (p.accountNumber && ownedAccNums.has(p.accountNumber)) return true;
+      return false;
+    });
+  }, [payouts, user, allUsers, accounts]);
 
   const liveStats = useMemo(
     () =>
@@ -1467,6 +1570,33 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
           });
           const next = Array.from(byId.values()).sort((a, b) =>
             (b.createdAt || '').localeCompare(a.createdAt || '')
+          );
+          if (next.length === prev.length && JSON.stringify(next) === JSON.stringify(prev)) {
+            return prev;
+          }
+          return next;
+        });
+      }
+      if (Array.isArray(v.payouts) && v.payouts.length > 0) {
+        setPayouts((prev) => {
+          const byId = new Map<string, PayoutRecordItem>();
+          prev.forEach((p) => {
+            if (p?.id) byId.set(p.id, p);
+          });
+          v.payouts.forEach((p: PayoutRecordItem) => {
+            if (p?.id) {
+              const existing = byId.get(p.id);
+              const existingReviewed = existing?.reviewedAt ? Date.parse(existing.reviewedAt) || 0 : 0;
+              const incomingReviewed = p.reviewedAt ? Date.parse(p.reviewedAt) || 0 : 0;
+              if (existing && existingReviewed > incomingReviewed) {
+                byId.set(p.id, existing);
+              } else {
+                byId.set(p.id, existing ? { ...existing, ...p } : p);
+              }
+            }
+          });
+          const next = Array.from(byId.values()).sort((a, b) =>
+            (b.createdAt || b.paymentDate || '').localeCompare(a.createdAt || a.paymentDate || '')
           );
           if (next.length === prev.length && JSON.stringify(next) === JSON.stringify(prev)) {
             return prev;
@@ -2321,8 +2451,12 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
         const rules = resolveChallengeRulesForAccount(acc);
         const withdrawnGross = payouts
-          .filter((p) => p.accountId === acc.id)
-          .reduce((s, p) => s + p.amountUsd / ((rules.profitSplitPct || 80) / 100), 0);
+          .filter((p) => p.accountId === acc.id && p.status !== 'Rejected')
+          .reduce(
+            (s, p) =>
+              s + (p.grossProfitDeducted || p.amountUsd / ((rules.profitSplitPct || 80) / 100)),
+            0
+          );
         const nextBalance =
           Math.round(
             (acc.startingBalance +
@@ -3815,8 +3949,12 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         const closedForAcc = nextOrders.filter((o) => o.accountId === account.id && o.status === 'CLOSED');
         const rules = resolveChallengeRulesForAccount(account);
         const withdrawnGross = payouts
-          .filter((p) => p.accountId === account.id)
-          .reduce((s, p) => s + p.amountUsd / ((rules.profitSplitPct || 80) / 100), 0);
+          .filter((p) => p.accountId === account.id && p.status !== 'Rejected')
+          .reduce(
+            (s, p) =>
+              s + (p.grossProfitDeducted || p.amountUsd / ((rules.profitSplitPct || 80) / 100)),
+            0
+          );
         const reconciledBal =
           Math.round(
             (account.startingBalance +
@@ -4064,8 +4202,12 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         );
         const rules = resolveChallengeRulesForAccount(acc);
         const withdrawnGross = payouts
-          .filter((p) => p.accountId === acc.id)
-          .reduce((s, p) => s + p.amountUsd / ((rules.profitSplitPct || 80) / 100), 0);
+          .filter((p) => p.accountId === acc.id && p.status !== 'Rejected')
+          .reduce(
+            (s, p) =>
+              s + (p.grossProfitDeducted || p.amountUsd / ((rules.profitSplitPct || 80) / 100)),
+            0
+          );
         const nextBal =
           Math.round(
             (acc.startingBalance +
@@ -4243,18 +4385,44 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       if (!user) {
         return { ok: false, error: 'Please sign in to request a payout.' };
       }
-      const account = accounts.find((a) => a.id === input.accountId && a.userId === user.uid);
-      if (!account) {
+      const rawAccount =
+        userAccounts.find((a) => a.id === input.accountId) ||
+        accounts.find((a) => a.id === input.accountId);
+      if (!rawAccount) {
         return { ok: false, error: 'Selected trading account not found.' };
       }
-      const openForAcc = orders.filter((o) => o.accountId === account.id && o.status === 'OPEN');
+      const openForAcc = orders.filter((o) => o.accountId === rawAccount.id && o.status === 'OPEN');
       if (openForAcc.length > 0) {
         return {
           ok: false,
           error: 'Please close all open positions on this account before requesting a profit payout.',
         };
       }
-      const closedForAcc = orders.filter((o) => o.accountId === account.id && o.status === 'CLOSED');
+      const closedForAcc = orders.filter((o) => o.accountId === rawAccount.id && o.status === 'CLOSED');
+      const rules = resolveChallengeRulesForAccount(rawAccount);
+      const withdrawnGross = payouts
+        .filter((p) => p.accountId === rawAccount.id && p.status !== 'Rejected')
+        .reduce(
+          (s, p) =>
+            s + (p.grossProfitDeducted || p.amountUsd / ((rules.profitSplitPct || 80) / 100)),
+          0
+        );
+      const syncedBalance =
+        rawAccount.status === 'failed'
+          ? rawAccount.balance
+          : Math.round(
+              (rawAccount.startingBalance +
+                closedForAcc.reduce((s, o) => s + (o.netPnl || 0), 0) -
+                withdrawnGross) *
+                100
+            ) / 100;
+
+      const account: TradingAccountRecord = {
+        ...rawAccount,
+        balance: syncedBalance,
+        equity: syncedBalance,
+        freeMargin: syncedBalance,
+      };
 
       const eligibility = evaluateAccountPayoutEligibility(account, openForAcc, closedForAcc);
       if (!eligibility.eligible) {
@@ -4291,53 +4459,196 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       const grossProfitDeducted =
         Math.round((requestedUsd / (eligibility.profitSplitPct / 100)) * 100) / 100;
 
+      const nextBal = Math.max(
+        account.startingBalance,
+        Math.round((account.balance - grossProfitDeducted) * 100) / 100
+      );
+      const updatedAccount: TradingAccountRecord = {
+        ...account,
+        balance: nextBal,
+        equity: nextBal,
+        freeMargin: nextBal,
+        updatedAt: new Date().toISOString(),
+      };
+
       setAccounts((prev) =>
-        prev.map((a) => {
-          if (a.id !== account.id) return a;
-          const nextBal = Math.max(
-            a.startingBalance,
-            Math.round((a.balance - grossProfitDeducted) * 100) / 100
-          );
-          return {
-            ...a,
-            balance: nextBal,
-            equity: nextBal,
-            freeMargin: nextBal,
-            updatedAt: new Date().toISOString(),
-          };
-        })
+        prev.map((a) => (a.id === account.id ? updatedAccount : a))
       );
 
       const newPayout: PayoutRecordItem = {
-        id: `payout-${Date.now()}`,
+        id: `payout-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
         traderName: user.fullName,
         username: `@${user.fullName.toLowerCase().replace(/[^a-z0-9]/g, '_').slice(0, 14)}`,
+        userEmail: user.email.toLowerCase(),
+        userId: user.uid,
         amountUsd: requestedUsd,
+        grossProfitDeducted,
+        profitSplitPct: eligibility.profitSplitPct,
         currency: input.method,
-        status: 'Verified',
+        status: 'Pending',
         paymentDate: new Date().toISOString().slice(0, 10),
         accountSize: account.accountSize,
         programType: account.challengeTitle,
         accountId: account.id,
         accountNumber: account.accountNumber,
         destination: input.destination.trim(),
+        isTraderRequest: true,
+        createdAt: new Date().toISOString(),
       };
 
       setPayouts((prev) => [newPayout, ...prev]);
+
+      // Immediately sync payout request and updated account to server vault & Firestore so Admin Panel updates in real time
+      fetch('/api/vault/payout-request', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newPayout),
+      }).catch(() => {});
+
+      fetch('/api/vault/save', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          payouts: [newPayout],
+          accounts: [updatedAccount],
+        }),
+      }).catch(() => {});
+
+      void safeFirestoreWrite('payouts', newPayout.id, newPayout);
+      void safeFirestoreWrite('trading_accounts', updatedAccount.id, updatedAccount);
+      void safeFirestoreWrite('accounts', updatedAccount.id, updatedAccount);
+
       recordAdminLog(
         'TRADER_PAYOUT_REQUEST',
         newPayout.id,
-        `Account #${account.accountNumber} (${account.challengeTitle}): Disbursed $${requestedUsd.toFixed(2)} via ${input.method} to ${input.destination.trim()}`
+        `Account #${account.accountNumber} (${account.challengeTitle}): Trader ${user.email} requested $${requestedUsd.toFixed(2)} (${eligibility.profitSplitPct}% split) via ${input.method} -> ${input.destination.trim()}`
       );
       pushNotification(
-        'Payout Request Approved & Dispatched ✓',
-        `Withdrew $${requestedUsd.toFixed(2)} (${eligibility.profitSplitPct}% split) from Account #${account.accountNumber} via ${input.method}.`,
+        'Payout Request Submitted to Admin Panel ✓',
+        `Submitted $${requestedUsd.toFixed(2)} (${eligibility.profitSplitPct}% split) withdrawal from Account #${account.accountNumber} via ${input.method}. Synced to Admin Panel for verification!`,
         'success'
       );
 
       return { ok: true, payout: newPayout, eligibility };
     },
-    [user, accounts, orders, recordAdminLog, pushNotification]
+    [user, userAccounts, accounts, orders, payouts, safeFirestoreWrite, recordAdminLog, pushNotification]
+  );
+
+  const adminApprovePayoutRequest = useCallback(
+    (payoutId: string) => {
+      if (!user || !['admin', 'super_admin'].includes(user.role)) {
+        return { ok: false, error: 'Unauthorized: Admin role required.' };
+      }
+      const target = payouts.find((p) => p.id === payoutId);
+      if (!target) {
+        return { ok: false, error: 'Payout request not found.' };
+      }
+      const verifiedPayout: PayoutRecordItem = {
+        ...target,
+        status: 'Verified',
+        reviewedAt: new Date().toISOString(),
+      };
+      setPayouts((prev) => prev.map((p) => (p.id === payoutId ? verifiedPayout : p)));
+      void safeFirestoreWrite('payouts', verifiedPayout.id, verifiedPayout);
+      fetch('/api/vault/save', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ payouts: [verifiedPayout] }),
+      }).catch(() => {});
+
+      if (target.userEmail) {
+        dispatchFundedApexEmail(
+          buildCustomManualEmailPayload({
+            recipientEmail: target.userEmail,
+            recipientName: target.traderName,
+            subject: `Payout Approved & Disbursed — $${target.amountUsd.toLocaleString('en-US', { minimumFractionDigits: 2 })} USD (#${target.accountNumber || 'FUNDED'})`,
+            headline: 'Your Profit Payout Has Been Verified & Disbursed',
+            subheadline: `Settlement processed via ${target.currency}`,
+            badgeText: 'PAYOUT VERIFIED ✓',
+            badgeColor: '#00FFA3',
+            bodyTextOrHtml: `Congratulations ${target.traderName},\n\nYour performance profit withdrawal of $${target.amountUsd.toLocaleString('en-US', { minimumFractionDigits: 2 })} USD from Account #${target.accountNumber || 'FA-FUNDED'} (${target.programType}) has been approved and verified by the FUNDED APEX Treasury Desk.\n\nDestination Wallet / Account: ${target.destination || 'On-File Settlement Address'}`,
+            ctaLabel: 'View Verified Payout Certificate',
+            ctaUrl: 'https://fundedapex.com/?page=dashboard',
+          })
+        );
+      }
+
+      recordAdminLog(
+        'APPROVE_TRADER_PAYOUT',
+        verifiedPayout.id,
+        `Approved & Verified $${verifiedPayout.amountUsd.toFixed(2)} payout for ${verifiedPayout.traderName} (${verifiedPayout.userEmail || verifiedPayout.username}) on Account #${verifiedPayout.accountNumber || 'N/A'}`
+      );
+      pushNotification(
+        'Trader Payout Approved & Verified ✓',
+        `Verified $${verifiedPayout.amountUsd.toFixed(2)} payout for ${verifiedPayout.traderName} (#${verifiedPayout.accountNumber || 'Funded'}).`,
+        'success'
+      );
+      return { ok: true };
+    },
+    [user, payouts, safeFirestoreWrite, dispatchFundedApexEmail, recordAdminLog, pushNotification]
+  );
+
+  const adminRejectPayoutRequest = useCallback(
+    (payoutId: string) => {
+      if (!user || !['admin', 'super_admin'].includes(user.role)) {
+        return { ok: false, error: 'Unauthorized: Admin role required.' };
+      }
+      const target = payouts.find((p) => p.id === payoutId);
+      if (!target) {
+        return { ok: false, error: 'Payout request not found.' };
+      }
+      const rejectedPayout: PayoutRecordItem = {
+        ...target,
+        status: 'Rejected',
+        reviewedAt: new Date().toISOString(),
+      };
+      setPayouts((prev) => prev.map((p) => (p.id === payoutId ? rejectedPayout : p)));
+      void safeFirestoreWrite('payouts', rejectedPayout.id, rejectedPayout);
+
+      // Refund the deducted gross profit back to the trader's account balance
+      let refundedAcc: TradingAccountRecord | undefined;
+      if (target.accountId && target.status !== 'Rejected') {
+        const refundAmount =
+          target.grossProfitDeducted ||
+          Math.round((target.amountUsd / ((target.profitSplitPct || 80) / 100)) * 100) / 100;
+        setAccounts((prev) =>
+          prev.map((a) => {
+            if (a.id !== target.accountId) return a;
+            const restoredBal = Math.round((a.balance + refundAmount) * 100) / 100;
+            refundedAcc = {
+              ...a,
+              balance: restoredBal,
+              equity: restoredBal,
+              freeMargin: restoredBal,
+              updatedAt: new Date().toISOString(),
+            };
+            return refundedAcc;
+          })
+        );
+      }
+
+      fetch('/api/vault/save', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          payouts: [rejectedPayout],
+          ...(refundedAcc ? { accounts: [refundedAcc] } : {}),
+        }),
+      }).catch(() => {});
+
+      recordAdminLog(
+        'REJECT_TRADER_PAYOUT',
+        rejectedPayout.id,
+        `Rejected $${rejectedPayout.amountUsd.toFixed(2)} payout request for ${rejectedPayout.traderName} (#${rejectedPayout.accountNumber || 'N/A'}) and refunded balance`
+      );
+      pushNotification(
+        'Payout Request Rejected & Balance Refunded',
+        `Marked payout request for ${rejectedPayout.traderName} as Rejected and restored profit to Account #${rejectedPayout.accountNumber || ''}.`,
+        'warning'
+      );
+      return { ok: true };
+    },
+    [user, payouts, safeFirestoreWrite, recordAdminLog, pushNotification]
   );
 
   const cancelPendingOrder = useCallback(
@@ -4717,6 +5028,12 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         const exists = prev.some((p) => p.id === payout.id);
         return exists ? prev.map((p) => (p.id === payout.id ? payout : p)) : [payout, ...prev];
       });
+      void safeFirestoreWrite('payouts', payout.id, payout);
+      fetch('/api/vault/save', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ payouts: [payout] }),
+      }).catch(() => {});
       recordAdminLog(
         'VERIFY_PAYOUT',
         payout.id,
@@ -4724,7 +5041,7 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       );
       pushNotification('Payout Registry Updated', `Saved payout record for ${payout.username}.`, 'success');
     },
-    [user, recordAdminLog, pushNotification]
+    [user, safeFirestoreWrite, recordAdminLog, pushNotification]
   );
 
   const adminSaveSpinReward = useCallback(
@@ -5603,6 +5920,7 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         adminSendEmailNotification,
         adminSendManualEmail,
         payouts,
+        userPayoutRequests,
         verifiedPayouts,
         leaderboard,
         testimonials,
@@ -5640,6 +5958,8 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         adminGenerateAllAccountPasscodes,
         adminUpdateUserRole,
         adminAddOrVerifyPayout,
+        adminApprovePayoutRequest,
+        adminRejectPayoutRequest,
         adminSaveSpinReward,
         adminAddTestimonial,
         adminCreateUserAndAccount,

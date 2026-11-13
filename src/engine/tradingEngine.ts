@@ -870,6 +870,7 @@ export function resolveChallengeRulesForAccount(
     Pick<
       TradingAccountRecord,
       | 'challengeId'
+      | 'challengeTitle'
       | 'challengeType'
       | 'currentStep'
       | 'totalSteps'
@@ -883,64 +884,80 @@ export function resolveChallengeRulesForAccount(
     >
   >
 ): ResolvedChallengeRules {
-  const chType: ChallengeType = account.challengeType || 'two_step';
+  const idLower = (account.challengeId || '').toLowerCase();
+  const titleLower = (account.challengeTitle || '').toLowerCase();
+
+  let chType: ChallengeType = account.challengeType || 'two_step';
+  if (
+    account.challengeType === 'instant' ||
+    idLower.startsWith('instant') ||
+    titleLower.includes('instant')
+  ) {
+    chType = 'instant';
+  } else if (
+    account.challengeType === 'one_step' ||
+    idLower.startsWith('one-step') ||
+    idLower.startsWith('one_step') ||
+    titleLower.includes('one step') ||
+    titleLower.includes('1-step')
+  ) {
+    chType = 'one_step';
+  } else if (
+    account.challengeType === 'three_step' ||
+    idLower.startsWith('three-step') ||
+    idLower.startsWith('three_step') ||
+    titleLower.includes('three step') ||
+    titleLower.includes('3-step')
+  ) {
+    chType = 'three_step';
+  } else if (
+    account.challengeType === 'two_step' ||
+    idLower.startsWith('two-step') ||
+    idLower.startsWith('two_step') ||
+    titleLower.includes('two step') ||
+    titleLower.includes('2-step')
+  ) {
+    chType = 'two_step';
+  }
+
+  // Strictly enforce canonical totalSteps per Challenge Program
   const totalSteps =
-    account.totalSteps !== undefined
-      ? account.totalSteps
-      : chType === 'instant'
+    chType === 'instant'
       ? 0
       : chType === 'one_step'
       ? 1
       : chType === 'two_step'
       ? 2
       : 3;
-  const currentStep = Math.max(1, account.currentStep || 1);
 
-  const defaultDailyDd =
+  const currentStep =
+    totalSteps === 0
+      ? 1
+      : Math.min(totalSteps, Math.max(1, account.currentStep || 1));
+
+  // Strictly enforce canonical Daily Drawdown & Max Drawdown per Challenge Program
+  const dailyDrawdownPct =
     chType === 'instant' ? 3 : chType === 'one_step' ? 4 : 5;
-  const defaultMaxDd =
+  const maxDrawdownPct =
     chType === 'instant' || chType === 'one_step'
       ? 6
       : chType === 'two_step'
       ? 10
       : 12;
 
-  let defaultTargetPct = 8;
+  // Strictly enforce canonical Profit Target % per Challenge Program & Step
+  let profitTargetPct = 8;
   if (chType === 'instant') {
-    defaultTargetPct = 0;
+    profitTargetPct = 0;
   } else if (chType === 'one_step') {
-    defaultTargetPct = 10;
+    profitTargetPct = 10;
   } else if (chType === 'two_step') {
-    defaultTargetPct = currentStep >= 2 ? 5 : 8;
+    profitTargetPct = currentStep >= 2 ? 5 : 8;
   } else if (chType === 'three_step') {
-    defaultTargetPct = 6;
+    profitTargetPct = 6;
   }
 
-  const dailyDrawdownPct =
-    account.dailyDrawdownPct && account.dailyDrawdownPct > 0
-      ? account.dailyDrawdownPct
-      : defaultDailyDd;
-  const maxDrawdownPct =
-    account.maxDrawdownPct && account.maxDrawdownPct > 0
-      ? account.maxDrawdownPct
-      : defaultMaxDd;
-
-  // Instant Funding is direct-funded from Day 1 and has NO profit target (0%)
-  const profitTargetPct =
-    chType === 'instant'
-      ? 0
-      : chType === 'two_step' && currentStep === 2
-      ? 5
-      : account.profitTargetPct && account.profitTargetPct > 0
-      ? account.profitTargetPct
-      : defaultTargetPct;
-
-  const minTradingDays =
-    account.minTradingDays && account.minTradingDays > 0
-      ? account.minTradingDays
-      : chType === 'instant'
-      ? 5
-      : 3;
+  const minTradingDays = chType === 'instant' ? 0 : 3;
 
   const leverage =
     account.leverage && account.leverage > 0
@@ -952,15 +969,13 @@ export function resolveChallengeRulesForAccount(
       : 100;
 
   const profitSplitPct =
-    account.profitSplitPct && account.profitSplitPct > 0
-      ? account.profitSplitPct
-      : chType === 'instant'
+    chType === 'instant'
       ? 80
       : chType === 'one_step'
       ? 85
       : 90;
 
-  // 15% Consistency Rule applies to payout eligibility
+  // 15% Consistency Rule applies exclusively to Instant Funding payouts
   const consistencyRulePct = chType === 'instant' ? 15 : 0;
 
   return {
@@ -1040,6 +1055,41 @@ export interface AccountPayoutEligibility {
   reason: string;
 }
 
+export function getMinimumPhaseStartBalance(
+  startingBalance: number,
+  challengeType: ChallengeType,
+  currentStep: number,
+  recordedPhaseStart?: number
+): number {
+  let minRequiredStart = startingBalance;
+  if (challengeType === 'two_step' && currentStep >= 2) {
+    // Step 1 required +8%, so Step 2 baseline is at least startingBalance * 1.08
+    minRequiredStart = Math.round(startingBalance * 1.08 * 100) / 100;
+  } else if (challengeType === 'three_step') {
+    if (currentStep === 2) {
+      // Step 1 required +6%
+      minRequiredStart = Math.round(startingBalance * 1.06 * 100) / 100;
+    } else if (currentStep >= 3) {
+      // Step 1 (+6%) + Step 2 (+6%) = +12%
+      minRequiredStart = Math.round(startingBalance * 1.12 * 100) / 100;
+    }
+  }
+  if (recordedPhaseStart && recordedPhaseStart >= minRequiredStart) {
+    return Math.round(recordedPhaseStart * 100) / 100;
+  }
+  return minRequiredStart;
+}
+
+export function getRequiredCumulativeEvaluationProfitUsd(
+  startingBalance: number,
+  challengeType: ChallengeType
+): number {
+  if (challengeType === 'instant') return 0;
+  if (challengeType === 'one_step') return Math.round(startingBalance * 0.10 * 100) / 100;
+  if (challengeType === 'two_step') return Math.round(startingBalance * 0.13 * 100) / 100; // 8% Step 1 + 5% Step 2
+  return Math.round(startingBalance * 0.18 * 100) / 100; // 6% + 6% + 6% for 3-Step
+}
+
 export function evaluateAccountRiskMetrics(
   account: TradingAccountRecord,
   openOrders: TradeOrderRecord[]
@@ -1113,10 +1163,12 @@ export function evaluateAccountRiskMetrics(
     Math.round((maxLossLimitUsd - overallDropUsd) * 100) / 100
   );
 
-  const phaseStartBalance =
-    account.phaseStartingBalance && account.phaseStartingBalance >= account.startingBalance
-      ? account.phaseStartingBalance
-      : account.startingBalance;
+  const phaseStartBalance = getMinimumPhaseStartBalance(
+    account.startingBalance,
+    rules.challengeType,
+    rules.currentStep,
+    account.phaseStartingBalance
+  );
 
   const dailyBreachLevelUsd =
     Math.round((Math.max(account.startingBalance, currentDailyStart) - dailyLossLimitUsd) * 100) / 100;
@@ -1135,6 +1187,10 @@ export function evaluateAccountRiskMetrics(
   );
 
   const netGainUsd = Math.max(0, Math.round((equity - phaseStartBalance) * 100) / 100);
+  const realizedStepGainUsd = Math.max(
+    0,
+    Math.round((account.balance - phaseStartBalance) * 100) / 100
+  );
   const profitProgressPct =
     profitTargetUsd > 0
       ? Math.min(100, Math.round((netGainUsd / profitTargetUsd) * 10000) / 100)
@@ -1206,46 +1262,54 @@ export function evaluateAccountPayoutEligibility(
   openOrders: TradeOrderRecord[] = [],
   closedOrders: TradeOrderRecord[] = []
 ): AccountPayoutEligibility {
+  const rules = resolveChallengeRulesForAccount(account);
   const metrics = evaluateAccountRiskMetrics(account, openOrders);
-  const totalSteps =
-    account.totalSteps ??
-    (account.challengeType === 'instant'
-      ? 0
-      : account.challengeType === 'one_step'
-      ? 1
-      : account.challengeType === 'two_step'
-      ? 2
-      : 3);
+  const totalSteps = rules.totalSteps;
   const currentStep =
-    account.currentStep ??
-    (account.status === 'passed' || account.status === 'completed' ? totalSteps : 1);
+    account.status === 'passed' || account.status === 'completed'
+      ? Math.max(rules.currentStep, totalSteps || 1)
+      : rules.currentStep;
+
+  const strictlyOpenOrders = openOrders.filter(
+    (o) =>
+      o.status === 'OPEN' &&
+      String(o.status).toLowerCase() !== 'closed' &&
+      !o.closeTime
+  );
+  const hasOpenPositions = strictlyOpenOrders.length > 0;
 
   const realizedProfitUsd = Math.round((account.balance - account.startingBalance) * 100) / 100;
   const effectiveEquityProfitUsd = Math.round((metrics.equity - account.startingBalance) * 100) / 100;
   const netProfitUsd = Math.max(0, Math.min(realizedProfitUsd, effectiveEquityProfitUsd));
   const profitSplitPct =
-    account.profitSplitPct ??
-    (account.challengeType === 'instant'
-      ? 80
-      : account.challengeType === 'one_step'
-      ? 85
-      : 90);
+    account.profitSplitPct && account.profitSplitPct > 0
+      ? account.profitSplitPct
+      : rules.profitSplitPct;
 
   const isBreached =
     account.status === 'failed' ||
     account.status === 'suspended' ||
     metrics.nextStatus === 'failed';
 
-  const isInstant = account.challengeType === 'instant';
+  const isInstant = rules.challengeType === 'instant';
   const isEvaluationPassed =
+    !isInstant &&
     (account.status === 'passed' || account.status === 'completed') &&
-    (totalSteps <= 1 || currentStep >= totalSteps);
+    currentStep >= totalSteps;
 
-  // 15% Consistency Rule in Payout Section
+  // 15% Consistency Rule in Payout Section (Applies strictly to Instant Funding)
   const consistencyRulePct = isInstant ? 15 : 0;
-  const winningClosedForAcc = closedOrders.filter(
-    (o) => o.accountId === account.id && o.status === 'CLOSED' && o.netPnl > 0
+  const closedForAcc = closedOrders.filter(
+    (o) =>
+      o.accountId === account.id &&
+      (o.status === 'CLOSED' || String(o.status).toLowerCase() === 'closed')
   );
+  const winningClosedForAcc = closedForAcc.filter((o) => o.netPnl > 0);
+  const totalClosedRealizedProfitUsd = Math.max(
+    netProfitUsd,
+    Math.round(closedForAcc.reduce((s, o) => s + (o.netPnl || 0), 0) * 100) / 100
+  );
+
   const maxSingleTradeProfitUsd =
     winningClosedForAcc.length > 0
       ? Math.round(Math.max(...winningClosedForAcc.map((o) => o.netPnl)) * 100) / 100
@@ -1255,8 +1319,8 @@ export function evaluateAccountPayoutEligibility(
       ? Math.round((maxSingleTradeProfitUsd / 0.15) * 100) / 100
       : 0;
   const highestTradeSharePct =
-    netProfitUsd > 0 && maxSingleTradeProfitUsd > 0
-      ? Math.round((maxSingleTradeProfitUsd / netProfitUsd) * 10000) / 100
+    totalClosedRealizedProfitUsd > 0 && maxSingleTradeProfitUsd > 0
+      ? Math.round((maxSingleTradeProfitUsd / totalClosedRealizedProfitUsd) * 10000) / 100
       : 0;
   const isConsistencyViolated =
     isInstant &&
@@ -1267,42 +1331,50 @@ export function evaluateAccountPayoutEligibility(
   const isStepCompleted = isInstant || isEvaluationPassed;
   const hasPositiveProfit = netProfitUsd > 0;
   const eligible =
-    !isBreached && isStepCompleted && hasPositiveProfit && !isConsistencyViolated;
+    !isBreached &&
+    !hasOpenPositions &&
+    isStepCompleted &&
+    hasPositiveProfit &&
+    !isConsistencyViolated;
   const maxWithdrawableUsd = eligible
     ? Math.round(netProfitUsd * (profitSplitPct / 100) * 100) / 100
     : 0;
 
-  let reason = 'Account is eligible for instant profit payout withdrawal.';
+  let reason = 'Account has satisfied all challenge rules and is eligible for profit payout withdrawal.';
   if (isBreached) {
     reason =
       metrics.breachReason ||
       account.breachReason ||
-      'Account is breached due to Daily/Maximum Drawdown violation. Terminal password has been removed and payouts are permanently disabled.';
+      'Account is breached due to Daily/Maximum Drawdown violation. Terminal password has been revoked and payouts are permanently disabled.';
+  } else if (hasOpenPositions) {
+    reason = `Open Position Active: Please close all ${strictlyOpenOrders.length} open position(s) in the terminal before requesting a payout.`;
   } else if (!isStepCompleted) {
-    if (account.challengeType === 'two_step') {
+    if (rules.challengeType === 'two_step') {
       const step1TargetUsd = Math.round(account.startingBalance * 0.08 * 100) / 100;
       const step2TargetUsd = Math.round(account.startingBalance * 0.05 * 100) / 100;
       if (currentStep <= 1) {
-        reason = `2-Step Challenge Locked (Step 1 of 2 in progress): Pass Step 1 (+8% / +$${step1TargetUsd.toLocaleString()}) and Step 2 (+5% / +$${step2TargetUsd.toLocaleString()}) to become Funded and unlock Payouts.`;
+        reason = `2-Step Challenge Locked (Step 1 of 2 Active): Pass Step 1 (+8% / +$${step1TargetUsd.toLocaleString()}) and Step 2 (+5% / +$${step2TargetUsd.toLocaleString()}) while staying within 5% Daily & 10% Max Drawdown to become Funded and unlock Payouts.`;
       } else {
-        reason = `2-Step Challenge Locked (Step 2 of 2 in progress — Step 1 Passed ✓): Reach the Step 2 profit target (+5% / +$${step2TargetUsd.toLocaleString()}) to pass evaluation and unlock Funded Payouts.`;
+        reason = `2-Step Challenge Locked (Step 2 of 2 Active — Step 1 Passed ✓): Reach the Step 2 profit target (+5% / +$${step2TargetUsd.toLocaleString()}) above your Step 2 baseline ($${getMinimumPhaseStartBalance(account.startingBalance, 'two_step', 2, account.phaseStartingBalance).toLocaleString()}) to become Funded and unlock Payouts.`;
       }
-    } else if (account.challengeType === 'three_step') {
-      reason = `3-Step Challenge Locked (Step ${currentStep} of 3 in progress): Pass all 3 evaluation steps (+6% each) to become Funded and unlock Payouts.`;
+    } else if (rules.challengeType === 'three_step') {
+      const stepTargetUsd = Math.round(account.startingBalance * 0.06 * 100) / 100;
+      reason = `3-Step Challenge Locked (Step ${currentStep} of 3 Active): Pass all 3 evaluation steps (+6% / +$${stepTargetUsd.toLocaleString()} per step) while staying within 5% Daily & 12% Max Drawdown to become Funded and unlock Payouts.`;
     } else {
-      reason = `1-Step Challenge Locked (Evaluation in progress): Reach the +${account.profitTargetPct}% profit target ($${metrics.profitTargetUsd.toLocaleString()}) to pass and unlock Payouts.`;
+      const step1TargetUsd = Math.round(account.startingBalance * 0.10 * 100) / 100;
+      reason = `1-Step Challenge Locked (Evaluation in progress): Reach the +10% profit target (+$${step1TargetUsd.toLocaleString()}) while staying within 4% Daily & 6% Max Drawdown to pass evaluation and unlock Funded Payouts.`;
     }
   } else if (!hasPositiveProfit) {
-    reason = `No positive P&L available to withdraw (Current Realized P&L: ${realizedProfitUsd >= 0 ? '+' : ''}$${realizedProfitUsd.toFixed(2)}). Generate trading profit above $${account.startingBalance.toLocaleString()} starting capital to request a payout.`;
+    reason = `No positive realized P&L available to withdraw (Current Realized P&L: ${realizedProfitUsd >= 0 ? '+' : ''}$${realizedProfitUsd.toFixed(2)}). Generate trading profit above $${account.startingBalance.toLocaleString()} starting capital to request a payout.`;
   } else if (isConsistencyViolated) {
-    reason = `15% Consistency Rule: Highest single trade profit (+$${maxSingleTradeProfitUsd.toFixed(2)}) is ${highestTradeSharePct.toFixed(1)}% of total profit (+$${netProfitUsd.toFixed(2)}), exceeding the 15% consistency limit. Required total profit to unlock payout: +$${requiredConsistentProfitUsd.toFixed(2)}.`;
+    reason = `Instant Funding 15% Consistency Rule: Highest single trade profit (+$${maxSingleTradeProfitUsd.toFixed(2)}) is ${highestTradeSharePct.toFixed(1)}% of total profit (+$${totalClosedRealizedProfitUsd.toFixed(2)}), exceeding the 15% consistency limit. Required total profit to unlock payout: +$${requiredConsistentProfitUsd.toFixed(2)}.`;
   }
 
   return {
     accountId: account.id,
     accountNumber: account.accountNumber,
     challengeTitle: account.challengeTitle,
-    challengeType: account.challengeType,
+    challengeType: rules.challengeType,
     status: metrics.nextStatus === 'failed' ? 'failed' : account.status,
     currentStep,
     totalSteps,
@@ -1369,7 +1441,11 @@ export interface PayoutRecordItem {
   id: string;
   traderName: string;
   username: string;
+  userEmail?: string;
+  userId?: string;
   amountUsd: number;
+  grossProfitDeducted?: number;
+  profitSplitPct?: number;
   currency: string;
   status: 'Verified' | 'Pending' | 'Rejected';
   paymentDate: string;
@@ -1378,6 +1454,9 @@ export interface PayoutRecordItem {
   accountId?: string;
   accountNumber?: string;
   destination?: string;
+  isTraderRequest?: boolean;
+  createdAt?: string;
+  reviewedAt?: string;
 }
 
 export function filterVerifiedPayouts(payouts: PayoutRecordItem[]): PayoutRecordItem[] {
