@@ -201,8 +201,6 @@ const AppRouter: React.FC = () => {
       transition={{ type: 'tween', duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
     >
       <div
-        data-interactive-container
-        style={GPU_TRANSITION_STYLE}
         className={`min-h-screen flex flex-col bg-transparent text-[#FFFFFF] relative ${
           isTerminal ? 'h-[100dvh] w-screen overflow-hidden' : 'overflow-x-hidden'
         }`}
@@ -221,8 +219,6 @@ const AppRouter: React.FC = () => {
 
         <motion.div
           key={viewSectionKey}
-          data-interactive-container
-          style={GPU_TRANSITION_STYLE}
           initial={false}
           animate={{ opacity: 1, y: 0, scale: 1 }}
           transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}

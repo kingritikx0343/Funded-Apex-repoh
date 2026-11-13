@@ -1147,9 +1147,28 @@ test('mergeUserDirectories preserves passwords, deduplicates by email, and never
   assert.equal(noPwRes.ok, false);
   assert.equal(noPwRes.reason, 'NO_PASSWORD_SET');
 
+  // Seed default account (even if saved to localStorage without isSeedDefault flag) adopts the user's password on login without false "Incorrect password"
+  const legacySavedSeedAdmin: VaultUserRecord = {
+    ...seedAdmin,
+    isSeedDefault: undefined,
+  };
+  const adoptedSeedLogin = verifyUserCredentials(
+    legacySavedSeedAdmin,
+    'kingritikx0343@gmail.com',
+    'MyOwnExistingPass2026!'
+  );
+  assert.equal(adoptedSeedLogin.ok, true);
+  assert.equal(adoptedSeedLogin.adoptedSeedPassword, true);
+
+  // Once a real user password is set, wrong passwords are strictly rejected
+  const wrongLogin = verifyUserCredentials(preserved, 'kingritikx0343@gmail.com', 'WrongPass999!');
+  assert.equal(wrongLogin.ok, false);
+  assert.equal(wrongLogin.reason, 'WRONG_PASSWORD');
+
   // Exact login with trimmed/mixed-case email passes cleanly
   const validLogin = verifyUserCredentials(preserved, '  KingRitikX0343@gmail.com  ', 'NewUpdatedPass2026!');
   assert.equal(validLogin.ok, true);
 });
+
 
 

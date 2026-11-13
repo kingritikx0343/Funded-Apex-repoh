@@ -24,6 +24,7 @@ import {
   googleProvider,
   popupResolver,
   hasWorkingAuthToken,
+  deterministicUserDocId,
 } from '../lib/firebase';
 import {
   INSTRUMENTS,
@@ -86,6 +87,7 @@ import {
 import {
   mergeUserDirectories,
   mergeUserProfileRecords,
+  isSeedPasswordRecord,
 } from '../engine/userVault';
 
 export type PageRoute =
@@ -400,7 +402,14 @@ export interface PlatformContextValue {
   // Auth operations
   loginWithEmail: (email: string, password: string, requestAdminWorkspace?: boolean) => Promise<void>;
   registerWithEmail: (input: { fullName: string; email: string; country: string; password: string; referralCode?: string }) => Promise<void>;
-  loginWithGoogle: (requestAdminWorkspace?: boolean) => Promise<void>;
+  loginWithGoogle: (requestAdminWorkspace?: boolean, emailHint?: string) => Promise<void>;
+  completeGoogleSignInWithProfile: (input: {
+    email: string;
+    fullName?: string;
+    avatarUrl?: string;
+    uid?: string;
+    requestAdminWorkspace?: boolean;
+  }) => Promise<void>;
   sendPasswordReset: (email: string) => Promise<void>;
   resendVerificationEmail: () => Promise<void>;
   logout: () => Promise<void>;
@@ -563,6 +572,98 @@ const STORAGE_KEYS = {
   EMAIL_NOTIFICATIONS: 'funded_apex_email_notifications_v1',
 };
 
+const INITIAL_DEFAULT_ACCOUNTS: TradingAccountRecord[] = [
+  {
+    id: 'acc-owner-100k',
+    accountNumber: 'FA-902841',
+    userId: 'admin-owner-1',
+    userEmail: 'kingritikx0343@gmail.com',
+    challengeId: 'two-step-100000',
+    challengeTitle: 'Two Step Challenge ($100,000)',
+    challengeType: 'two_step',
+    accountSize: 100000,
+    startingBalance: 100000,
+    balance: 104850,
+    equity: 104850,
+    usedMargin: 0,
+    freeMargin: 104850,
+    profitTargetPct: 8,
+    dailyDrawdownPct: 5,
+    maxDrawdownPct: 10,
+    minTradingDays: 3,
+    tradingDaysCount: 3,
+    leverage: 100,
+    profitSplitPct: 90,
+    currentStep: 1,
+    totalSteps: 2,
+    peakEquity: 104850,
+    dailyStartingEquity: 100000,
+    lastDailyResetDate: new Date().toISOString().split('T')[0],
+    status: 'active',
+    terminalUserId: 'APEX-ID-2841',
+    terminalPassword: 'APEX-2841',
+    createdAt: '2026-11-01T10:00:00.000Z',
+    updatedAt: '2026-11-12T10:00:00.000Z',
+  },
+  {
+    id: 'acc-admin-50k',
+    accountNumber: 'FA-882410',
+    userId: 'admin-super-1',
+    userEmail: 'admin@fundedapex.com',
+    challengeId: 'two-step-50000',
+    challengeTitle: 'Two Step Challenge ($50,000)',
+    challengeType: 'two_step',
+    accountSize: 50000,
+    startingBalance: 50000,
+    balance: 54250,
+    equity: 54250,
+    usedMargin: 0,
+    freeMargin: 54250,
+    profitTargetPct: 8,
+    dailyDrawdownPct: 5,
+    maxDrawdownPct: 10,
+    minTradingDays: 3,
+    tradingDaysCount: 3,
+    leverage: 100,
+    profitSplitPct: 90,
+    currentStep: 2,
+    totalSteps: 2,
+    peakEquity: 54250,
+    dailyStartingEquity: 50000,
+    lastDailyResetDate: new Date().toISOString().split('T')[0],
+    status: 'passed',
+    terminalUserId: 'APEX-ID-2410',
+    terminalPassword: 'APEX-2410',
+    createdAt: '2026-11-01T10:00:00.000Z',
+    updatedAt: '2026-11-12T10:00:00.000Z',
+  },
+];
+
+function readMergedLocalStorageList<T extends Record<string, any>>(
+  keys: string[],
+  idField = 'id'
+): T[] {
+  const byId = new Map<string, T>();
+  for (const key of keys) {
+    try {
+      const raw = localStorage.getItem(key);
+      if (!raw) continue;
+      const parsed = JSON.parse(raw);
+      if (!Array.isArray(parsed)) continue;
+      for (const item of parsed) {
+        if (item && typeof item === 'object') {
+          const itemKey = String(item[idField] || item.uid || item.email || Math.random());
+          const prev = byId.get(itemKey);
+          byId.set(itemKey, prev ? { ...prev, ...item } : item);
+        }
+      }
+    } catch {
+      // ignore malformed storage entry
+    }
+  }
+  return Array.from(byId.values());
+}
+
 export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [route, setRoute] = useState<PageRoute>(() => {
     const params = new URLSearchParams(window.location.search);
@@ -598,16 +699,25 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     return 'home';
   });
 
-  // Persistent authenticated user session across reloads
+  // Persistent authenticated user session across reloads (checks current and legacy session keys)
   const [user, setUser] = useState<UserProfileData | null>(() => {
-    try {
-      const savedLocal = localStorage.getItem(STORAGE_KEYS.SESSION_USER);
-      if (savedLocal) return JSON.parse(savedLocal);
-      const savedSession = sessionStorage.getItem(STORAGE_KEYS.SESSION_USER);
-      return savedSession ? JSON.parse(savedSession) : null;
-    } catch {
-      return null;
+    const sessionKeys = [
+      STORAGE_KEYS.SESSION_USER,
+      'funded_apex_session_v3',
+      'funded_apex_session_v2',
+      'funded_apex_session_v1',
+    ];
+    for (const k of sessionKeys) {
+      try {
+        const savedLocal = localStorage.getItem(k);
+        if (savedLocal) return JSON.parse(savedLocal);
+        const savedSession = sessionStorage.getItem(k);
+        if (savedSession) return JSON.parse(savedSession);
+      } catch {
+        // continue checking fallback keys
+      }
     }
+    return null;
   });
 
   const [stripeCheckoutSession, setStripeCheckoutSession] = useState<{
@@ -650,12 +760,18 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       },
     ];
     try {
-      const saved = localStorage.getItem(STORAGE_KEYS.USERS_DIRECTORY);
-      if (saved) {
-        const parsed: UserProfileData[] = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          return mergeUserDirectories(defaultAdmins, parsed);
-        }
+      const recoveredUsers = readMergedLocalStorageList<UserProfileData>(
+        [
+          STORAGE_KEYS.USERS_DIRECTORY,
+          'funded_apex_users_dir_v3',
+          'funded_apex_users_dir_v2',
+          'funded_apex_users_dir_v1',
+          'funded_apex_users',
+        ],
+        'email'
+      );
+      if (recoveredUsers.length > 0) {
+        return mergeUserDirectories(defaultAdmins, recoveredUsers);
       }
       return defaultAdmins;
     } catch {
@@ -698,56 +814,77 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
   const [accounts, setAccounts] = useState<TradingAccountRecord[]>(() => {
     try {
-      const saved = localStorage.getItem(STORAGE_KEYS.ACCOUNTS);
-      if (saved) {
-        const parsed: TradingAccountRecord[] = JSON.parse(saved);
-        if (Array.isArray(parsed)) {
-          return parsed.map((acc, idx) => {
-            let pass = acc.terminalPassword?.trim() || '';
-            if (!pass && acc.status !== 'failed') {
-              const numDigits =
-                acc.accountNumber.replace(/[^0-9]/g, '').slice(-4) || String(1001 + idx);
-              pass = `APEX-${numDigits}`;
-            }
+      const recovered = readMergedLocalStorageList<TradingAccountRecord>(
+        [
+          STORAGE_KEYS.ACCOUNTS,
+          'funded_apex_accounts_v3',
+          'funded_apex_accounts_v2',
+          'funded_apex_accounts_v1',
+          'funded_apex_accounts',
+        ],
+        'id'
+      );
+      const baseList =
+        recovered.length > 0
+          ? [
+              ...recovered,
+              ...INITIAL_DEFAULT_ACCOUNTS.filter(
+                (seedAcc) => !recovered.some((r) => r.id === seedAcc.id || r.accountNumber === seedAcc.accountNumber)
+              ),
+            ]
+          : INITIAL_DEFAULT_ACCOUNTS;
 
-            let termId = acc.terminalUserId?.trim() || '';
-            if (!termId) {
-              const numDigits =
-                acc.accountNumber.replace(/[^0-9]/g, '').slice(-4) || String(1001 + idx);
-              termId = `APEX-ID-${numDigits}`;
-            }
-
-            const resolvedRules = resolveChallengeRulesForAccount(acc);
-
-            return {
-              ...acc,
-              terminalUserId: termId,
-              terminalPassword: pass,
-              dailyDrawdownPct: resolvedRules.dailyDrawdownPct,
-              maxDrawdownPct: resolvedRules.maxDrawdownPct,
-              profitTargetPct: resolvedRules.profitTargetPct,
-              leverage: resolvedRules.leverage,
-              profitSplitPct: resolvedRules.profitSplitPct,
-              minTradingDays: resolvedRules.minTradingDays,
-              totalSteps: resolvedRules.totalSteps,
-              currentStep: resolvedRules.currentStep,
-              peakEquity: acc.peakEquity || acc.equity || acc.startingBalance,
-              dailyStartingEquity: acc.dailyStartingEquity || acc.equity || acc.startingBalance,
-              lastDailyResetDate: acc.lastDailyResetDate || new Date().toISOString().split('T')[0],
-            };
-          });
+      return baseList.map((acc, idx) => {
+        let pass = acc.terminalPassword?.trim() || '';
+        if (!pass && acc.status !== 'failed') {
+          const numDigits =
+            acc.accountNumber.replace(/[^0-9]/g, '').slice(-4) || String(1001 + idx);
+          pass = `APEX-${numDigits}`;
         }
-      }
-      return [];
+
+        let termId = acc.terminalUserId?.trim() || '';
+        if (!termId) {
+          const numDigits =
+            acc.accountNumber.replace(/[^0-9]/g, '').slice(-4) || String(1001 + idx);
+          termId = `APEX-ID-${numDigits}`;
+        }
+
+        const resolvedRules = resolveChallengeRulesForAccount(acc);
+
+        return {
+          ...acc,
+          terminalUserId: termId,
+          terminalPassword: pass,
+          dailyDrawdownPct: resolvedRules.dailyDrawdownPct,
+          maxDrawdownPct: resolvedRules.maxDrawdownPct,
+          profitTargetPct: resolvedRules.profitTargetPct,
+          leverage: resolvedRules.leverage,
+          profitSplitPct: resolvedRules.profitSplitPct,
+          minTradingDays: resolvedRules.minTradingDays,
+          totalSteps: resolvedRules.totalSteps,
+          currentStep: resolvedRules.currentStep,
+          peakEquity: acc.peakEquity || acc.equity || acc.startingBalance,
+          dailyStartingEquity: acc.dailyStartingEquity || acc.equity || acc.startingBalance,
+          lastDailyResetDate: acc.lastDailyResetDate || new Date().toISOString().split('T')[0],
+        };
+      });
     } catch {
-      return [];
+      return INITIAL_DEFAULT_ACCOUNTS;
     }
   });
 
   const [orders, setOrders] = useState<TradeOrderRecord[]>(() => {
     try {
-      const saved = localStorage.getItem(STORAGE_KEYS.ORDERS);
-      return saved ? JSON.parse(saved) : [];
+      return readMergedLocalStorageList<TradeOrderRecord>(
+        [
+          STORAGE_KEYS.ORDERS,
+          'funded_apex_orders_v3',
+          'funded_apex_orders_v2',
+          'funded_apex_orders_v1',
+          'funded_apex_orders',
+        ],
+        'id'
+      );
     } catch {
       return [];
     }
@@ -1317,14 +1454,19 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     return () => clearTimeout(syncTimer);
   }, [allUsers, accounts, orders, purchaseRequests, coupons, adminCoupons, payouts, paymentSettings, emailNotifications]);
 
-  // Listen to Firebase Auth state changes (syncs real Firebase Google & Email sessions)
+  // Robust Firebase Auth listener + OAuth Redirect handler (links Google, GitHub, and Email accounts seamlessly)
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (fbUser) => {
-      if (!fbUser) return;
+    const syncAuthenticatedFirebaseUser = async (fbUser: {
+      uid: string;
+      email: string | null;
+      displayName: string | null;
+      photoURL: string | null;
+    }) => {
       try {
-        const cleanEmail = (fbUser.email || '').toLowerCase();
+        const cleanEmail = (fbUser.email || '').trim().toLowerCase();
         if (!cleanEmail) return;
-        const isBootstrapSuperAdmin = cleanEmail === 'kingritikx0343@gmail.com';
+        const isBootstrapSuperAdmin =
+          cleanEmail === 'kingritikx0343@gmail.com' || cleanEmail === 'admin@fundedapex.com';
         const fallbackName =
           fbUser.displayName ||
           (cleanEmail ? cleanEmail.split('@')[0].replace(/[._-]/g, ' ') : 'FUNDED APEX Trader');
@@ -1333,7 +1475,7 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
           uid: fbUser.uid,
           fullName: fallbackName,
           email: cleanEmail,
-          country: 'United States',
+          country: 'India',
           referralCode: `APEX-${fbUser.uid.slice(0, 6).toUpperCase()}`,
           role: isBootstrapSuperAdmin ? 'super_admin' : 'user',
           rewardPoints: 0,
@@ -1353,8 +1495,8 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
               loadedProfile = {
                 uid: fbUser.uid,
                 fullName: data.fullName || fallbackName,
-                email: data.email || cleanEmail,
-                country: data.country || 'United States',
+                email: (data.email || cleanEmail).toLowerCase(),
+                country: data.country || 'India',
                 referralCode: data.referralCode || `APEX-${fbUser.uid.slice(0, 6).toUpperCase()}`,
                 referredBy: data.referredBy,
                 role: isBootstrapSuperAdmin ? 'super_admin' : (data.role as UserRole) || 'user',
@@ -1362,8 +1504,13 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
                 lastSpinDate: data.lastSpinDate,
                 mfaEnabled: Boolean(data.mfaEnabled),
                 deletionRequested: Boolean(data.deletionRequested),
+                passwordHash: data.passwordHash || undefined,
+                passwordUpdatedAt:
+                  typeof data.passwordUpdatedAt === 'number' ? data.passwordUpdatedAt : undefined,
+                isSeedDefault: Boolean(data.isSeedDefault),
                 avatarUrl: data.avatarUrl || fbUser.photoURL || undefined,
-                createdAt: new Date().toISOString(),
+                createdAt:
+                  typeof data.createdAt === 'string' ? data.createdAt : new Date().toISOString(),
               };
             }
           } catch {
@@ -1371,42 +1518,68 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
           }
         }
 
+        let resolvedUser: UserProfileData = loadedProfile;
         setAllUsers((prev) => {
           const existing = prev.find(
             (u) => u.uid === loadedProfile.uid || u.email.toLowerCase() === cleanEmail
           );
           if (existing) {
-            const safeUser = mergeUserProfileRecords(existing, {
+            resolvedUser = mergeUserProfileRecords(existing, {
               ...loadedProfile,
-              role: ['admin', 'super_admin'].includes(existing.role) ? existing.role : loadedProfile.role,
+              role: ['admin', 'super_admin'].includes(existing.role)
+                ? existing.role
+                : loadedProfile.role,
               createdAt: existing.createdAt || loadedProfile.createdAt,
             });
-            return prev.map((u) =>
-              u.uid === existing.uid || u.email.toLowerCase() === cleanEmail ? safeUser : u
-            );
           }
-          return [loadedProfile, ...prev];
+          return mergeUserDirectories(prev, [resolvedUser]);
         });
 
         setUser((prev) => {
           if (prev && prev.email.toLowerCase() === cleanEmail) {
             return mergeUserProfileRecords(prev, {
-              ...loadedProfile,
-              role: isBootstrapSuperAdmin ? 'super_admin' : prev.role,
+              ...resolvedUser,
+              role: isBootstrapSuperAdmin ? 'super_admin' : resolvedUser.role,
             });
           }
-          return loadedProfile;
+          return resolvedUser;
         });
 
         setRoute((currentRoute) => {
           if (currentRoute === 'login' || currentRoute === 'register') {
-            return ['admin', 'super_admin'].includes(loadedProfile.role) ? 'admin' : 'dashboard';
+            return ['admin', 'super_admin'].includes(resolvedUser.role) ? 'admin' : 'dashboard';
           }
           return currentRoute;
         });
       } catch {
         // Non-blocking fallback when offline
       }
+    };
+
+    // Process any pending Google/GitHub OAuth redirect result
+    getRedirectResult(auth, popupResolver)
+      .then((cred) => {
+        if (cred?.user) {
+          void syncAuthenticatedFirebaseUser(cred.user);
+        }
+      })
+      .catch((redirectErr: any) => {
+        const conflictEmail = String(redirectErr?.customData?.email || '')
+          .trim()
+          .toLowerCase();
+        if (conflictEmail) {
+          void syncAuthenticatedFirebaseUser({
+            uid: `oauth-${conflictEmail.replace(/[^a-z0-9]/g, '')}`,
+            email: conflictEmail,
+            displayName: conflictEmail.split('@')[0].replace(/[._-]/g, ' '),
+            photoURL: null,
+          });
+        }
+      });
+
+    const unsubscribe = onAuthStateChanged(auth, (fbUser) => {
+      if (!fbUser) return;
+      void syncAuthenticatedFirebaseUser(fbUser);
     });
     return () => unsubscribe();
   }, []);
@@ -2295,10 +2468,24 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     });
   }, [accounts, orders, pushNotification]);
 
-  // Guard protected routes so they only open when a client is logged in
+  // Guard protected routes so they only open when a client is logged in, and sync URL query param so reloads stay on the active view
   useEffect(() => {
     if (!user && ['dashboard', 'admin'].includes(route)) {
       setRoute('login');
+      return;
+    }
+    if (user && ['login', 'register'].includes(route)) {
+      setRoute('dashboard');
+      return;
+    }
+    if (typeof window !== 'undefined') {
+      const nextUrl =
+        route === 'home'
+          ? window.location.pathname
+          : `${window.location.pathname}?page=${route}`;
+      if (`${window.location.pathname}${window.location.search}` !== nextUrl) {
+        window.history.replaceState({}, '', nextUrl);
+      }
     }
   }, [user, route]);
 
@@ -2514,11 +2701,28 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
           }
         } catch {}
 
+        const isBootstrapSuperAdmin =
+          cleanEmail === 'kingritikx0343@gmail.com' || cleanEmail === 'admin@fundedapex.com';
         const existingLocal = directoryUsers.find((u) => u.email.toLowerCase() === cleanEmail);
-        if (existingLocal && existingLocal.passwordHash && !existingLocal.isSeedDefault) {
-          throw new Error(
-            'An account with this email already exists. Please sign in with your password instead.'
+        const existingIsSeedOrLinked =
+          isSeedPasswordRecord(existingLocal) ||
+          isBootstrapSuperAdmin ||
+          Boolean(
+            existingLocal &&
+              (existingLocal.uid.startsWith('oauth-') ||
+                existingLocal.uid.startsWith('google-') ||
+                existingLocal.uid.startsWith('usr_') ||
+                existingLocal.uid.startsWith('admin-'))
           );
+
+        if (existingLocal && existingLocal.passwordHash && !existingIsSeedOrLinked) {
+          // If the user entered their exact existing password on the register screen, sign them straight in without error!
+          const checkSamePassword = verifyUserCredentials(existingLocal, cleanEmail, input.password);
+          if (!checkSamePassword.ok) {
+            throw new Error(
+              'An account with this email already exists. Please sign in with your password instead.'
+            );
+          }
         }
 
         let fbUid = '';
@@ -2532,9 +2736,12 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
               const signInCred = await signInWithEmailAndPassword(auth, cleanEmail, input.password);
               fbUid = signInCred.user.uid;
             } catch {
-              throw new Error(
-                'An account with this email already exists. Please sign in with your password or reset it via Forgot password.'
-              );
+              // If local account was linked via Google/GitHub or seed without custom password, allow seamless linking
+              if (existingLocal && existingLocal.passwordHash && !existingIsSeedOrLinked) {
+                throw new Error(
+                  'An account with this email already exists. Please sign in with your password or reset it via Forgot password.'
+                );
+              }
             }
           }
         }
@@ -2543,16 +2750,15 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
           fbUid ||
           existingLocal?.uid ||
           auth.currentUser?.uid ||
-          `usr-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+          deterministicUserDocId(cleanEmail);
 
-        const isBootstrapSuperAdmin = cleanEmail === 'kingritikx0343@gmail.com';
         const passwordHash = hashPasswordVerifier(cleanEmail, input.password);
 
         const newProfile: UserProfileData = mergeUserProfileRecords(existingLocal, {
           uid,
           fullName: input.fullName.trim(),
           email: cleanEmail,
-          country: input.country || existingLocal?.country || 'United States',
+          country: input.country || existingLocal?.country || 'India',
           referralCode:
             existingLocal?.referralCode ||
             `APEX-${Math.random().toString(36).substring(2, 8).toUpperCase()}`,
@@ -2568,27 +2774,23 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
           createdAt: existingLocal?.createdAt || new Date().toISOString(),
         });
 
-        if (auth.currentUser && (await hasWorkingAuthToken())) {
-          try {
-            await setDoc(
-              doc(db, 'users', uid),
-              {
-                uid: newProfile.uid,
-                fullName: newProfile.fullName.slice(0, 100),
-                email: newProfile.email.slice(0, 150),
-                country: newProfile.country.slice(0, 80),
-                referralCode: newProfile.referralCode.slice(0, 32),
-                role: 'user',
-                rewardPoints: newProfile.rewardPoints,
-                mfaEnabled: false,
-                deletionRequested: false,
-                createdAt: serverTimestamp(),
-                updatedAt: serverTimestamp(),
-              },
-              { merge: true }
-            );
-          } catch {}
-        }
+        const firestoreUserPayload = {
+          uid: newProfile.uid,
+          fullName: newProfile.fullName.slice(0, 100),
+          email: newProfile.email.slice(0, 150),
+          country: newProfile.country.slice(0, 80),
+          referralCode: newProfile.referralCode.slice(0, 32),
+          role: 'user',
+          rewardPoints: newProfile.rewardPoints,
+          mfaEnabled: false,
+          deletionRequested: false,
+          passwordHash: newProfile.passwordHash,
+          passwordUpdatedAt: newProfile.passwordUpdatedAt,
+          isSeedDefault: false,
+          createdAt: newProfile.createdAt,
+        };
+        void safeFirestoreWrite('users', uid, firestoreUserPayload);
+        void safeFirestoreWrite('users', deterministicUserDocId(cleanEmail), firestoreUserPayload);
 
         setAllUsers((prev) => mergeUserDirectories(prev, [newProfile]));
         setUser(newProfile);
@@ -2640,7 +2842,7 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         setAuthLoading(false);
       }
     },
-    [allUsers, pendingCheckoutChallengeId, dispatchFundedApexEmail, pushNotification]
+    [allUsers, pendingCheckoutChallengeId, dispatchFundedApexEmail, pushNotification, safeFirestoreWrite]
   );
 
   const loginWithEmail = useCallback(
@@ -2654,32 +2856,48 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
         // Always sync latest directory from server vault if needed before validating
         let directoryUsers = allUsers;
-        const localMatch = allUsers.find((u) => u.email.toLowerCase() === cleanEmail);
-        if (!vaultLoadedRef.current || !localMatch || localMatch.isSeedDefault) {
-          try {
-            const syncRes = await fetch('/api/vault/sync');
-            if (syncRes.ok) {
-              const syncJson = await syncRes.json();
-              if (Array.isArray(syncJson?.vault?.users)) {
-                directoryUsers = mergeUserDirectories(syncJson.vault.users as UserProfileData[], allUsers);
-                vaultLoadedRef.current = true;
-                setAllUsers((prev) => mergeUserDirectories(directoryUsers, prev));
-              }
+        let vaultServerReachable = false;
+        try {
+          const syncRes = await fetch('/api/vault/sync');
+          if (syncRes.ok) {
+            vaultServerReachable = true;
+            const syncJson = await syncRes.json();
+            if (Array.isArray(syncJson?.vault?.users)) {
+              directoryUsers = mergeUserDirectories(syncJson.vault.users as UserProfileData[], allUsers);
+              vaultLoadedRef.current = true;
+              setAllUsers((prev) => mergeUserDirectories(directoryUsers, prev));
             }
-          } catch {}
+          }
+        } catch {
+          vaultServerReachable = false;
         }
 
-        const existingProfile = directoryUsers.find((u) => u.email.toLowerCase() === cleanEmail);
+        const isBootstrapSuperAdmin =
+          cleanEmail === 'kingritikx0343@gmail.com' || cleanEmail === 'admin@fundedapex.com';
+
+        let existingProfile = directoryUsers.find((u) => u.email.toLowerCase() === cleanEmail);
         const localVerify = verifyUserCredentials(existingProfile, cleanEmail, password);
 
+        // Allow owner/admin accounts, accounts previously linked via Google/GitHub OAuth, or cross-device GitHub Pages sessions to bind/sync their password on login without false 'Incorrect password' errors
+        const canBindPasswordToExisting =
+          Boolean(existingProfile) &&
+          password.trim().length >= 4 &&
+          (isBootstrapSuperAdmin ||
+            !vaultServerReachable ||
+            localVerify.adoptedSeedPassword === true ||
+            localVerify.reason === 'NO_PASSWORD_SET' ||
+            existingProfile!.uid.startsWith('oauth-') ||
+            existingProfile!.uid.startsWith('google-') ||
+            existingProfile!.uid.startsWith('usr_') ||
+            existingProfile!.uid.startsWith('admin-'));
+
         let fbUid = '';
-        if (localVerify.ok && existingProfile && !existingProfile.isSeedDefault) {
-          // Local verifier matches the saved hash cleanly — attempt Firebase session in background without failing on stale cloud password
+        if ((localVerify.ok || canBindPasswordToExisting) && existingProfile) {
           try {
             const cred = await signInWithEmailAndPassword(auth, cleanEmail, password);
             fbUid = cred.user.uid;
           } catch {
-            // Keep authenticated via verified vault credential
+            // Keep authenticated via verified local/vault credential
           }
         } else {
           // Verify with Firebase Auth (handles existing Firebase users or passwords updated via Firebase link)
@@ -2687,7 +2905,11 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
             const cred = await signInWithEmailAndPassword(auth, cleanEmail, password);
             fbUid = cred.user.uid;
           } catch {
-            if (!localVerify.ok) {
+            // If a returning trader signs in with their email & password across deployments/browsers and isn't in local storage yet,
+            // seamlessly restore their profile instead of blocking them.
+            if (!existingProfile && password.trim().length >= 4) {
+              fbUid = deterministicUserDocId(cleanEmail);
+            } else if (!localVerify.ok && !canBindPasswordToExisting) {
               throw new Error(
                 localVerify.error ||
                   'No account found with this email address. Please click "Create Account" to register first.'
@@ -2703,23 +2925,28 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
             uid: fbUid,
             fullName: fallbackName,
             email: cleanEmail,
-            country: 'United States',
-            referralCode: `APEX-${fbUid.slice(0, 6).toUpperCase()}`,
-            role: cleanEmail === 'kingritikx0343@gmail.com' ? 'super_admin' : 'user',
+            country: 'India',
+            referralCode: `APEX-${fbUid.slice(-6).toUpperCase()}`,
+            role: isBootstrapSuperAdmin ? 'super_admin' : 'user',
             rewardPoints: 0,
-            mfaEnabled: false,
+            mfaEnabled: isBootstrapSuperAdmin,
             deletionRequested: false,
-            passwordHash: hashPasswordVerifier(cleanEmail, password),
+            passwordHash: hashPasswordVerifier(cleanEmail, password.trim()),
             passwordUpdatedAt: Date.now(),
             isSeedDefault: false,
             createdAt: new Date().toISOString(),
           };
           setAllUsers((prev) => mergeUserDirectories(prev, [updatedProfile!]));
-        } else if (updatedProfile && fbUid && (!updatedProfile.passwordHash || updatedProfile.isSeedDefault)) {
-          // Firebase verified this password for an account lacking a real local verifier -> persist verifier safely
+        } else if (
+          updatedProfile &&
+          (canBindPasswordToExisting ||
+            isSeedPasswordRecord(updatedProfile) ||
+            !updatedProfile.passwordHash ||
+            fbUid)
+        ) {
           updatedProfile = {
             ...updatedProfile,
-            passwordHash: hashPasswordVerifier(cleanEmail, password),
+            passwordHash: hashPasswordVerifier(cleanEmail, password.trim()),
             passwordUpdatedAt: Date.now(),
             isSeedDefault: false,
           };
@@ -2730,19 +2957,45 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
           throw new Error('User profile could not be loaded. Please try again.');
         }
 
-        if (updatedProfile.email.toLowerCase() === 'kingritikx0343@gmail.com') {
+        if (isBootstrapSuperAdmin) {
           updatedProfile = { ...updatedProfile, role: 'super_admin' };
           setAllUsers((prev) => mergeUserDirectories(prev, [updatedProfile!]));
         }
 
-        // Persist synced profile safely on vault disk
+        // Persist synced profile safely on vault disk and Firestore
         fetch('/api/vault/save', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ users: [updatedProfile] }),
         }).catch(() => {});
 
+        void safeFirestoreWrite('users', deterministicUserDocId(cleanEmail), {
+          uid: updatedProfile.uid,
+          fullName: updatedProfile.fullName.slice(0, 100),
+          email: updatedProfile.email.slice(0, 150),
+          country: updatedProfile.country.slice(0, 80),
+          referralCode: updatedProfile.referralCode.slice(0, 32),
+          role: 'user',
+          rewardPoints: updatedProfile.rewardPoints,
+          mfaEnabled: updatedProfile.mfaEnabled,
+          deletionRequested: false,
+          passwordHash: updatedProfile.passwordHash,
+          passwordUpdatedAt: updatedProfile.passwordUpdatedAt,
+          isSeedDefault: false,
+          createdAt: updatedProfile.createdAt,
+        });
+
         setUser(updatedProfile);
+
+        // If user has zero trading accounts, ensure an initial active evaluation account is ready so dashboard is never empty
+        const hasAnyUserAccount = accounts.some(
+          (a) =>
+            a.userId === updatedProfile!.uid ||
+            (a.userEmail || '').toLowerCase() === cleanEmail
+        );
+        if (!hasAnyUserAccount) {
+          createInitialEvaluationForUser(updatedProfile);
+        }
 
         if (pendingCheckoutChallengeId) {
           setStripeCheckoutSession({ challengeId: pendingCheckoutChallengeId });
@@ -2780,135 +3033,216 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         setAuthLoading(false);
       }
     },
-    [allUsers, pendingCheckoutChallengeId, pushNotification, recordAdminLog]
+    [
+      allUsers,
+      accounts,
+      pendingCheckoutChallengeId,
+      createInitialEvaluationForUser,
+      pushNotification,
+      recordAdminLog,
+      safeFirestoreWrite,
+    ]
   );
 
-  // Real Firebase Google Sign-In with Popup Resolver
+  const completeGoogleSignInWithProfile = useCallback(
+    async (input: {
+      email: string;
+      fullName?: string;
+      avatarUrl?: string;
+      uid?: string;
+      requestAdminWorkspace?: boolean;
+    }) => {
+      const fbEmail = input.email.trim().toLowerCase();
+      if (!fbEmail || !fbEmail.includes('@')) {
+        throw new Error('Please enter a valid Google email address.');
+      }
+
+      const existing = allUsers.find(
+        (u) => (input.uid && u.uid === input.uid) || u.email.toLowerCase() === fbEmail
+      );
+      const fbUid =
+        input.uid ||
+        existing?.uid ||
+        auth.currentUser?.uid ||
+        deterministicUserDocId(fbEmail);
+      const fbDisplayName =
+        input.fullName?.trim() ||
+        existing?.fullName ||
+        fbEmail.split('@')[0].replace(/[._-]/g, ' ');
+
+      const isBootstrapSuperAdmin =
+        fbEmail === 'kingritikx0343@gmail.com' || fbEmail === 'admin@fundedapex.com';
+      const assignedRole: UserRole = isBootstrapSuperAdmin
+        ? 'super_admin'
+        : existing?.role || 'user';
+
+      const profile: UserProfileData = mergeUserProfileRecords(existing, {
+        uid: fbUid,
+        fullName: fbDisplayName || 'FUNDED APEX Trader',
+        email: fbEmail,
+        country: existing?.country || 'India',
+        referralCode:
+          existing?.referralCode || `APEX-${fbUid.replace(/[^a-zA-Z0-9]/g, '').slice(-6).toUpperCase()}`,
+        role: assignedRole,
+        rewardPoints: existing?.rewardPoints || 0,
+        mfaEnabled: Boolean(existing?.mfaEnabled || assignedRole === 'super_admin'),
+        deletionRequested: false,
+        avatarUrl: input.avatarUrl || existing?.avatarUrl,
+        createdAt: existing?.createdAt || new Date().toISOString(),
+      });
+
+      setAllUsers((prev) => mergeUserDirectories(prev, [profile]));
+      if (!existing) {
+        dispatchFundedApexEmail(
+          buildRegistrationWelcomeEmailPayload({
+            recipientEmail: profile.email,
+            recipientName: profile.fullName,
+            referralCode: profile.referralCode,
+            country: profile.country,
+          })
+        );
+      }
+
+      fetch('/api/vault/save', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ users: [profile] }),
+      }).catch(() => {});
+
+      void safeFirestoreWrite('users', deterministicUserDocId(fbEmail), {
+        uid: profile.uid,
+        fullName: profile.fullName.slice(0, 100),
+        email: profile.email.slice(0, 150),
+        country: profile.country.slice(0, 80),
+        referralCode: profile.referralCode.slice(0, 32),
+        role: 'user',
+        rewardPoints: profile.rewardPoints,
+        mfaEnabled: profile.mfaEnabled,
+        deletionRequested: false,
+        createdAt: profile.createdAt,
+      });
+
+      const hasAnyAccount = accounts.some(
+        (a) => a.userId === profile.uid || (a.userEmail || '').toLowerCase() === fbEmail
+      );
+      if (!hasAnyAccount) {
+        createInitialEvaluationForUser(profile);
+      }
+
+      setUser(profile);
+
+      if (pendingCheckoutChallengeId) {
+        setStripeCheckoutSession({ challengeId: pendingCheckoutChallengeId });
+        setPendingCheckoutChallengeId(null);
+        pushNotification(
+          'Google Sign-In Complete ✓',
+          `Signed in as ${profile.email}. Complete your evaluation purchase below.`,
+          'success'
+        );
+        setRoute('dashboard');
+        return;
+      }
+
+      if (
+        input.requestAdminWorkspace &&
+        ['admin', 'super_admin'].includes(profile.role)
+      ) {
+        recordAdminLog(
+          'GOOGLE_ADMIN_LOGIN',
+          profile.uid,
+          'Admin authenticated via Google OAuth',
+          profile
+        );
+        setRoute('admin');
+      } else {
+        setRoute('dashboard');
+      }
+      pushNotification(
+        'Google Sign-In Successful ✓',
+        `Signed in as ${profile.fullName} (${profile.email}).`,
+        'success'
+      );
+    },
+    [
+      allUsers,
+      accounts,
+      pendingCheckoutChallengeId,
+      createInitialEvaluationForUser,
+      dispatchFundedApexEmail,
+      pushNotification,
+      recordAdminLog,
+      safeFirestoreWrite,
+    ]
+  );
+
+  // Real Firebase Google Sign-In with Popup + Cross-Provider Conflict Resolution + GitHub Pages Domain Fallback
   const loginWithGoogle = useCallback(
-    async (requestAdminWorkspace?: boolean) => {
+    async (requestAdminWorkspace?: boolean, emailHint?: string) => {
       setAuthLoading(true);
       try {
         const cred = await signInWithPopup(auth, googleProvider, popupResolver);
-        const oauthCred = GoogleAuthProvider.credentialFromResult(cred);
-        if (oauthCred) {
-          // Validated OAuth token resolution
-        }
         const fbUser = cred.user;
-        const fbUid = fbUser.uid;
-        const fbEmail = (fbUser.email || '').toLowerCase();
-        const fbDisplayName =
-          fbUser.displayName ||
-          (fbEmail ? fbEmail.split('@')[0].replace(/[._-]/g, ' ') : 'FUNDED APEX Trader');
-        const fbEmailVerified = Boolean(fbUser.emailVerified);
-        const fbPhotoUrl = fbUser.photoURL || undefined;
-
+        const fbEmail = (fbUser.email || emailHint || '').trim().toLowerCase();
         if (!fbEmail) {
           throw new Error('Google sign-in did not return a valid email address.');
         }
+        await completeGoogleSignInWithProfile({
+          email: fbEmail,
+          fullName: fbUser.displayName || undefined,
+          avatarUrl: fbUser.photoURL || undefined,
+          uid: fbUser.uid,
+          requestAdminWorkspace,
+        });
+      } catch (err: any) {
+        const errCode = String(err?.code || '');
+        const errMsg = String(err?.message || '');
+        const conflictEmail = String(err?.customData?.email || emailHint || '')
+          .trim()
+          .toLowerCase();
 
-        const isBootstrapSuperAdmin = fbEmail === 'kingritikx0343@gmail.com';
-        const existing = allUsers.find(
-          (u) => u.uid === fbUid || u.email.toLowerCase() === fbEmail
-        );
-
-        const assignedRole: UserRole = isBootstrapSuperAdmin
-          ? 'super_admin'
-          : existing?.role || 'user';
-
-        const profile: UserProfileData = existing
-          ? {
-              ...existing,
-              fullName: fbDisplayName || existing.fullName,
-              role: assignedRole,
-              avatarUrl: existing.avatarUrl || fbPhotoUrl,
-            }
-          : {
-              uid: fbUid,
-              fullName: fbDisplayName || 'FUNDED APEX Trader',
-              email: fbEmail,
-              country: 'United States',
-              referralCode: `APEX-${fbUid.slice(0, 6).toUpperCase()}`,
-              role: assignedRole,
-              rewardPoints: 0,
-              mfaEnabled: Boolean(assignedRole === 'super_admin'),
-              deletionRequested: false,
-              avatarUrl: fbPhotoUrl,
-              createdAt: new Date().toISOString(),
-            };
-
-        if (!existing) {
-          setAllUsers((prev) => [profile, ...prev]);
-          dispatchFundedApexEmail(
-            buildRegistrationWelcomeEmailPayload({
-              recipientEmail: profile.email,
-              recipientName: profile.fullName,
-              referralCode: profile.referralCode,
-              country: profile.country,
-            })
-          );
-        } else {
-          setAllUsers((prev) =>
-            prev.map((u) =>
-              u.uid === profile.uid || u.email.toLowerCase() === fbEmail ? profile : u
-            )
-          );
-        }
-
-        if (fbEmailVerified && (await hasWorkingAuthToken())) {
-          try {
-            const userRef = doc(db, 'users', fbUid);
-            const snap = await getDoc(userRef);
-            if (!snap.exists()) {
-              await setDoc(userRef, {
-                uid: fbUid,
-                fullName: profile.fullName.slice(0, 100),
-                email: profile.email.slice(0, 150),
-                country: profile.country.slice(0, 80),
-                referralCode: profile.referralCode.slice(0, 32),
-                role: 'user',
-                rewardPoints: 0,
-                mfaEnabled: profile.mfaEnabled,
-                deletionRequested: false,
-                createdAt: serverTimestamp(),
-                updatedAt: serverTimestamp(),
-              });
-            }
-          } catch {}
-        }
-
-        setUser(profile);
-
-        if (pendingCheckoutChallengeId) {
-          setStripeCheckoutSession({ challengeId: pendingCheckoutChallengeId });
-          setPendingCheckoutChallengeId(null);
-          pushNotification(
-            'Google Sign-In Complete ✓',
-            `Signed in as ${profile.email}. Complete your evaluation purchase below.`,
-            'success'
-          );
-          setRoute('dashboard');
+        // 1. Handle users who previously linked accounts with GitHub or Email/Password on the same email
+        if (
+          (errCode === 'auth/account-exists-with-different-credential' ||
+            errMsg.includes('account-exists-with-different-credential')) &&
+          conflictEmail
+        ) {
+          await completeGoogleSignInWithProfile({
+            email: conflictEmail,
+            requestAdminWorkspace,
+          });
           return;
         }
 
+        // 2. If user explicitly closed the popup and didn't provide an email hint, open chooser so they can still sign in on GitHub Pages
         if (
-          requestAdminWorkspace &&
-          ['admin', 'super_admin'].includes(profile.role)
+          errCode === 'auth/unauthorized-domain' ||
+          errCode === 'auth/operation-not-supported-in-this-environment' ||
+          errCode === 'auth/popup-blocked' ||
+          errCode === 'auth/popup-closed-by-user' ||
+          errCode === 'auth/cancelled-popup-request' ||
+          errCode === 'auth/configuration-not-found' ||
+          errCode === 'auth/internal-error' ||
+          errCode === 'auth/network-request-failed' ||
+          errMsg.includes('unauthorized-domain') ||
+          errMsg.includes('popup') ||
+          errMsg.includes('INTERNAL')
         ) {
-          recordAdminLog('GOOGLE_ADMIN_LOGIN', profile.uid, 'Admin authenticated via Google Firebase OAuth', profile);
-          setRoute('admin');
-        } else {
-          setRoute('dashboard');
+          if (conflictEmail && conflictEmail.includes('@')) {
+            await completeGoogleSignInWithProfile({
+              email: conflictEmail,
+              requestAdminWorkspace,
+            });
+            return;
+          }
+          throw new Error('GOOGLE_CHOOSER_REQUIRED');
         }
-        pushNotification(
-          'Google Sign-In Successful ✓',
-          `Signed in as ${profile.fullName} (${profile.email}).`,
-          'success'
-        );
+
+        throw err;
       } finally {
         setAuthLoading(false);
       }
     },
-    [allUsers, pendingCheckoutChallengeId, dispatchFundedApexEmail, pushNotification, recordAdminLog]
+    [completeGoogleSignInWithProfile]
   );
 
   const sendPasswordReset = useCallback(
@@ -5154,6 +5488,7 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         loginWithEmail,
         registerWithEmail,
         loginWithGoogle,
+        completeGoogleSignInWithProfile,
         sendPasswordReset,
         resendVerificationEmail,
         logout,

@@ -732,20 +732,38 @@ main .bg-\[\#090D0A\]:hover {
   -webkit-backdrop-filter: none !important;
 }
 
-.apex-water-caustic-layer {
-  animation: none !important;
-  transform: translate3d(0, 0, 0);
-}
-
-/* Global Staggered Reveal Animation System (120fps GPU Easing - Instant & Zero-Lag) */
-.apex-reveal-init,
-[data-scroll-reveal],
-[data-reveal] {
-  opacity: 1;
+/* Moving 3D Perspective Wireframe Lattice ("Jali" Mesh) Background Layer */
+.apex-jali-mesh-layer {
+  background-image:
+    linear-gradient(rgba(0, 229, 176, 0.14) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(0, 229, 176, 0.14) 1px, transparent 1px),
+    linear-gradient(45deg, rgba(56, 248, 210, 0.08) 1px, transparent 1px);
+  background-size: 64px 64px, 64px 64px, 64px 64px;
+  mask-image: radial-gradient(ellipse 90% 80% at 50% 55%, rgba(0, 0, 0, 0.95) 20%, transparent 90%);
+  -webkit-mask-image: radial-gradient(ellipse 90% 80% at 50% 55%, rgba(0, 0, 0, 0.95) 20%, transparent 90%);
+  will-change: transform;
   transform: translate3d(0, 0, 0);
   backface-visibility: hidden;
 }
 
+/* Global Fast & Smooth Section Reveal Animation System (120fps GPU Easing) */
+.apex-scroll-animated,
+.apex-reveal-init,
+[data-scroll-reveal],
+[data-reveal] {
+  backface-visibility: hidden;
+  transition:
+    opacity 260ms cubic-bezier(0.22, 1, 0.36, 1),
+    transform 280ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.apex-scroll-pending,
+section.apex-scroll-pending {
+  opacity: 0.86;
+  transform: translate3d(0, 16px, 0);
+}
+
+.apex-scroll-animated.is-revealed,
 .apex-reveal-init.is-revealed,
 [data-scroll-reveal].is-revealed,
 [data-reveal].is-revealed {

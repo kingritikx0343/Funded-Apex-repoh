@@ -1,3 +1,5 @@
+import { hashPasswordVerifier } from './stripeCheckout';
+
 export interface VaultUserRecord {
   uid: string;
   fullName: string;
@@ -25,6 +27,17 @@ export function normalizeUserEmail(email: string | undefined | null): string {
   return String(email || '').trim().toLowerCase();
 }
 
+export function isSeedPasswordRecord(
+  user: Pick<VaultUserRecord, 'email' | 'passwordHash' | 'isSeedDefault'> | undefined | null
+): boolean {
+  if (!user) return false;
+  if (user.isSeedDefault === true) return true;
+  if (!user.passwordHash) return false;
+  const cleanEmail = normalizeUserEmail(user.email);
+  if (!cleanEmail) return false;
+  return user.passwordHash === hashPasswordVerifier(cleanEmail, 'ApexAdmin2026!');
+}
+
 /**
  * Safely merges two records representing the same user (matched by normalized email or uid).
  * Guarantees:
@@ -40,6 +53,7 @@ export function mergeUserProfileRecords<T extends VaultUserRecord>(
     return {
       ...incoming,
       email: normalizeUserEmail(incoming.email) || incoming.email,
+      isSeedDefault: isSeedPasswordRecord(incoming),
     };
   }
 
@@ -47,8 +61,8 @@ export function mergeUserProfileRecords<T extends VaultUserRecord>(
   const incomingEmail = normalizeUserEmail(incoming.email);
   const email = incomingEmail || existingEmail;
 
-  const existingIsSeed = Boolean(existing.isSeedDefault);
-  const incomingIsSeed = Boolean(incoming.isSeedDefault);
+  const existingIsSeed = isSeedPasswordRecord(existing);
+  const incomingIsSeed = isSeedPasswordRecord(incoming);
   const existingHasHash = Boolean(existing.passwordHash);
   const incomingHasHash = Boolean(incoming.passwordHash);
 

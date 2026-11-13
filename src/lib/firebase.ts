@@ -1,5 +1,11 @@
 import { initializeApp } from 'firebase/app';
-import { getAuth, GoogleAuthProvider, signInWithPopup, signOut as fbSignOut, browserPopupRedirectResolver } from 'firebase/auth';
+import {
+  getAuth,
+  GoogleAuthProvider,
+  browserPopupRedirectResolver,
+  browserLocalPersistence,
+  setPersistence,
+} from 'firebase/auth';
 import { getFirestore, initializeFirestore, setLogLevel, doc, getDocFromServer } from 'firebase/firestore';
 import firebaseConfig from '../../firebase-applet-config.json';
 
@@ -12,10 +18,8 @@ try {
   // Ignore if unsupported in test environment
 }
 
-// Ensure configuration strictly incorporates the designated OAuth Client ID
 export const effectiveFirebaseConfig = {
   ...firebaseConfig,
-  oAuthClientId: OAUTH_CLIENT_ID,
 };
 
 // Initialize the Firebase App instance using credentials from firebase-applet-config.json
@@ -36,22 +40,34 @@ export const db = (() => {
   }
 })();
 
-// Firebase Authentication instance
+// Firebase Authentication instance with persistent local storage session state
 export const auth = getAuth(app);
+try {
+  void setPersistence(auth, browserLocalPersistence).catch(() => {});
+} catch {
+  // Ignore in non-browser unit test environments
+}
 
-// Pre-configured Google Auth Provider for popup sign-in without redirection issues
+// Pre-configured Google Auth Provider for popup/redirect sign-in (without mismatched client_id override)
 export const googleAuthProvider = new GoogleAuthProvider();
 googleAuthProvider.addScope('email');
 googleAuthProvider.addScope('profile');
 googleAuthProvider.addScope('openid');
 googleAuthProvider.setCustomParameters({
-  client_id: OAUTH_CLIENT_ID,
   prompt: 'select_account',
 });
 
 // Aliases and resolver for seamless auth workflows
 export const googleProvider = googleAuthProvider;
 export const popupResolver = browserPopupRedirectResolver;
+
+export function deterministicUserDocId(email: string): string {
+  const clean = String(email || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]/g, '_');
+  return `usr_${clean.slice(0, 96) || 'anon'}`;
+}
 
 export async function hasWorkingAuthToken(): Promise<boolean> {
   try {

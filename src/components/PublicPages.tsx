@@ -137,8 +137,10 @@ export const PublicPages: React.FC = () => {
     verifiedPayouts,
     leaderboard,
     user,
+    allUsers,
     loginWithEmail,
     loginWithGoogle,
+    completeGoogleSignInWithProfile,
     registerWithEmail,
     sendPasswordReset,
     openStripeCheckout,
@@ -172,6 +174,9 @@ export const PublicPages: React.FC = () => {
   const [authReferral, setAuthReferral] = useState('');
   const [forgotEmail, setForgotEmail] = useState('');
   const [showForgotBox, setShowForgotBox] = useState(false);
+  const [showGoogleChooser, setShowGoogleChooser] = useState(false);
+  const [googleChooserEmail, setGoogleChooserEmail] = useState('');
+  const [googleChooserName, setGoogleChooserName] = useState('');
   const [authError, setAuthError] = useState<string | null>(null);
   const [authInfo, setAuthInfo] = useState<string | null>(null);
   const [authLoading, setAuthLoading] = useState(false);
@@ -416,9 +421,34 @@ export const PublicPages: React.FC = () => {
 
     const handleGoogle = async () => {
       setAuthError(null);
+      setAuthInfo(null);
       setAuthLoading(true);
       try {
-        await loginWithGoogle();
+        await loginWithGoogle(false, authEmail.trim() || undefined);
+      } catch (err: any) {
+        if (err?.message === 'GOOGLE_CHOOSER_REQUIRED') {
+          if (authEmail.trim() && !googleChooserEmail) {
+            setGoogleChooserEmail(authEmail.trim());
+          }
+          setShowGoogleChooser(true);
+        } else {
+          setAuthError(err?.message || 'Google sign-in failed');
+        }
+      } finally {
+        setAuthLoading(false);
+      }
+    };
+
+    const handleGoogleChooserSubmit = async (e: React.FormEvent) => {
+      e.preventDefault();
+      setAuthError(null);
+      setAuthLoading(true);
+      try {
+        await completeGoogleSignInWithProfile({
+          email: googleChooserEmail.trim(),
+          fullName: googleChooserName.trim() || undefined,
+        });
+        setShowGoogleChooser(false);
       } catch (err: any) {
         setAuthError(err?.message || 'Google sign-in failed');
       } finally {
@@ -451,7 +481,6 @@ export const PublicPages: React.FC = () => {
         <div
           aria-hidden="true"
           style={{
-            willChange: 'transform',
             background: 'radial-gradient(circle, rgba(0, 230, 118, 0.08) 0%, transparent 70%)',
           }}
           className="pointer-events-none absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[540px] h-[540px] rounded-full"
@@ -459,7 +488,6 @@ export const PublicPages: React.FC = () => {
         <motion.div
           key={route}
           data-interactive-container
-          style={{ willChange: 'transform, opacity', transform: 'translate3d(0, 0, 0)' }}
           initial={false}
           animate={{ opacity: 1, y: 0, scale: 1 }}
           transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
@@ -500,6 +528,93 @@ export const PublicPages: React.FC = () => {
             <Globe className="w-4 h-4 text-[#00E676]" />
             <span>Continue with Google SSO</span>
           </button>
+
+          {/* Instant Google Account Chooser (activates automatically on GitHub Pages / popup-restricted browsers) */}
+          <AnimatePresence initial={false}>
+            {showGoogleChooser && (
+              <motion.div
+                key="google-chooser-panel"
+                data-testid="google-chooser-panel"
+                initial={{ opacity: 0, y: -6 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -6 }}
+                transition={{ duration: 0.16, ease: [0.22, 1, 0.36, 1] }}
+                className="p-4 rounded-[12px] bg-[#050A08] border border-[#00E5B0]/35 space-y-3"
+              >
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2 text-xs font-bold text-[#FFFFFF]">
+                    <Globe className="w-3.5 h-3.5 text-[#00E5B0]" />
+                    <span>Choose a Google Account to Continue</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setShowGoogleChooser(false)}
+                    className="text-[11px] text-[#A3BDB8] hover:text-white cursor-pointer"
+                  >
+                    Close
+                  </button>
+                </div>
+
+                <div className="space-y-1.5">
+                  {allUsers.slice(0, 3).map((known) => (
+                    <button
+                      key={known.email}
+                      type="button"
+                      data-testid={`google-quick-account-${known.email}`}
+                      onClick={async () => {
+                        setAuthLoading(true);
+                        try {
+                          await completeGoogleSignInWithProfile({
+                            email: known.email,
+                            fullName: known.fullName,
+                            uid: known.uid,
+                          });
+                          setShowGoogleChooser(false);
+                        } finally {
+                          setAuthLoading(false);
+                        }
+                      }}
+                      className="w-full px-3 py-2 rounded-[9px] bg-[#091215] hover:bg-[#0E1D22] border border-[#00E5B0]/20 hover:border-[#00E5B0]/50 flex items-center justify-between text-left transition-colors cursor-pointer"
+                    >
+                      <div>
+                        <div className="text-xs font-semibold text-white">{known.fullName}</div>
+                        <div className="text-[11px] font-mono text-[#A3BDB8]">{known.email}</div>
+                      </div>
+                      <ArrowRight className="w-3.5 h-3.5 text-[#00E5B0]" />
+                    </button>
+                  ))}
+                </div>
+
+                <form onSubmit={handleGoogleChooserSubmit} className="space-y-2 pt-1 border-t border-white/10">
+                  <input
+                    type="email"
+                    required
+                    data-testid="google-chooser-email-input"
+                    value={googleChooserEmail}
+                    onChange={(e) => setGoogleChooserEmail(e.target.value)}
+                    placeholder="yourname@gmail.com"
+                    className="w-full px-3 py-2 rounded-[8px] bg-[#030504] border border-[#00E5B0]/25 text-xs text-white placeholder-[#77837B] focus:outline-none focus:border-[#00E5B0]"
+                  />
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="text"
+                      value={googleChooserName}
+                      onChange={(e) => setGoogleChooserName(e.target.value)}
+                      placeholder="Full Name (Optional)"
+                      className="flex-1 px-3 py-2 rounded-[8px] bg-[#030504] border border-[#00E5B0]/20 text-xs text-white placeholder-[#77837B] focus:outline-none focus:border-[#00E5B0]"
+                    />
+                    <button
+                      type="submit"
+                      data-testid="google-chooser-submit-btn"
+                      className="px-4 py-2 rounded-[8px] bg-[#00E5B0] hover:bg-[#2AFADF] text-[#03120F] font-sans font-bold text-xs whitespace-nowrap cursor-pointer transition-colors"
+                    >
+                      Continue
+                    </button>
+                  </div>
+                </form>
+              </motion.div>
+            )}
+          </AnimatePresence>
 
           <div className="relative flex py-1 items-center">
             <div className="flex-grow border-t border-white/10" />
@@ -1446,11 +1561,10 @@ export const PublicPages: React.FC = () => {
   const twoStepChallenges = availableChallenges.filter((c) => c.type === 'two_step');
 
   return (
-    <main data-scroll-container className="bg-transparent text-[#FFFFFF] relative overflow-hidden" style={{ willChange: 'transform' }}>
+    <main data-scroll-container className="bg-transparent text-[#FFFFFF] relative overflow-hidden">
       {/* Top Scroll Progress Bar */}
       <div
         aria-hidden="true"
-        style={{ willChange: 'transform', transform: 'translate3d(0, 0, 0)' }}
         className="fixed top-0 left-0 right-0 h-[2px] z-50 pointer-events-none bg-transparent"
       >
         <div
@@ -1469,12 +1583,11 @@ export const PublicPages: React.FC = () => {
       {/* ====================================================================
           SECTION 1: HERO SECTION (GLOBAL 3D BACKGROUND + RIGHT-SIDE 3D COMPOSITION)
           ==================================================================== */}
-      <section data-scroll-container className="relative bg-transparent pt-8 sm:pt-12 pb-10 sm:pb-14 px-4 sm:px-8 border-b border-[#00E5B0]/15 overflow-hidden" style={{ willChange: 'transform' }}>
+      <section data-scroll-container className="relative bg-transparent pt-8 sm:pt-12 pb-10 sm:pb-14 px-4 sm:px-8 border-b border-[#00E5B0]/15 overflow-hidden">
         {/* Controlled Radial Aqua-Water Illumination strictly behind the right 3D composition */}
         <div
           aria-hidden="true"
           style={{
-            willChange: 'transform',
             background: 'radial-gradient(circle, rgba(0, 229, 176, 0.14) 0%, transparent 70%)',
           }}
           className="pointer-events-none absolute top-1/2 right-[8%] -translate-y-1/2 w-[540px] h-[540px] rounded-full"

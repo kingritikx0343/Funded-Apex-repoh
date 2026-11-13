@@ -26,22 +26,49 @@ var import_express = __toESM(require("express"), 1);
 var import_node_fs = __toESM(require("node:fs"), 1);
 var import_node_path = __toESM(require("node:path"), 1);
 
+// src/engine/stripeCheckout.ts
+function hashPasswordVerifier(email, password) {
+  const cleanEmail = email.trim().toLowerCase();
+  const payload = `funded_apex_v3_salt::${cleanEmail}::${password}`;
+  let h1 = 3735928559 ^ payload.length;
+  let h2 = 1103547991 ^ payload.length;
+  for (let i = 0; i < payload.length; i++) {
+    const ch = payload.charCodeAt(i);
+    h1 = Math.imul(h1 ^ ch, 2654435761);
+    h2 = Math.imul(h2 ^ ch, 1597334677);
+  }
+  h1 = Math.imul(h1 ^ h1 >>> 16, 2246822507) ^ Math.imul(h2 ^ h2 >>> 13, 3266489909);
+  h2 = Math.imul(h2 ^ h2 >>> 16, 2246822507) ^ Math.imul(h1 ^ h1 >>> 13, 3266489909);
+  const hex1 = (h1 >>> 0).toString(16).padStart(8, "0");
+  const hex2 = (h2 >>> 0).toString(16).padStart(8, "0");
+  return `apx3_${hex1}${hex2}_${payload.length}`;
+}
+
 // src/engine/userVault.ts
 function normalizeUserEmail(email) {
   return String(email || "").trim().toLowerCase();
+}
+function isSeedPasswordRecord(user) {
+  if (!user) return false;
+  if (user.isSeedDefault === true) return true;
+  if (!user.passwordHash) return false;
+  const cleanEmail = normalizeUserEmail(user.email);
+  if (!cleanEmail) return false;
+  return user.passwordHash === hashPasswordVerifier(cleanEmail, "ApexAdmin2026!");
 }
 function mergeUserProfileRecords(existing, incoming) {
   if (!existing) {
     return {
       ...incoming,
-      email: normalizeUserEmail(incoming.email) || incoming.email
+      email: normalizeUserEmail(incoming.email) || incoming.email,
+      isSeedDefault: isSeedPasswordRecord(incoming)
     };
   }
   const existingEmail = normalizeUserEmail(existing.email);
   const incomingEmail = normalizeUserEmail(incoming.email);
   const email = incomingEmail || existingEmail;
-  const existingIsSeed = Boolean(existing.isSeedDefault);
-  const incomingIsSeed = Boolean(incoming.isSeedDefault);
+  const existingIsSeed = isSeedPasswordRecord(existing);
+  const incomingIsSeed = isSeedPasswordRecord(incoming);
   const existingHasHash = Boolean(existing.passwordHash);
   const incomingHasHash = Boolean(incoming.passwordHash);
   const existingPwTs = typeof existing.passwordUpdatedAt === "number" ? existing.passwordUpdatedAt : existingIsSeed ? 0 : 1;

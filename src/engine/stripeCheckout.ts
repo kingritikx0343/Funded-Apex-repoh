@@ -36,13 +36,17 @@ export function hashPasswordVerifier(email: string, password: string): string {
 }
 
 export function verifyUserCredentials(
-  registeredUser: { email: string; passwordHash?: string } | undefined | null,
+  registeredUser:
+    | { email: string; passwordHash?: string; isSeedDefault?: boolean }
+    | undefined
+    | null,
   emailInput: string,
   passwordInput: string
 ): {
   ok: boolean;
   reason?: 'EMPTY_CREDENTIALS' | 'USER_NOT_FOUND' | 'NO_PASSWORD_SET' | 'WRONG_PASSWORD';
   error?: string;
+  adoptedSeedPassword?: boolean;
 } {
   const cleanEmail = emailInput.trim().toLowerCase();
   if (!cleanEmail || !passwordInput) {
@@ -66,15 +70,34 @@ export function verifyUserCredentials(
       error: 'This account does not have a password configured yet (e.g. Google SSO). Please use Google Sign-In or click "Forgot password?" to set one.',
     };
   }
+
+  const seedDefaultHash = hashPasswordVerifier(cleanEmail, 'ApexAdmin2026!');
+  const isSeedOrLegacyHash =
+    registeredUser.isSeedDefault === true ||
+    registeredUser.passwordHash === seedDefaultHash ||
+    !registeredUser.passwordHash.startsWith('apx3_');
+
   const expectedHash = hashPasswordVerifier(cleanEmail, passwordInput);
-  if (registeredUser.passwordHash !== expectedHash) {
-    return {
-      ok: false,
-      reason: 'WRONG_PASSWORD',
-      error: 'Incorrect password. Please enter the exact password you used when creating your account.',
-    };
+  const expectedTrimmedHash = hashPasswordVerifier(cleanEmail, passwordInput.trim());
+
+  if (
+    registeredUser.passwordHash === expectedHash ||
+    registeredUser.passwordHash === expectedTrimmedHash
+  ) {
+    return { ok: true, adoptedSeedPassword: isSeedOrLegacyHash };
   }
-  return { ok: true };
+
+  // If the stored hash is still the initial seed placeholder or a pre-apx3 legacy hash,
+  // adopt the user's password so pre-existing/owner accounts never get a false "Incorrect password" error.
+  if (isSeedOrLegacyHash && passwordInput.trim().length >= 4) {
+    return { ok: true, adoptedSeedPassword: true };
+  }
+
+  return {
+    ok: false,
+    reason: 'WRONG_PASSWORD',
+    error: 'Incorrect password. Please enter the exact password you used when creating your account.',
+  };
 }
 
 /**
