@@ -17,7 +17,6 @@ import {
   Cpu,
   Eye,
   EyeOff,
-  Globe,
   HelpCircle,
   Layers,
   Lock,
@@ -137,10 +136,7 @@ export const PublicPages: React.FC = () => {
     verifiedPayouts,
     leaderboard,
     user,
-    allUsers,
     loginWithEmail,
-    loginWithGoogle,
-    completeGoogleSignInWithProfile,
     registerWithEmail,
     sendPasswordReset,
     openStripeCheckout,
@@ -174,9 +170,6 @@ export const PublicPages: React.FC = () => {
   const [authReferral, setAuthReferral] = useState('');
   const [forgotEmail, setForgotEmail] = useState('');
   const [showForgotBox, setShowForgotBox] = useState(false);
-  const [showGoogleChooser, setShowGoogleChooser] = useState(false);
-  const [googleChooserEmail, setGoogleChooserEmail] = useState('');
-  const [googleChooserName, setGoogleChooserName] = useState('');
   const [authError, setAuthError] = useState<string | null>(null);
   const [authInfo, setAuthInfo] = useState<string | null>(null);
   const [authLoading, setAuthLoading] = useState(false);
@@ -419,43 +412,6 @@ export const PublicPages: React.FC = () => {
       }
     };
 
-    const handleGoogle = async () => {
-      setAuthError(null);
-      setAuthInfo(null);
-      setAuthLoading(true);
-      try {
-        await loginWithGoogle(false, authEmail.trim() || undefined);
-      } catch (err: any) {
-        if (err?.message === 'GOOGLE_CHOOSER_REQUIRED') {
-          if (authEmail.trim() && !googleChooserEmail) {
-            setGoogleChooserEmail(authEmail.trim());
-          }
-          setShowGoogleChooser(true);
-        } else {
-          setAuthError(err?.message || 'Google sign-in failed');
-        }
-      } finally {
-        setAuthLoading(false);
-      }
-    };
-
-    const handleGoogleChooserSubmit = async (e: React.FormEvent) => {
-      e.preventDefault();
-      setAuthError(null);
-      setAuthLoading(true);
-      try {
-        await completeGoogleSignInWithProfile({
-          email: googleChooserEmail.trim(),
-          fullName: googleChooserName.trim() || undefined,
-        });
-        setShowGoogleChooser(false);
-      } catch (err: any) {
-        setAuthError(err?.message || 'Google sign-in failed');
-      } finally {
-        setAuthLoading(false);
-      }
-    };
-
     const handleForgot = async (e?: React.FormEvent) => {
       if (e) e.preventDefault();
       setAuthError(null);
@@ -517,112 +473,6 @@ export const PublicPages: React.FC = () => {
               {authInfo}
             </div>
           )}
-
-          {/* Google SSO placed at the top for 1-click frictionless access */}
-          <button
-            type="button"
-            onClick={handleGoogle}
-            data-testid="auth-google-btn"
-            className="w-full py-3 px-4 rounded-[9px] bg-[#0D130F] hover:bg-[#131B15] border border-[#00E676]/35 hover:border-[#00E676] text-xs sm:text-sm font-semibold text-white flex items-center justify-center gap-2.5 cursor-pointer transition-all shadow-[0_4px_16px_rgba(0,0,0,0.45)]"
-          >
-            <Globe className="w-4 h-4 text-[#00E676]" />
-            <span>Continue with Google SSO</span>
-          </button>
-
-          {/* Instant Google Account Chooser (activates automatically on GitHub Pages / popup-restricted browsers) */}
-          <AnimatePresence initial={false}>
-            {showGoogleChooser && (
-              <motion.div
-                key="google-chooser-panel"
-                data-testid="google-chooser-panel"
-                initial={{ opacity: 0, y: -6 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -6 }}
-                transition={{ duration: 0.16, ease: [0.22, 1, 0.36, 1] }}
-                className="p-4 rounded-[12px] bg-[#050A08] border border-[#00E5B0]/35 space-y-3"
-              >
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2 text-xs font-bold text-[#FFFFFF]">
-                    <Globe className="w-3.5 h-3.5 text-[#00E5B0]" />
-                    <span>Choose a Google Account to Continue</span>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => setShowGoogleChooser(false)}
-                    className="text-[11px] text-[#A3BDB8] hover:text-white cursor-pointer"
-                  >
-                    Close
-                  </button>
-                </div>
-
-                <div className="space-y-1.5">
-                  {allUsers.slice(0, 3).map((known) => (
-                    <button
-                      key={known.email}
-                      type="button"
-                      data-testid={`google-quick-account-${known.email}`}
-                      onClick={async () => {
-                        setAuthLoading(true);
-                        try {
-                          await completeGoogleSignInWithProfile({
-                            email: known.email,
-                            fullName: known.fullName,
-                            uid: known.uid,
-                          });
-                          setShowGoogleChooser(false);
-                        } finally {
-                          setAuthLoading(false);
-                        }
-                      }}
-                      className="w-full px-3 py-2 rounded-[9px] bg-[#091215] hover:bg-[#0E1D22] border border-[#00E5B0]/20 hover:border-[#00E5B0]/50 flex items-center justify-between text-left transition-colors cursor-pointer"
-                    >
-                      <div>
-                        <div className="text-xs font-semibold text-white">{known.fullName}</div>
-                        <div className="text-[11px] font-mono text-[#A3BDB8]">{known.email}</div>
-                      </div>
-                      <ArrowRight className="w-3.5 h-3.5 text-[#00E5B0]" />
-                    </button>
-                  ))}
-                </div>
-
-                <form onSubmit={handleGoogleChooserSubmit} className="space-y-2 pt-1 border-t border-white/10">
-                  <input
-                    type="email"
-                    required
-                    data-testid="google-chooser-email-input"
-                    value={googleChooserEmail}
-                    onChange={(e) => setGoogleChooserEmail(e.target.value)}
-                    placeholder="yourname@gmail.com"
-                    className="w-full px-3 py-2 rounded-[8px] bg-[#030504] border border-[#00E5B0]/25 text-xs text-white placeholder-[#77837B] focus:outline-none focus:border-[#00E5B0]"
-                  />
-                  <div className="flex items-center gap-2">
-                    <input
-                      type="text"
-                      value={googleChooserName}
-                      onChange={(e) => setGoogleChooserName(e.target.value)}
-                      placeholder="Full Name (Optional)"
-                      className="flex-1 px-3 py-2 rounded-[8px] bg-[#030504] border border-[#00E5B0]/20 text-xs text-white placeholder-[#77837B] focus:outline-none focus:border-[#00E5B0]"
-                    />
-                    <button
-                      type="submit"
-                      data-testid="google-chooser-submit-btn"
-                      className="px-4 py-2 rounded-[8px] bg-[#00E5B0] hover:bg-[#2AFADF] text-[#03120F] font-sans font-bold text-xs whitespace-nowrap cursor-pointer transition-colors"
-                    >
-                      Continue
-                    </button>
-                  </div>
-                </form>
-              </motion.div>
-            )}
-          </AnimatePresence>
-
-          <div className="relative flex py-1 items-center">
-            <div className="flex-grow border-t border-white/10" />
-            <span className="flex-shrink mx-3 text-[11px] font-mono uppercase text-[#77837B]">
-              Or continue with email
-            </span>
-            <div className="flex-grow border-t border-white/10" />
-          </div>
 
           <form onSubmit={handleSubmit} className="space-y-4">
             {!isLogin && (
@@ -1465,7 +1315,7 @@ export const PublicPages: React.FC = () => {
           },
           {
             h: '2. Authentication & Security',
-            p: 'Authentication is managed via encrypted credentials and Google SSO. Administrative privileges are strictly enforced at the server layer.',
+            p: 'Authentication is managed via encrypted email and password credentials. Administrative privileges are strictly enforced at the server layer.',
           },
           {
             h: '3. Account Deletion Rights',
