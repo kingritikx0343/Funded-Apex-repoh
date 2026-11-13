@@ -2,11 +2,13 @@ import React, { useEffect, useRef, memo } from 'react';
 import * as THREE from 'three';
 
 /**
- * Restored 3D Aqua-Green Liquid Water & Floating 3D Geometric Shapes Background
- * - Layered transparently over the global portrait 3D background image (`body::before`).
- * - 100% GPU Vertex-Shader wave displacement & particle drift (zero CPU vertex buffer mutation per frame).
- * - Multi-part 3D geometric wireframe + crystal core shapes that float, orbit, and rotate smoothly.
- * - Includes hardware/software WebGL detection and `afterDraw` GPU fence pacing for stutter-free 60/120fps scrolling.
+ * Restored 3D Aqua-Green Liquid Water & Scroll-Animated Floating 3D Geometric Shapes Background
+ * - Layered transparently over the global 3D background artwork (`body::before`) without altering background colors.
+ * - 100% GPU Vertex-Shader wave displacement & particle drift (zero CPU vertex buffer mutation).
+ * - Multi-part 3D geometric wireframe + crystal core + orbital halo shapes that stay visible across the full
+ *   page and animate smoothly with bounded orbital glide, depth parallax, and scroll-velocity tilt/spin.
+ * - Uses uninterrupted native `requestAnimationFrame` on hardware GPUs (true 60/120fps) and WebGL2 `afterDraw`
+ *   fence pacing on software WebGL renderers.
  */
 export const MoonlitLiquidWaterBackground: React.FC = memo(() => {
   const mountRef = useRef<HTMLDivElement | null>(null);
@@ -34,7 +36,7 @@ export const MoonlitLiquidWaterBackground: React.FC = memo(() => {
     try {
       renderer = new THREE.WebGLRenderer({
         alpha: true,
-        antialias: false,
+        antialias: !isSoftwareGl,
         powerPreference: 'high-performance',
       });
     } catch {
@@ -42,8 +44,9 @@ export const MoonlitLiquidWaterBackground: React.FC = memo(() => {
     }
 
     renderer.outputColorSpace = THREE.SRGBColorSpace;
-    renderer.toneMapping = THREE.NoToneMapping;
-    renderer.setPixelRatio(isSoftwareGl ? 0.6 : 0.85);
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.1;
+    renderer.setPixelRatio(isSoftwareGl ? 1 : Math.min(window.devicePixelRatio, 2));
     renderer.setSize(window.innerWidth, window.innerHeight);
     renderer.setClearColor(0x000000, 0);
 
@@ -65,8 +68,8 @@ export const MoonlitLiquidWaterBackground: React.FC = memo(() => {
     camera.position.set(0, 2.4, 15);
     camera.lookAt(0, 0, 0);
 
-    // 1. High-Performance Lightweight GPU Vertex-Shader Liquid Wave Mesh (Peak 120FPS efficiency)
-    const waveGeo = new THREE.PlaneGeometry(36, 22, 20, 14);
+    // 1. Lightweight GPU Vertex-Shader Liquid Wave Mesh
+    const waveGeo = new THREE.PlaneGeometry(38, 24, 22, 16);
     const waveMat = new THREE.ShaderMaterial({
       transparent: true,
       wireframe: true,
@@ -102,16 +105,17 @@ export const MoonlitLiquidWaterBackground: React.FC = memo(() => {
 
     const waveMesh = new THREE.Mesh(waveGeo, waveMat);
     waveMesh.rotation.x = -Math.PI * 0.44;
-    waveMesh.position.set(0, -4.6, -3.5);
+    waveMesh.position.set(0, -4.55, -3.5);
     scene.add(waveMesh);
 
-    // 2. Composite 3D Animated Geometric Shapes (Outer Wireframe Hull + Inner Core + Orbit Ring)
+    // 2. Composite 3D Scroll-Animated Geometric Shapes (Outer Wireframe Hull + Inner Core + Orbit Halo)
     interface AnimatedShapeNode {
       group: THREE.Group;
       outer: THREE.Mesh;
       inner: THREE.Mesh;
       ring: THREE.Mesh;
       basePos: THREE.Vector3;
+      baseScale: number;
       rotSpeed: THREE.Vector3;
       floatSpeed: number;
       floatAmp: number;
@@ -124,20 +128,20 @@ export const MoonlitLiquidWaterBackground: React.FC = memo(() => {
       color: 0x00e5b0,
       wireframe: true,
       transparent: true,
-      opacity: 0.58,
+      opacity: 0.46,
       depthWrite: false,
     });
     const innerCoreMat = new THREE.MeshBasicMaterial({
       color: 0x38f8d2,
       transparent: true,
-      opacity: 0.22,
+      opacity: 0.16,
       depthWrite: false,
     });
     const orbitRingMat = new THREE.MeshBasicMaterial({
       color: 0x00e5b0,
       wireframe: true,
       transparent: true,
-      opacity: 0.42,
+      opacity: 0.34,
       depthWrite: false,
     });
 
@@ -151,7 +155,6 @@ export const MoonlitLiquidWaterBackground: React.FC = memo(() => {
     ];
     const ringGeo = new THREE.TorusGeometry(1.75, 0.035, 8, 40);
 
-    // Strictly 2 high-end floating geometric shapes (Left upper-mid & Right lower-mid)
     const shapePlacements: {
       pos: [number, number, number];
       scale: number;
@@ -160,10 +163,8 @@ export const MoonlitLiquidWaterBackground: React.FC = memo(() => {
       orbit: number;
       phase: number;
     }[] = [
-      // Shape 1 (Left Upper-Mid Flank): Faceted Icosahedron Crystal with inner core & orbital halo
-      { pos: [-6.2, 1.6, 0.3], scale: 1.25, speed: 0.65, amp: 0.75, orbit: 0.55, phase: 0.4 },
-      // Shape 2 (Right Lower-Mid Flank): Diamond Octahedron Crystal with inner core & orbital halo
-      { pos: [6.4, -1.2, -0.2], scale: 1.20, speed: 0.60, amp: 0.80, orbit: 0.60, phase: 2.4 },
+      { pos: [-8.9, 2.7, -0.4], scale: 1.15, speed: 0.72, amp: 0.68, orbit: 0.55, phase: 0.4 },
+      { pos: [9.1, -2.0, -0.3], scale: 1.12, speed: 0.66, amp: 0.74, orbit: 0.6, phase: 2.35 },
     ];
 
     shapePlacements.forEach((cfg, idx) => {
@@ -192,10 +193,11 @@ export const MoonlitLiquidWaterBackground: React.FC = memo(() => {
         inner,
         ring,
         basePos: new THREE.Vector3(cfg.pos[0], cfg.pos[1], cfg.pos[2]),
+        baseScale: cfg.scale,
         rotSpeed: new THREE.Vector3(
-          0.22 + (idx % 3) * 0.08,
-          0.28 + (idx % 2) * 0.09,
-          0.18 + (idx % 4) * 0.06
+          0.26 + (idx % 3) * 0.08,
+          0.32 + (idx % 2) * 0.09,
+          0.22 + (idx % 4) * 0.06
         ),
         floatSpeed: cfg.speed,
         floatAmp: cfg.amp,
@@ -204,7 +206,7 @@ export const MoonlitLiquidWaterBackground: React.FC = memo(() => {
       });
     });
 
-    // 3. Lightweight GPU-Animated Floating Aqua Particles (Zero lag)
+    // 3. Lightweight GPU-Animated Floating Aqua Particles
     const particleCount = 42;
     const positions = new Float32Array(particleCount * 3);
     const phases = new Float32Array(particleCount);
@@ -259,17 +261,19 @@ export const MoonlitLiquidWaterBackground: React.FC = memo(() => {
       renderer.compile(scene, camera);
     }
 
-    canvas.style.willChange = 'transform, opacity';
     canvas.style.transform = 'translate3d(0, 0, 0)';
     canvas.style.backfaceVisibility = 'hidden';
 
-    const clock = new THREE.Clock();
+    const startTimeMs = performance.now();
+    let lastTimeMs = startTimeMs;
     let frameId = 0;
+    let timerId: number | ReturnType<typeof setTimeout> = 0;
     let disposed = false;
 
-    // Fast & Butter-Smooth Scroll & Mouse Parallax Tracker with 60FPS rAF Damping
+    // Frame-rate-independent Scroll & Mouse Parallax state
     let targetScrollY = typeof window !== 'undefined' ? window.scrollY || 0 : 0;
     let smoothScrollY = targetScrollY;
+    let smoothVelocity = 0;
     let targetMouseX = 0;
     let targetMouseY = 0;
     let smoothMouseX = 0;
@@ -286,9 +290,30 @@ export const MoonlitLiquidWaterBackground: React.FC = memo(() => {
     window.addEventListener('scroll', handleScroll, { passive: true });
     window.addEventListener('mousemove', handleMouseMove, { passive: true });
 
-    // Dedicated afterDraw render loop so WebGL never queues frames ahead of scroll or pointer input
-    let timerId: number | ReturnType<typeof setTimeout> = 0;
-    const frameDelayMs = isSoftwareGl ? 80 : 16;
+    // Proper WebGL2 fence-sync pacing ONLY when running on software WebGL
+    function afterDraw(cb: () => void) {
+      const gl = renderer.getContext() as WebGL2RenderingContext;
+      if (!gl || typeof gl.fenceSync !== 'function') {
+        timerId = window.setTimeout(cb, 80);
+        return;
+      }
+      const sync = gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0);
+      gl.flush();
+      const poll = () => {
+        if (disposed) {
+          if (sync) gl.deleteSync(sync);
+          return;
+        }
+        const state = sync && gl.getSyncParameter(sync, gl.SYNC_STATUS);
+        if (state === gl.UNSIGNALED) {
+          timerId = window.setTimeout(poll, 5);
+        } else {
+          if (sync) gl.deleteSync(sync);
+          timerId = window.setTimeout(cb, 80);
+        }
+      };
+      timerId = window.setTimeout(poll, 5);
+    }
 
     const tick = () => {
       if (disposed) return;
@@ -299,61 +324,82 @@ export const MoonlitLiquidWaterBackground: React.FC = memo(() => {
         return;
       }
 
-      // Fast, instantaneous, buttery-smooth 60/120fps interpolation
-      smoothScrollY += (targetScrollY - smoothScrollY) * 0.26;
-      smoothMouseX += (targetMouseX - smoothMouseX) * 0.16;
-      smoothMouseY += (targetMouseY - smoothMouseY) * 0.16;
+      const nowMs = performance.now();
+      const delta = Math.min(0.05, Math.max(0.001, (nowMs - lastTimeMs) * 0.001));
+      lastTimeMs = nowMs;
+      const elapsed = (nowMs - startTimeMs) * 0.001;
 
-      const elapsed = clock.getElapsedTime();
-      waveMat.uniforms.uTime.value = elapsed * 1.45 + smoothScrollY * 0.0026;
-      particleMat.uniforms.uTime.value = elapsed * 1.25;
+      // Exponential damping keeps animations identically smooth across 60Hz, 120Hz, and software renderers
+      smoothScrollY = THREE.MathUtils.damp(smoothScrollY, targetScrollY, 10, delta);
+      const rawVelocity = THREE.MathUtils.clamp(targetScrollY - smoothScrollY, -2400, 2400);
+      smoothVelocity = THREE.MathUtils.damp(smoothVelocity, rawVelocity, 9, delta);
+      smoothMouseX = THREE.MathUtils.damp(smoothMouseX, targetMouseX, 7, delta);
+      smoothMouseY = THREE.MathUtils.damp(smoothMouseY, targetMouseY, 7, delta);
 
-      // Camera responds smoothly to both scroll and gentle mouse sway
-      camera.position.x = smoothMouseX * 0.65;
-      camera.position.y = 2.4 - smoothScrollY * 0.0018 - smoothMouseY * 0.45;
-      camera.rotation.x = -smoothScrollY * 0.00014 - smoothMouseY * 0.02;
-      camera.rotation.y = -smoothMouseX * 0.025;
+      const scrollPhase = smoothScrollY * 0.0026;
+      const velNorm = Math.min(1, Math.abs(smoothVelocity) / 850);
 
-      // Liquid wave reaction
-      waveMesh.position.y = -4.6 - smoothScrollY * 0.0028;
-      waveMesh.rotation.z = Math.sin(smoothScrollY * 0.002) * 0.05 + smoothMouseX * 0.02;
+      waveMat.uniforms.uTime.value = elapsed * 1.45 + smoothScrollY * 0.0028;
+      particleMat.uniforms.uTime.value = elapsed * 1.25 + smoothScrollY * 0.0014;
 
-      const scrollVelocity = targetScrollY - smoothScrollY;
+      // Subtle bounded camera parallax keeps shapes & liquid wave framed across full scroll depth
+      camera.position.x = smoothMouseX * 0.55;
+      camera.position.y = 2.4 - smoothMouseY * 0.36 + Math.sin(scrollPhase * 0.45) * 0.26;
+      camera.rotation.x = -smoothMouseY * 0.018 - smoothVelocity * 0.00003;
+      camera.rotation.y = -smoothMouseX * 0.022;
 
-      // 3D Shapes react dynamically to scroll via requestAnimationFrame with silky 60FPS physics
+      // Liquid wave horizon reaction (bounded so it never drifts off screen)
+      waveMesh.position.y = -4.55 + Math.sin(scrollPhase * 0.6) * 0.42;
+      waveMesh.rotation.z = Math.sin(scrollPhase * 0.55) * 0.06 + smoothMouseX * 0.02;
+
+      // Scroll-choreographed 3D shapes: bounded orbital sweep + dynamic tilt, spin & kinetic scale
       for (let i = 0; i < shapeNodes.length; i++) {
         const node = shapeNodes[i];
-        const t = elapsed * (node.floatSpeed * 1.25) + node.phase;
+        const dir = i === 0 ? 1 : -1;
+        const t = elapsed * node.floatSpeed + node.phase;
 
-        const scrollDisplacementY = -smoothScrollY * 0.0024 * (1 + i * 0.35) - smoothMouseY * 0.35;
-        const scrollSwayX = (i === 0 ? 1 : -1) * Math.sin(smoothScrollY * 0.0022 + node.phase) * 1.2 + smoothMouseX * 0.65;
+        const scrollOrbitX =
+          dir * Math.sin(scrollPhase * 0.92 + node.phase) * 1.35 + smoothMouseX * 0.6;
+        const scrollOrbitY =
+          Math.sin(scrollPhase * 1.15 + node.phase * 1.3) * 2.05 * dir - smoothMouseY * 0.38;
+        const scrollDepthZ = Math.cos(scrollPhase * 0.85 + node.phase) * 1.25;
 
-        node.group.position.x = node.basePos.x + Math.cos(t * 0.75) * node.orbitRadius + scrollSwayX;
-        node.group.position.y = node.basePos.y + Math.sin(t) * node.floatAmp + scrollDisplacementY;
-        node.group.position.z = node.basePos.z + Math.sin(t * 0.55) * (node.orbitRadius * 0.6);
+        node.group.position.x =
+          node.basePos.x + Math.cos(t * 0.78) * node.orbitRadius + scrollOrbitX;
+        node.group.position.y =
+          node.basePos.y + Math.sin(t) * node.floatAmp + scrollOrbitY;
+        node.group.position.z =
+          node.basePos.z + Math.sin(t * 0.58) * (node.orbitRadius * 0.65) + scrollDepthZ;
 
-        const scrollRotY = smoothScrollY * 0.0032;
-        const scrollRotX = scrollVelocity * 0.00075;
-        const scrollTiltZ = (i === 0 ? -1 : 1) * Math.sin(smoothScrollY * 0.0018) * 0.28 - scrollVelocity * 0.0005;
+        const dynamicScale =
+          node.baseScale *
+          (1 + Math.sin(scrollPhase * 0.9 + node.phase) * 0.08 + velNorm * 0.12);
+        node.group.scale.setScalar(dynamicScale);
 
-        node.group.rotation.z = scrollTiltZ;
-        node.group.rotation.x = scrollRotX;
+        node.group.rotation.x =
+          Math.sin(scrollPhase * 0.72 + node.phase) * 0.34 + smoothVelocity * 0.00085 * dir;
+        node.group.rotation.y = scrollPhase * 0.85 * dir + smoothMouseX * 0.22;
+        node.group.rotation.z =
+          Math.cos(scrollPhase * 0.65 + node.phase) * 0.28 - smoothVelocity * 0.00055 * dir;
 
-        node.outer.rotation.x = elapsed * node.rotSpeed.x * 1.25 + smoothScrollY * 0.0024;
-        node.outer.rotation.y = elapsed * node.rotSpeed.y * 1.25 + scrollRotY;
-        node.inner.rotation.x = -elapsed * node.rotSpeed.y * 1.4 - smoothScrollY * 0.0028;
-        node.inner.rotation.z = elapsed * node.rotSpeed.z * 1.45 + scrollRotY * 0.55;
-        node.ring.rotation.z = elapsed * 0.45 + node.phase + scrollRotY * 1.25;
-        node.ring.rotation.x = Math.PI * 0.35 + Math.sin(elapsed * 0.75 + smoothScrollY * 0.0012) * 0.18;
+        node.outer.rotation.x = elapsed * node.rotSpeed.x * 1.25 + scrollPhase * 1.1;
+        node.outer.rotation.y = elapsed * node.rotSpeed.y * 1.25 + scrollPhase * 1.45 * dir;
+        node.inner.rotation.x = -elapsed * node.rotSpeed.y * 1.45 - scrollPhase * 1.25;
+        node.inner.rotation.z = elapsed * node.rotSpeed.z * 1.5 + scrollPhase * 0.85 * dir;
+        node.ring.rotation.z = elapsed * 0.52 + node.phase + scrollPhase * 1.65 * dir;
+        node.ring.rotation.x =
+          Math.PI * 0.35 + Math.sin(elapsed * 0.75 + scrollPhase * 0.8) * 0.24;
       }
 
       renderer.render(scene, camera);
 
-      timerId = window.setTimeout(() => {
-        if (!disposed) {
-          frameId = requestAnimationFrame(tick);
-        }
-      }, frameDelayMs);
+      if (isSoftwareGl) {
+        afterDraw(() => {
+          if (!disposed) frameId = requestAnimationFrame(tick);
+        });
+      } else {
+        frameId = requestAnimationFrame(tick);
+      }
     };
 
     frameId = requestAnimationFrame(tick);
@@ -393,6 +439,7 @@ export const MoonlitLiquidWaterBackground: React.FC = memo(() => {
   return (
     <div
       aria-hidden="true"
+      data-testid="moonlit-3d-shapes-layer"
       className="fixed inset-0 pointer-events-none z-0 overflow-hidden select-none"
       style={{
         contain: 'strict',
@@ -400,8 +447,7 @@ export const MoonlitLiquidWaterBackground: React.FC = memo(() => {
         backfaceVisibility: 'hidden',
       }}
     >
-      {/* Restored Three.js 3D Animated Shapes & Liquid Wave Canvas */}
-      <div ref={mountRef} className="absolute inset-0 w-full h-full" />
+      <div ref={mountRef} className="w-full h-full" />
     </div>
   );
 });

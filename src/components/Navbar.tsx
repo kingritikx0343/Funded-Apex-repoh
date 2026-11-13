@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { motion } from 'framer-motion';
 import { PageRoute, usePlatform } from '../context/PlatformContext';
 import { FundedApexLogo } from './FundedApexLogo';
 import {
@@ -58,7 +59,12 @@ export const Navbar: React.FC = () => {
   ];
 
   return (
-    <header className="sticky top-0 z-50 w-full transition-all pointer-events-none">
+    <header
+      data-scroll-container
+      data-interactive-container
+      style={{ willChange: 'transform, opacity', transform: 'translate3d(0, 0, 0)' }}
+      className="sticky top-0 z-50 w-full transition-all pointer-events-none"
+    >
       {/* Top Promotion Banner — Full-Width Rectangular (No Round Corners) & Vibrant Green */}
       <div
         onClick={handlePromoClick}
@@ -191,17 +197,29 @@ export const Navbar: React.FC = () => {
       </div>
 
       {/* Simple, Clean, Fast 3-Line Navigation Drawer */}
-      <div
+      <motion.div
         data-testid="three-line-drawer"
+        data-interactive-container
         aria-hidden={!mobileMenuOpen}
-        className={`overflow-hidden transition-all duration-200 ease-out ${
+        initial={false}
+        animate={{
+          opacity: mobileMenuOpen ? 1 : 0,
+          y: mobileMenuOpen ? 0 : -6,
+        }}
+        transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
+        style={{ willChange: 'transform, opacity' }}
+        className={`overflow-hidden transition-[max-height,padding] duration-200 ease-out ${
           mobileMenuOpen
-            ? 'max-h-[680px] opacity-100 translate-y-0 pointer-events-auto pb-4'
-            : 'max-h-0 opacity-0 -translate-y-1.5 pointer-events-none pb-0'
+            ? 'max-h-[680px] pointer-events-auto pb-4'
+            : 'max-h-0 pointer-events-none pb-0'
         }`}
       >
         <div className="max-w-md mx-auto px-2.5 sm:px-4 pt-2">
-          <div className="rounded-[24px] bg-[#061318] border border-[#00E5B0]/30 px-5 py-4 shadow-[0_24px_60px_rgba(0,0,0,0.92)]">
+          <div
+            data-interactive-container
+            style={{ willChange: 'transform, opacity', transform: 'translate3d(0, 0, 0)' }}
+            className="rounded-[24px] bg-[#061318] border border-[#00E5B0]/30 px-5 py-4 shadow-[0_24px_60px_rgba(0,0,0,0.92)]"
+          >
             <nav className="flex flex-col space-y-1" aria-label="Primary 3-Line Navigation">
               {/* 1. MODELS */}
               <div>
@@ -371,7 +389,7 @@ export const Navbar: React.FC = () => {
             </div>
           </div>
         </div>
-      </div>
+      </motion.div>
     </header>
   );
 };

@@ -1,6 +1,7 @@
 import express from 'express';
 import fs from 'node:fs';
 import path from 'node:path';
+import { mergeUserDirectories } from './src/engine/userVault';
 
 const PORT = Number(process.env.PORT) || 3000;
 const HOST = '0.0.0.0';
@@ -78,7 +79,7 @@ async function startServer() {
       const merged = {
         ...existing,
         ...incoming,
-        users: mergeById(existing.users, incoming.users, 'uid'),
+        users: mergeUserDirectories(existing.users, incoming.users),
         accounts: mergeById(existing.accounts, incoming.accounts || incoming.trading_accounts, 'id'),
         orders: mergeById(existing.orders, incoming.orders, 'id'),
         purchaseRequests: mergeById(existing.purchaseRequests, incomingPurchaseRequests, 'id'),

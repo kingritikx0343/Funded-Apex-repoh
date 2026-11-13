@@ -1069,3 +1069,87 @@ test('calculateOrderPnlSnapshot and evaluateAccountRiskMetrics explicitly stop u
   assert.equal(metrics.equity, 52493);
 });
 
+test('mergeUserDirectories preserves passwords, deduplicates by email, and never lets stale/seed records overwrite user passwords', async () => {
+  const { mergeUserDirectories, mergeUserProfileRecords } = await import('./userVault');
+  type VaultUserRecord = import('./userVault').VaultUserRecord;
+  const { hashPasswordVerifier, verifyUserCredentials } = await import('./stripeCheckout');
+
+  const seedAdmin: VaultUserRecord = {
+    uid: 'admin-owner-1',
+    fullName: 'Owner Seed',
+    email: 'kingritikx0343@gmail.com',
+    country: 'India',
+    referralCode: 'APEX-OWNER',
+    role: 'super_admin',
+    rewardPoints: 0,
+    mfaEnabled: true,
+    deletionRequested: false,
+    passwordHash: hashPasswordVerifier('kingritikx0343@gmail.com', 'ApexAdmin2026!'),
+    passwordUpdatedAt: 0,
+    isSeedDefault: true,
+    createdAt: '2026-11-01T00:00:00.000Z',
+  };
+
+  const realUserUpdate: VaultUserRecord = {
+    uid: 'fb-uid-999',
+    fullName: 'Ritik Real',
+    email: 'KINGRITIKX0343@GMAIL.COM',
+    country: 'India',
+    referralCode: 'APEX-OWNER',
+    role: 'user',
+    rewardPoints: 450,
+    mfaEnabled: true,
+    deletionRequested: false,
+    passwordHash: hashPasswordVerifier('kingritikx0343@gmail.com', 'MyCustomSecret2026!'),
+    passwordUpdatedAt: 1700000100000,
+    isSeedDefault: false,
+    createdAt: '2026-11-05T00:00:00.000Z',
+  };
+
+  // Seed record arriving after real user record must NOT overwrite password or rewardPoints or downgrade super_admin
+  const mergedForward = mergeUserDirectories([realUserUpdate], [seedAdmin]);
+  assert.equal(mergedForward.length, 1);
+  assert.equal(mergedForward[0].email, 'kingritikx0343@gmail.com');
+  assert.equal(mergedForward[0].passwordHash, realUserUpdate.passwordHash);
+  assert.equal(mergedForward[0].rewardPoints, 450);
+  assert.equal(mergedForward[0].role, 'super_admin');
+
+  // Newer passwordUpdatedAt always wins over older timestamp, while stale tab cannot revert it
+  const newerPasswordRecord: VaultUserRecord = {
+    ...realUserUpdate,
+    passwordHash: hashPasswordVerifier('kingritikx0343@gmail.com', 'NewUpdatedPass2026!'),
+    passwordUpdatedAt: 1700000200000,
+  };
+  const afterStaleTabSync = mergeUserDirectories([newerPasswordRecord], [realUserUpdate]);
+  assert.equal(afterStaleTabSync.length, 1);
+  assert.equal(afterStaleTabSync[0].passwordHash, newerPasswordRecord.passwordHash);
+
+  // Passwordless update (e.g. from Firebase onAuthStateChanged or guest profile) never deletes existing passwordHash
+  const authShell: VaultUserRecord = {
+    uid: 'fb-uid-999',
+    fullName: 'Ritik Real',
+    email: 'kingritikx0343@gmail.com',
+    country: 'United States',
+    referralCode: 'APEX-OWNER',
+    role: 'user',
+    rewardPoints: 0,
+    mfaEnabled: false,
+    deletionRequested: false,
+    createdAt: '2026-11-12T00:00:00.000Z',
+  };
+  const preserved = mergeUserProfileRecords(newerPasswordRecord, authShell);
+  assert.equal(preserved.passwordHash, newerPasswordRecord.passwordHash);
+  assert.equal(preserved.country, 'India');
+  assert.equal(preserved.rewardPoints, 450);
+
+  // verifyUserCredentials distinguishes SSO/guest accounts without passwordHash from wrong passwords
+  const noPwRes = verifyUserCredentials(authShell, 'kingritikx0343@gmail.com', 'anything');
+  assert.equal(noPwRes.ok, false);
+  assert.equal(noPwRes.reason, 'NO_PASSWORD_SET');
+
+  // Exact login with trimmed/mixed-case email passes cleanly
+  const validLogin = verifyUserCredentials(preserved, '  KingRitikX0343@gmail.com  ', 'NewUpdatedPass2026!');
+  assert.equal(validLogin.ok, true);
+});
+
+

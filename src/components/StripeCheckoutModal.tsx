@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { createPortal } from 'react-dom';
+import { AnimatePresence, motion } from 'framer-motion';
 import { usePlatform } from '../context/PlatformContext';
 import { COUNTRIES, INITIAL_CHALLENGES } from '../data/platformData';
 import { computeStripeCheckoutBreakdown } from '../engine/stripeCheckout';
@@ -411,17 +412,32 @@ export const StripeCheckoutModal: React.FC = () => {
   };
 
   return createPortal(
-    <div
-      role="dialog"
-      aria-modal="true"
-      onClick={(e) => {
-        if (e.target === e.currentTarget) {
-          closeStripeCheckout();
-        }
-      }}
-      className="fixed inset-0 z-[100] flex items-center justify-center bg-black/85 backdrop-blur-md p-3 sm:p-4 overflow-y-auto"
-    >
-      <div className="w-full max-w-lg rounded-[24px] bg-[#071318]/98 backdrop-blur-2xl border border-[#00E5B0]/35 shadow-[0_32px_95px_rgba(0,0,0,0.96),inset_0_1px_0_rgba(56,248,210,0.18)] overflow-hidden my-auto apex-scale-in">
+    <AnimatePresence>
+      <motion.div
+        role="dialog"
+        aria-modal="true"
+        data-interactive-container
+        style={{ willChange: 'transform, opacity' }}
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        exit={{ opacity: 0 }}
+        transition={{ duration: 0.16, ease: [0.22, 1, 0.36, 1] }}
+        onClick={(e) => {
+          if (e.target === e.currentTarget) {
+            closeStripeCheckout();
+          }
+        }}
+        className="fixed inset-0 z-[100] flex items-center justify-center bg-black/85 p-3 sm:p-4 overflow-y-auto"
+      >
+        <motion.div
+          data-interactive-container
+          style={{ willChange: 'transform, opacity', transform: 'translate3d(0, 0, 0)' }}
+          initial={{ opacity: 0, y: 10, scale: 0.985 }}
+          animate={{ opacity: 1, y: 0, scale: 1 }}
+          exit={{ opacity: 0, y: 8, scale: 0.985 }}
+          transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
+          className="w-full max-w-lg rounded-[24px] bg-[#071318]/98 border border-[#00E5B0]/35 shadow-[0_32px_95px_rgba(0,0,0,0.96),inset_0_1px_0_rgba(56,248,210,0.18)] overflow-hidden my-auto"
+        >
         {/* HEADER BAR — Compact 1-Line "Secure checkout" badge */}
         <div className="flex items-center justify-between gap-2 px-4 sm:px-5 py-3.5 border-b border-[#00E5B0]/18 bg-[#050E13]">
           <div className="flex items-center gap-2 min-w-0 shrink">
@@ -495,7 +511,15 @@ export const StripeCheckoutModal: React.FC = () => {
         )}
 
         {/* CONTENT AREA */}
-        <div className="p-5 sm:p-6 space-y-5">
+        <motion.div
+          key={step}
+          data-interactive-container
+          style={{ willChange: 'transform, opacity', transform: 'translate3d(0, 0, 0)' }}
+          initial={{ opacity: 0.9, y: 4 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.16, ease: [0.22, 1, 0.36, 1] }}
+          className="p-5 sm:p-6 space-y-5"
+        >
           {/* 1. INITIAL LOADING STATE */}
           {step === 'INITIAL_LOADING' && (
             <div className="py-14 text-center space-y-4">
@@ -1056,9 +1080,10 @@ export const StripeCheckoutModal: React.FC = () => {
               </div>
             </div>
           )}
-        </div>
-      </div>
-    </div>,
+        </motion.div>
+        </motion.div>
+      </motion.div>
+    </AnimatePresence>,
     document.body
   );
 };

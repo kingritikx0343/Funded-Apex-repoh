@@ -41,7 +41,7 @@ export function verifyUserCredentials(
   passwordInput: string
 ): {
   ok: boolean;
-  reason?: 'EMPTY_CREDENTIALS' | 'USER_NOT_FOUND' | 'WRONG_PASSWORD';
+  reason?: 'EMPTY_CREDENTIALS' | 'USER_NOT_FOUND' | 'NO_PASSWORD_SET' | 'WRONG_PASSWORD';
   error?: string;
 } {
   const cleanEmail = emailInput.trim().toLowerCase();
@@ -59,8 +59,15 @@ export function verifyUserCredentials(
       error: 'No account found with this email address. Please click "Create Account" to register first.',
     };
   }
+  if (!registeredUser.passwordHash) {
+    return {
+      ok: false,
+      reason: 'NO_PASSWORD_SET',
+      error: 'This account does not have a password configured yet (e.g. Google SSO). Please use Google Sign-In or click "Forgot password?" to set one.',
+    };
+  }
   const expectedHash = hashPasswordVerifier(cleanEmail, passwordInput);
-  if (!registeredUser.passwordHash || registeredUser.passwordHash !== expectedHash) {
+  if (registeredUser.passwordHash !== expectedHash) {
     return {
       ok: false,
       reason: 'WRONG_PASSWORD',

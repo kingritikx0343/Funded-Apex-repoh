@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
+import { AnimatePresence, motion } from 'framer-motion';
 import { usePlatform } from '../context/PlatformContext';
 import { ACCOUNT_SIZES, COUNTRIES, FAQ_ITEMS, ChallengeTemplate } from '../data/platformData';
 import { ChallengeType } from '../engine/tradingEngine';
@@ -178,24 +179,34 @@ export const PublicPages: React.FC = () => {
 
   const scrollBarRef = useRef<HTMLDivElement | null>(null);
 
-  // Scroll Progress Bar
+  // Scroll Progress Bar (Zero layout-read during scroll for locked 60FPS)
   useEffect(() => {
     if (route !== 'home') return;
     let rafId = 0;
+    let cachedMaxScroll = Math.max(1, document.documentElement.scrollHeight - window.innerHeight);
+
+    const measureDocHeight = () => {
+      cachedMaxScroll = Math.max(1, document.documentElement.scrollHeight - window.innerHeight);
+    };
+
     const updateScroll = () => {
       rafId = 0;
       if (!scrollBarRef.current) return;
-      const docHeight = document.documentElement.scrollHeight - window.innerHeight;
-      const progress = docHeight > 0 ? Math.min(1, Math.max(0, window.scrollY / docHeight)) : 0;
-      scrollBarRef.current.style.transform = `scaleX(${progress.toFixed(4)})`;
+      const progress = Math.min(1, Math.max(0, window.scrollY / cachedMaxScroll));
+      scrollBarRef.current.style.transform = `scale3d(${progress.toFixed(4)}, 1, 1)`;
     };
+
     const onScroll = () => {
       if (!rafId) rafId = window.requestAnimationFrame(updateScroll);
     };
-    window.addEventListener('scroll', onScroll, { passive: true });
+
+    measureDocHeight();
     updateScroll();
+    window.addEventListener('scroll', onScroll, { passive: true });
+    window.addEventListener('resize', measureDocHeight, { passive: true });
     return () => {
       window.removeEventListener('scroll', onScroll);
+      window.removeEventListener('resize', measureDocHeight);
       if (rafId) window.cancelAnimationFrame(rafId);
     };
   }, [route]);
@@ -249,18 +260,33 @@ export const PublicPages: React.FC = () => {
     const ch = detailModalChallenge;
 
     return createPortal(
-      <div
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="program-spec-title"
-        onClick={(e) => {
-          if (e.target === e.currentTarget) {
-            setDetailModalChallenge(null);
-          }
-        }}
-        className="fixed inset-0 z-[100] flex items-center justify-center bg-black/85 backdrop-blur-md p-4 sm:p-6 overflow-y-auto"
-      >
-        <div className="relative w-full max-w-xl max-h-[90vh] overflow-y-auto my-auto rounded-[24px] bg-[#071318]/98 backdrop-blur-2xl border border-[#00E5B0]/35 p-6 sm:p-7 space-y-5 shadow-[0_32px_95px_rgba(0,0,0,0.96),inset_0_1px_0_rgba(56,248,210,0.18)] custom-scrollbar apex-scale-in">
+      <AnimatePresence>
+        <motion.div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="program-spec-title"
+          data-interactive-container
+          style={{ willChange: 'transform, opacity' }}
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          transition={{ duration: 0.16, ease: [0.22, 1, 0.36, 1] }}
+          onClick={(e) => {
+            if (e.target === e.currentTarget) {
+              setDetailModalChallenge(null);
+            }
+          }}
+          className="fixed inset-0 z-[100] flex items-center justify-center bg-black/85 p-4 sm:p-6 overflow-y-auto"
+        >
+          <motion.div
+            data-interactive-container
+            style={{ willChange: 'transform, opacity', transform: 'translate3d(0, 0, 0)' }}
+            initial={{ opacity: 0, y: 10, scale: 0.985 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 8, scale: 0.985 }}
+            transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
+            className="relative w-full max-w-xl max-h-[90vh] overflow-y-auto my-auto rounded-[24px] bg-[#071318]/98 border border-[#00E5B0]/35 p-6 sm:p-7 space-y-5 shadow-[0_32px_95px_rgba(0,0,0,0.96),inset_0_1px_0_rgba(56,248,210,0.18)] custom-scrollbar"
+          >
           <div className="flex items-start justify-between gap-4 border-b border-[#00E5B0]/20 pb-4">
             <div>
               <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-[#00E5B0]/12 border border-[#00E5B0]/30 text-[10px] font-mono font-bold uppercase tracking-wider text-[#00E5B0]">
@@ -351,8 +377,9 @@ export const PublicPages: React.FC = () => {
               Start Challenge — ${ch.priceUsd}
             </button>
           </div>
-        </div>
-      </div>,
+        </motion.div>
+      </motion.div>
+    </AnimatePresence>,
       document.body
     );
   };
@@ -423,9 +450,21 @@ export const PublicPages: React.FC = () => {
       <main className="min-h-[calc(100vh-80px)] bg-transparent flex items-center justify-center px-4 py-12 relative overflow-hidden">
         <div
           aria-hidden="true"
-          className="pointer-events-none absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[540px] h-[540px] rounded-full bg-[#00E676]/[0.05] blur-[130px]"
+          style={{
+            willChange: 'transform',
+            background: 'radial-gradient(circle, rgba(0, 230, 118, 0.08) 0%, transparent 70%)',
+          }}
+          className="pointer-events-none absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[540px] h-[540px] rounded-full"
         />
-        <div className="w-full max-w-md rounded-[14px] bg-[#090D0A] border border-[#00E676]/20 p-7 sm:p-8 space-y-6 relative z-10 shadow-[0_24px_70px_rgba(0,0,0,0.92)]">
+        <motion.div
+          key={route}
+          data-interactive-container
+          style={{ willChange: 'transform, opacity', transform: 'translate3d(0, 0, 0)' }}
+          initial={false}
+          animate={{ opacity: 1, y: 0, scale: 1 }}
+          transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
+          className="w-full max-w-md rounded-[14px] bg-[#090D0A] border border-[#00E676]/20 p-7 sm:p-8 space-y-6 relative z-10 shadow-[0_24px_70px_rgba(0,0,0,0.92)]"
+        >
           <div className="space-y-2 text-center">
             <div className="flex justify-center mb-3">
               <FundedApexLogo variant="compact" size="md" />
@@ -603,43 +642,54 @@ export const PublicPages: React.FC = () => {
           </form>
 
           {/* Forgot Password Email Recovery Box — ONLY shown after user clicks "Forgot password?" */}
-          {isLogin && showForgotBox && (
-            <div className="pt-3 border-t border-white/10 space-y-2.5">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-semibold text-[#A3BDB8] flex items-center gap-1.5">
-                  <Mail className="w-3.5 h-3.5 text-[#00E5B0]" />
-                  <span>Reset Password via Registered Email</span>
-                </span>
-                <button
-                  type="button"
-                  onClick={() => setShowForgotBox(false)}
-                  className="text-[11px] font-medium text-[#A3BDB8] hover:text-white cursor-pointer"
-                >
-                  Cancel
-                </button>
-              </div>
+          <AnimatePresence initial={false}>
+            {isLogin && showForgotBox && (
+              <motion.div
+                key="forgot-password-panel"
+                data-interactive-container
+                style={{ willChange: 'transform, opacity', transform: 'translate3d(0, 0, 0)' }}
+                initial={{ opacity: 0, y: -6 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -6 }}
+                transition={{ duration: 0.16, ease: [0.22, 1, 0.36, 1] }}
+                className="pt-3 border-t border-white/10 space-y-2.5"
+              >
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-semibold text-[#A3BDB8] flex items-center gap-1.5">
+                    <Mail className="w-3.5 h-3.5 text-[#00E5B0]" />
+                    <span>Reset Password via Registered Email</span>
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setShowForgotBox(false)}
+                    className="text-[11px] font-medium text-[#A3BDB8] hover:text-white cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                </div>
 
-              <form onSubmit={handleForgot} className="flex items-center gap-2">
-                <input
-                  ref={forgotInputRef}
-                  type="email"
-                  required
-                  data-testid="forgot-password-email-input"
-                  value={forgotEmail}
-                  onChange={(e) => setForgotEmail(e.target.value)}
-                  placeholder="Enter your email for password reset..."
-                  className="flex-1 px-3 py-2 rounded-[9px] bg-[#030504] border border-[#00E5B0]/25 text-xs text-white placeholder-[#77837B] focus:outline-none focus:border-[#00E5B0]"
-                />
-                <button
-                  type="submit"
-                  data-testid="forgot-password-submit-btn"
-                  className="px-3.5 py-2 rounded-[9px] bg-[#0D1E24] hover:bg-[#00E5B0] text-[#00E5B0] hover:text-[#020A0D] border border-[#00E5B0]/35 font-sans font-bold text-xs whitespace-nowrap transition-colors cursor-pointer"
-                >
-                  Send Reset Link
-                </button>
-              </form>
-            </div>
-          )}
+                <form onSubmit={handleForgot} className="flex items-center gap-2">
+                  <input
+                    ref={forgotInputRef}
+                    type="email"
+                    required
+                    data-testid="forgot-password-email-input"
+                    value={forgotEmail}
+                    onChange={(e) => setForgotEmail(e.target.value)}
+                    placeholder="Enter your email for password reset..."
+                    className="flex-1 px-3 py-2 rounded-[9px] bg-[#030504] border border-[#00E5B0]/25 text-xs text-white placeholder-[#77837B] focus:outline-none focus:border-[#00E5B0]"
+                  />
+                  <button
+                    type="submit"
+                    data-testid="forgot-password-submit-btn"
+                    className="px-3.5 py-2 rounded-[9px] bg-[#0D1E24] hover:bg-[#00E5B0] text-[#00E5B0] hover:text-[#020A0D] border border-[#00E5B0]/35 font-sans font-bold text-xs whitespace-nowrap transition-colors cursor-pointer"
+                  >
+                    Send Reset Link
+                  </button>
+                </form>
+              </motion.div>
+            )}
+          </AnimatePresence>
 
           <div className="text-center text-xs text-[#A7B1AA] pt-1">
             {isLogin ? (
@@ -672,7 +722,7 @@ export const PublicPages: React.FC = () => {
               </>
             )}
           </div>
-        </div>
+        </motion.div>
       </main>
     );
   }
@@ -1396,15 +1446,20 @@ export const PublicPages: React.FC = () => {
   const twoStepChallenges = availableChallenges.filter((c) => c.type === 'two_step');
 
   return (
-    <main className="bg-transparent text-[#FFFFFF] relative overflow-hidden">
+    <main data-scroll-container className="bg-transparent text-[#FFFFFF] relative overflow-hidden" style={{ willChange: 'transform' }}>
       {/* Top Scroll Progress Bar */}
       <div
         aria-hidden="true"
+        style={{ willChange: 'transform', transform: 'translate3d(0, 0, 0)' }}
         className="fixed top-0 left-0 right-0 h-[2px] z-50 pointer-events-none bg-transparent"
       >
         <div
           ref={scrollBarRef}
-          style={{ transform: 'scaleX(0)', transformOrigin: '0% 50%' }}
+          style={{
+            willChange: 'transform',
+            transform: 'scale3d(0, 1, 1)',
+            transformOrigin: '0% 50%',
+          }}
           className="h-full w-full bg-[#00E676]"
         />
       </div>
@@ -1414,11 +1469,15 @@ export const PublicPages: React.FC = () => {
       {/* ====================================================================
           SECTION 1: HERO SECTION (GLOBAL 3D BACKGROUND + RIGHT-SIDE 3D COMPOSITION)
           ==================================================================== */}
-      <section className="relative bg-transparent pt-8 sm:pt-12 pb-10 sm:pb-14 px-4 sm:px-8 border-b border-[#00E5B0]/15 overflow-hidden">
+      <section data-scroll-container className="relative bg-transparent pt-8 sm:pt-12 pb-10 sm:pb-14 px-4 sm:px-8 border-b border-[#00E5B0]/15 overflow-hidden" style={{ willChange: 'transform' }}>
         {/* Controlled Radial Aqua-Water Illumination strictly behind the right 3D composition */}
         <div
           aria-hidden="true"
-          className="pointer-events-none absolute top-1/2 right-[8%] -translate-y-1/2 w-[540px] h-[540px] rounded-full bg-[#00E5B0]/[0.09] blur-[145px]"
+          style={{
+            willChange: 'transform',
+            background: 'radial-gradient(circle, rgba(0, 229, 176, 0.14) 0%, transparent 70%)',
+          }}
+          className="pointer-events-none absolute top-1/2 right-[8%] -translate-y-1/2 w-[540px] h-[540px] rounded-full"
         />
 
         <div className="max-w-[1380px] mx-auto grid grid-cols-1 lg:grid-cols-12 gap-8 lg:gap-10 items-center relative z-10">

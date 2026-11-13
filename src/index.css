@@ -424,8 +424,6 @@
     box-shadow 220ms ease,
     transform 200ms cubic-bezier(0.16, 1, 0.3, 1),
     opacity 200ms ease;
-  will-change: transform, opacity;
-  transform: translate3d(0, 0, 0);
   backface-visibility: hidden;
 }
 
@@ -473,8 +471,6 @@
     box-shadow 200ms ease,
     transform 180ms cubic-bezier(0.16, 1, 0.3, 1),
     opacity 180ms ease;
-  will-change: transform, opacity;
-  transform: translate3d(0, 0, 0);
   backface-visibility: hidden;
 }
 
@@ -503,8 +499,6 @@
     border-color 200ms ease,
     box-shadow 200ms ease,
     opacity 200ms ease;
-  will-change: transform, opacity;
-  transform: translate3d(0, 0, 0);
   backface-visibility: hidden;
 }
 
@@ -544,8 +538,6 @@
     box-shadow 180ms cubic-bezier(0.16, 1, 0.3, 1),
     opacity 160ms ease,
     filter 160ms ease;
-  will-change: transform, opacity;
-  transform: translate3d(0, 0, 0);
   backface-visibility: hidden;
 }
 
@@ -575,8 +567,6 @@
     color 180ms ease,
     box-shadow 180ms ease,
     opacity 180ms ease;
-  will-change: transform, opacity;
-  transform: translate3d(0, 0, 0);
   backface-visibility: hidden;
 }
 
@@ -701,9 +691,7 @@ tbody tr {
 /* Zero-Jank Fluid GPU Scroll Surface */
 .apex-scroll-unit {
   backface-visibility: hidden;
-  transition: opacity 300ms ease, transform 300ms ease;
-  will-change: transform, opacity;
-  transform: translate3d(0, 0, 0);
+  transition: opacity 280ms ease, transform 280ms ease;
 }
 
 .apex-scroll-unit.apex-scroll-active {

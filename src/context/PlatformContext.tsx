@@ -83,6 +83,10 @@ import {
   hashPasswordVerifier,
   verifyUserCredentials,
 } from '../engine/stripeCheckout';
+import {
+  mergeUserDirectories,
+  mergeUserProfileRecords,
+} from '../engine/userVault';
 
 export type PageRoute =
   | 'home'
@@ -124,6 +128,8 @@ export interface UserProfileData {
   deletionRequested: boolean;
   avatarUrl?: string;
   passwordHash?: string;
+  passwordUpdatedAt?: number;
+  isSeedDefault?: boolean;
   createdAt: string;
   kycStatus?: 'unsubmitted' | 'pending' | 'verified' | 'rejected';
   kycDocType?: string;
@@ -623,6 +629,8 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         mfaEnabled: true,
         deletionRequested: false,
         passwordHash: hashPasswordVerifier('admin@fundedapex.com', 'ApexAdmin2026!'),
+        passwordUpdatedAt: 0,
+        isSeedDefault: true,
         createdAt: '2026-11-01T00:00:00.000Z',
       },
       {
@@ -636,6 +644,8 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         mfaEnabled: true,
         deletionRequested: false,
         passwordHash: hashPasswordVerifier('kingritikx0343@gmail.com', 'ApexAdmin2026!'),
+        passwordUpdatedAt: 0,
+        isSeedDefault: true,
         createdAt: '2026-11-01T00:00:00.000Z',
       },
     ];
@@ -644,13 +654,7 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       if (saved) {
         const parsed: UserProfileData[] = JSON.parse(saved);
         if (Array.isArray(parsed) && parsed.length > 0) {
-          const merged = [...parsed];
-          for (const adm of defaultAdmins) {
-            if (!merged.some((u) => u.email.toLowerCase() === adm.email.toLowerCase())) {
-              merged.push(adm);
-            }
-          }
-          return merged;
+          return mergeUserDirectories(defaultAdmins, parsed);
         }
       }
       return defaultAdmins;
@@ -1170,28 +1174,26 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       }
       const v = data.vault;
       if (Array.isArray(v.users) && v.users.length > 0) {
+        let mergedUsersSnapshot: UserProfileData[] = [];
         setAllUsers((prev) => {
-          const byKey = new Map<string, UserProfileData>();
-          v.users.forEach((u: UserProfileData) => {
-            if (u?.email) byKey.set(u.email.toLowerCase(), u);
-          });
-          prev.forEach((u) => {
-            if (u?.email) {
-              const key = u.email.toLowerCase();
-              const vaultUser = byKey.get(key);
-              byKey.set(key, {
-                ...vaultUser,
-                ...u,
-                passwordHash: u.passwordHash || vaultUser?.passwordHash,
-              });
-            }
-          });
-          const next = Array.from(byKey.values());
+          const next = mergeUserDirectories(v.users as UserProfileData[], prev);
+          mergedUsersSnapshot = next;
           if (next.length === prev.length && JSON.stringify(next) === JSON.stringify(prev)) {
             return prev;
           }
           return next;
         });
+        if (mergedUsersSnapshot.length > 0) {
+          setUser((prevUser) => {
+            if (!prevUser) return prevUser;
+            const matched = mergedUsersSnapshot.find(
+              (u) => u.email.toLowerCase() === prevUser.email.toLowerCase()
+            );
+            if (!matched) return prevUser;
+            const safeMerged = mergeUserProfileRecords(prevUser, matched);
+            return JSON.stringify(safeMerged) === JSON.stringify(prevUser) ? prevUser : safeMerged;
+          });
+        }
       }
       if (Array.isArray(v.accounts) && v.accounts.length > 0) {
         setAccounts((prev) => {
@@ -1374,19 +1376,13 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
             (u) => u.uid === loadedProfile.uid || u.email.toLowerCase() === cleanEmail
           );
           if (existing) {
-            if (['admin', 'super_admin'].includes(existing.role)) {
-              loadedProfile.role = existing.role;
-            }
+            const safeUser = mergeUserProfileRecords(existing, {
+              ...loadedProfile,
+              role: ['admin', 'super_admin'].includes(existing.role) ? existing.role : loadedProfile.role,
+              createdAt: existing.createdAt || loadedProfile.createdAt,
+            });
             return prev.map((u) =>
-              u.uid === existing.uid || u.email.toLowerCase() === cleanEmail
-                ? {
-                    ...existing,
-                    ...loadedProfile,
-                    passwordHash: existing.passwordHash,
-                    country: existing.country || loadedProfile.country,
-                    role: loadedProfile.role,
-                  }
-                : u
+              u.uid === existing.uid || u.email.toLowerCase() === cleanEmail ? safeUser : u
             );
           }
           return [loadedProfile, ...prev];
@@ -1394,12 +1390,10 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
         setUser((prev) => {
           if (prev && prev.email.toLowerCase() === cleanEmail) {
-            return {
-              ...prev,
-              passwordHash: prev.passwordHash,
-              avatarUrl: prev.avatarUrl || loadedProfile.avatarUrl,
+            return mergeUserProfileRecords(prev, {
+              ...loadedProfile,
               role: isBootstrapSuperAdmin ? 'super_admin' : prev.role,
-            };
+            });
           }
           return loadedProfile;
         });
@@ -2507,6 +2501,26 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
           throw new Error('Password must be at least 6 characters long.');
         }
 
+        // Hydrate latest vault users so we never miss an existing registered account
+        let directoryUsers = allUsers;
+        try {
+          const syncRes = await fetch('/api/vault/sync');
+          if (syncRes.ok) {
+            const syncJson = await syncRes.json();
+            if (Array.isArray(syncJson?.vault?.users)) {
+              directoryUsers = mergeUserDirectories(syncJson.vault.users as UserProfileData[], allUsers);
+              vaultLoadedRef.current = true;
+            }
+          }
+        } catch {}
+
+        const existingLocal = directoryUsers.find((u) => u.email.toLowerCase() === cleanEmail);
+        if (existingLocal && existingLocal.passwordHash && !existingLocal.isSeedDefault) {
+          throw new Error(
+            'An account with this email already exists. Please sign in with your password instead.'
+          );
+        }
+
         let fbUid = '';
         try {
           const cred = await createUserWithEmailAndPassword(auth, cleanEmail, input.password);
@@ -2518,12 +2532,13 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
               const signInCred = await signInWithEmailAndPassword(auth, cleanEmail, input.password);
               fbUid = signInCred.user.uid;
             } catch {
-              // Fall through to local profile creation/update so registration never gets stuck
+              throw new Error(
+                'An account with this email already exists. Please sign in with your password or reset it via Forgot password.'
+              );
             }
           }
         }
 
-        const existingLocal = allUsers.find((u) => u.email.toLowerCase() === cleanEmail);
         const uid =
           fbUid ||
           existingLocal?.uid ||
@@ -2533,7 +2548,7 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         const isBootstrapSuperAdmin = cleanEmail === 'kingritikx0343@gmail.com';
         const passwordHash = hashPasswordVerifier(cleanEmail, input.password);
 
-        const newProfile: UserProfileData = {
+        const newProfile: UserProfileData = mergeUserProfileRecords(existingLocal, {
           uid,
           fullName: input.fullName.trim(),
           email: cleanEmail,
@@ -2547,9 +2562,11 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
           mfaEnabled: existingLocal?.mfaEnabled || false,
           deletionRequested: false,
           passwordHash,
+          passwordUpdatedAt: Date.now(),
+          isSeedDefault: false,
           avatarUrl: existingLocal?.avatarUrl,
           createdAt: existingLocal?.createdAt || new Date().toISOString(),
-        };
+        });
 
         if (auth.currentUser && (await hasWorkingAuthToken())) {
           try {
@@ -2573,18 +2590,15 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
           } catch {}
         }
 
-        setAllUsers((prev) => {
-          const exists = prev.some(
-            (u) => u.uid === newProfile.uid || u.email.toLowerCase() === cleanEmail
-          );
-          if (exists) {
-            return prev.map((u) =>
-              u.uid === newProfile.uid || u.email.toLowerCase() === cleanEmail ? newProfile : u
-            );
-          }
-          return [newProfile, ...prev];
-        });
+        setAllUsers((prev) => mergeUserDirectories(prev, [newProfile]));
         setUser(newProfile);
+
+        // Immediately save new user profile & password hash to persistent disk vault
+        fetch('/api/vault/save', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ users: [newProfile] }),
+        }).catch(() => {});
 
         // Dispatch branded FUNDED APEX Welcome Registration Email + Starter Promo Offer Email
         dispatchFundedApexEmail(
@@ -2638,39 +2652,47 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
           throw new Error('Please enter both your email address and password.');
         }
 
-        let fbUid = '';
-        try {
-          const cred = await signInWithEmailAndPassword(auth, cleanEmail, password);
-          fbUid = cred.user.uid;
-        } catch (signInErr: unknown) {
-          const errObj = signInErr as { code?: string; message?: string };
-          const errCode = errObj?.code || '';
-          const errMsg = errObj?.message || '';
-          if (
-            errCode === 'auth/wrong-password' ||
-            errCode === 'auth/invalid-credential' ||
-            errMsg.includes('wrong-password') ||
-            errMsg.includes('invalid-credential')
-          ) {
-            const localUser = allUsers.find((u) => u.email.toLowerCase() === cleanEmail);
-            const localVerify = verifyUserCredentials(localUser, cleanEmail, password);
-            if (!localVerify.ok) {
-              throw new Error(
-                'Incorrect password. Please enter the exact password you used when creating your account.'
-              );
+        // Always sync latest directory from server vault if needed before validating
+        let directoryUsers = allUsers;
+        const localMatch = allUsers.find((u) => u.email.toLowerCase() === cleanEmail);
+        if (!vaultLoadedRef.current || !localMatch || localMatch.isSeedDefault) {
+          try {
+            const syncRes = await fetch('/api/vault/sync');
+            if (syncRes.ok) {
+              const syncJson = await syncRes.json();
+              if (Array.isArray(syncJson?.vault?.users)) {
+                directoryUsers = mergeUserDirectories(syncJson.vault.users as UserProfileData[], allUsers);
+                vaultLoadedRef.current = true;
+                setAllUsers((prev) => mergeUserDirectories(directoryUsers, prev));
+              }
             }
-          }
+          } catch {}
         }
 
-        const existingProfile = allUsers.find((u) => u.email.toLowerCase() === cleanEmail);
+        const existingProfile = directoryUsers.find((u) => u.email.toLowerCase() === cleanEmail);
+        const localVerify = verifyUserCredentials(existingProfile, cleanEmail, password);
 
-        if (!fbUid) {
-          const credentialCheck = verifyUserCredentials(existingProfile, cleanEmail, password);
-          if (!credentialCheck.ok || !existingProfile) {
-            throw new Error(
-              credentialCheck.error ||
-                'Invalid email or password. Please register an account first or check your password.'
-            );
+        let fbUid = '';
+        if (localVerify.ok && existingProfile && !existingProfile.isSeedDefault) {
+          // Local verifier matches the saved hash cleanly — attempt Firebase session in background without failing on stale cloud password
+          try {
+            const cred = await signInWithEmailAndPassword(auth, cleanEmail, password);
+            fbUid = cred.user.uid;
+          } catch {
+            // Keep authenticated via verified vault credential
+          }
+        } else {
+          // Verify with Firebase Auth (handles existing Firebase users or passwords updated via Firebase link)
+          try {
+            const cred = await signInWithEmailAndPassword(auth, cleanEmail, password);
+            fbUid = cred.user.uid;
+          } catch {
+            if (!localVerify.ok) {
+              throw new Error(
+                localVerify.error ||
+                  'No account found with this email address. Please click "Create Account" to register first.'
+              );
+            }
           }
         }
 
@@ -2687,9 +2709,21 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
             rewardPoints: 0,
             mfaEnabled: false,
             deletionRequested: false,
+            passwordHash: hashPasswordVerifier(cleanEmail, password),
+            passwordUpdatedAt: Date.now(),
+            isSeedDefault: false,
             createdAt: new Date().toISOString(),
           };
-          setAllUsers((prev) => [updatedProfile!, ...prev]);
+          setAllUsers((prev) => mergeUserDirectories(prev, [updatedProfile!]));
+        } else if (updatedProfile && fbUid && (!updatedProfile.passwordHash || updatedProfile.isSeedDefault)) {
+          // Firebase verified this password for an account lacking a real local verifier -> persist verifier safely
+          updatedProfile = {
+            ...updatedProfile,
+            passwordHash: hashPasswordVerifier(cleanEmail, password),
+            passwordUpdatedAt: Date.now(),
+            isSeedDefault: false,
+          };
+          setAllUsers((prev) => mergeUserDirectories(prev, [updatedProfile!]));
         }
 
         if (!updatedProfile) {
@@ -2698,10 +2732,15 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
         if (updatedProfile.email.toLowerCase() === 'kingritikx0343@gmail.com') {
           updatedProfile = { ...updatedProfile, role: 'super_admin' };
-          setAllUsers((prev) =>
-            prev.map((u) => (u.uid === updatedProfile!.uid ? updatedProfile! : u))
-          );
+          setAllUsers((prev) => mergeUserDirectories(prev, [updatedProfile!]));
         }
+
+        // Persist synced profile safely on vault disk
+        fetch('/api/vault/save', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ users: [updatedProfile] }),
+        }).catch(() => {});
 
         setUser(updatedProfile);
 
@@ -2968,9 +3007,19 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       }
       if (user) {
         const nextHash = hashPasswordVerifier(user.email, newPassword);
-        const updatedUser = { ...user, passwordHash: nextHash };
+        const updatedUser: UserProfileData = {
+          ...user,
+          passwordHash: nextHash,
+          passwordUpdatedAt: Date.now(),
+          isSeedDefault: false,
+        };
         setUser(updatedUser);
-        setAllUsers((prev) => prev.map((u) => (u.uid === user.uid ? updatedUser : u)));
+        setAllUsers((prev) => mergeUserDirectories(prev, [updatedUser]));
+        fetch('/api/vault/save', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ users: [updatedUser] }),
+        }).catch(() => {});
         dispatchFundedApexEmail(
           buildPasswordResetEmailPayload({
             recipientEmail: user.email,
@@ -4274,10 +4323,17 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         mfaEnabled: false,
         deletionRequested: false,
         passwordHash,
+        passwordUpdatedAt: Date.now(),
+        isSeedDefault: false,
         createdAt: new Date().toISOString(),
       };
 
-      setAllUsers((prev) => [newProfile, ...prev]);
+      setAllUsers((prev) => mergeUserDirectories(prev, [newProfile]));
+      fetch('/api/vault/save', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ users: [newProfile] }),
+      }).catch(() => {});
 
       void safeFirestoreWrite('users', uid, newProfile);
 
@@ -4478,13 +4534,32 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       }
 
       const newHash = hashPasswordVerifier(target.email.toLowerCase(), cleanPass);
-      setAllUsers((prev) =>
-        prev.map((u) => (u.uid === targetUid ? { ...u, passwordHash: newHash } : u))
-      );
+      const updatedTarget: UserProfileData = {
+        ...target,
+        passwordHash: newHash,
+        passwordUpdatedAt: Date.now(),
+        isSeedDefault: false,
+      };
+      setAllUsers((prev) => mergeUserDirectories(prev, [updatedTarget]));
 
-      if (user.uid === targetUid) {
-        setUser((prev) => (prev ? { ...prev, passwordHash: newHash } : prev));
+      if (user.uid === targetUid || user.email.toLowerCase() === target.email.toLowerCase()) {
+        setUser((prev) =>
+          prev
+            ? {
+                ...prev,
+                passwordHash: newHash,
+                passwordUpdatedAt: updatedTarget.passwordUpdatedAt,
+                isSeedDefault: false,
+              }
+            : prev
+        );
       }
+
+      fetch('/api/vault/save', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ users: [updatedTarget] }),
+      }).catch(() => {});
 
       void safeFirestoreWrite('users', targetUid, { passwordHash: newHash });
 

@@ -3,7 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useEffect, useState, memo } from 'react';
+import React, { useEffect, memo } from 'react';
+import { AnimatePresence, MotionConfig, motion } from 'framer-motion';
 import { PlatformProvider, usePlatform } from './context/PlatformContext';
 import { Navbar } from './components/Navbar';
 import { Footer } from './components/Footer';
@@ -22,6 +23,12 @@ const MemoPublicPages = memo(PublicPages);
 const MemoDashboardView = memo(DashboardView);
 const MemoTradingTerminalView = memo(TradingTerminalView);
 const MemoAdminPanelView = memo(AdminPanelView);
+
+const GPU_TRANSITION_STYLE: React.CSSProperties = {
+  willChange: 'transform, opacity',
+  transform: 'translate3d(0, 0, 0)',
+  backfaceVisibility: 'hidden',
+};
 
 interface ErrorBoundaryState {
   hasError: boolean;
@@ -48,7 +55,11 @@ class AppErrorBoundary extends React.Component<
     if (this.state.hasError) {
       return (
         <div className="min-h-screen bg-[#000000] text-[#FFFFFF] flex items-center justify-center p-6">
-          <div className="max-w-md w-full bg-[#090D0A] border border-[#00E676]/25 rounded-[14px] p-6 space-y-4 text-center shadow-2xl">
+          <div
+            data-interactive-container
+            style={GPU_TRANSITION_STYLE}
+            className="max-w-md w-full bg-[#090D0A] border border-[#00E676]/25 rounded-[14px] p-6 space-y-4 text-center shadow-2xl"
+          >
             <div className="text-lg font-display font-bold text-[#FFFFFF]">FUNDED APEX</div>
             <p className="text-xs text-[#A7B1AA]">
               {this.state.errorMessage || 'A temporary rendering issue occurred.'}
@@ -75,96 +86,91 @@ class AppErrorBoundary extends React.Component<
 
 const AnimatedToastPopup: React.FC = () => {
   const { toastMessage, clearToast } = usePlatform();
-  const [exiting, setExiting] = useState(false);
 
   useEffect(() => {
-    if (!toastMessage) {
-      setExiting(false);
-      return;
-    }
-    setExiting(false);
-    const exitTimer = setTimeout(() => {
-      setExiting(true);
-    }, 2680);
+    if (!toastMessage) return;
     const removeTimer = setTimeout(() => {
       clearToast();
     }, 3000);
     return () => {
-      clearTimeout(exitTimer);
       clearTimeout(removeTimer);
     };
   }, [toastMessage, clearToast]);
 
-  if (!toastMessage) return null;
-
-  const isError = toastMessage.type === 'error';
-  const isWarning = toastMessage.type === 'warning';
-
   return (
-    <div
-      key={toastMessage.id}
-      role="status"
-      aria-live="polite"
-      data-testid="global-toast-popup"
-      className={`fixed bottom-16 right-4 sm:right-6 z-50 max-w-sm sm:max-w-md w-[calc(100vw-2rem)] sm:w-auto bg-[#050806]/95 backdrop-blur-xl border ${
-        isError
-          ? 'border-red-500/45'
-          : isWarning
-          ? 'border-amber-400/45'
-          : 'border-[#00E676]/35'
-      } shadow-[0_22px_55px_rgba(0,0,0,0.95)] rounded-[12px] p-4 overflow-hidden transition-all duration-300 ease-out ${
-        exiting
-          ? 'opacity-0 translate-y-3 scale-95 pointer-events-none'
-          : 'opacity-100 translate-y-0 scale-100 apex-scale-in'
-      }`}
-    >
-      <div className="flex items-start gap-3">
-        <div className="mt-0.5 shrink-0">
-          {isError || isWarning ? (
-            <AlertTriangle
-              className={`w-4 h-4 ${isError ? 'text-red-400' : 'text-amber-400'}`}
-            />
-          ) : toastMessage.type === 'success' ? (
-            <CheckCircle2 className="w-4 h-4 text-[#00E676]" />
-          ) : (
-            <Info className="w-4 h-4 text-[#69F0AE]" />
-          )}
-        </div>
-        <div className="flex-1 space-y-1 pr-1">
-          <div
-            className={`text-xs font-display font-bold ${
-              isError ? 'text-red-400' : isWarning ? 'text-amber-300' : 'text-[#00E676]'
-            }`}
-          >
-            {toastMessage.title}
-          </div>
-          <div className="text-xs text-[#FFFFFF] leading-relaxed">{toastMessage.message}</div>
-        </div>
-        <button
-          type="button"
-          aria-label="Dismiss notification"
-          onClick={() => {
-            setExiting(true);
-            setTimeout(clearToast, 200);
-          }}
-          className="text-[#77837B] hover:text-[#FFFFFF] p-1 rounded-[7px] hover:bg-white/5 transition-colors cursor-pointer shrink-0"
+    <AnimatePresence mode="wait">
+      {toastMessage && (
+        <motion.div
+          key={toastMessage.id}
+          role="status"
+          aria-live="polite"
+          data-testid="global-toast-popup"
+          data-interactive-container
+          style={GPU_TRANSITION_STYLE}
+          initial={{ opacity: 0, y: 12, scale: 0.97 }}
+          animate={{ opacity: 1, y: 0, scale: 1 }}
+          exit={{ opacity: 0, y: 10, scale: 0.97 }}
+          transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
+          className={`fixed bottom-16 right-4 sm:right-6 z-50 max-w-sm sm:max-w-md w-[calc(100vw-2rem)] sm:w-auto bg-[#050806]/95 border ${
+            toastMessage.type === 'error'
+              ? 'border-red-500/45'
+              : toastMessage.type === 'warning'
+              ? 'border-amber-400/45'
+              : 'border-[#00E676]/35'
+          } shadow-[0_22px_55px_rgba(0,0,0,0.95)] rounded-[12px] p-4 overflow-hidden`}
         >
-          <X className="w-4 h-4" />
-        </button>
-      </div>
+          <div className="flex items-start gap-3">
+            <div className="mt-0.5 shrink-0">
+              {toastMessage.type === 'error' || toastMessage.type === 'warning' ? (
+                <AlertTriangle
+                  className={`w-4 h-4 ${
+                    toastMessage.type === 'error' ? 'text-red-400' : 'text-amber-400'
+                  }`}
+                />
+              ) : toastMessage.type === 'success' ? (
+                <CheckCircle2 className="w-4 h-4 text-[#00E676]" />
+              ) : (
+                <Info className="w-4 h-4 text-[#69F0AE]" />
+              )}
+            </div>
+            <div className="flex-1 space-y-1 pr-1">
+              <div
+                className={`text-xs font-display font-bold ${
+                  toastMessage.type === 'error'
+                    ? 'text-red-400'
+                    : toastMessage.type === 'warning'
+                    ? 'text-amber-300'
+                    : 'text-[#00E676]'
+                }`}
+              >
+                {toastMessage.title}
+              </div>
+              <div className="text-xs text-[#FFFFFF] leading-relaxed">{toastMessage.message}</div>
+            </div>
+            <button
+              type="button"
+              aria-label="Dismiss notification"
+              onClick={clearToast}
+              className="text-[#77837B] hover:text-[#FFFFFF] p-1 rounded-[7px] hover:bg-white/5 transition-colors cursor-pointer shrink-0"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
 
-      <div className="absolute bottom-0 left-0 right-0 h-[2px] bg-[#0D130F] overflow-hidden">
-        <div
-          className={`h-full ${
-            isError
-              ? 'bg-red-500'
-              : isWarning
-              ? 'bg-amber-400'
-              : 'bg-[#00E676]'
-          } apex-toast-countdown`}
-        />
-      </div>
-    </div>
+          <div className="absolute bottom-0 left-0 right-0 h-[2px] bg-[#0D130F] overflow-hidden">
+            <div
+              className={`h-full ${
+                toastMessage.type === 'error'
+                  ? 'bg-red-500'
+                  : toastMessage.type === 'warning'
+                  ? 'bg-amber-400'
+                  : 'bg-[#00E676]'
+              } apex-toast-countdown`}
+            />
+          </div>
+        </motion.div>
+      )}
+    </AnimatePresence>
   );
 };
 
@@ -173,6 +179,14 @@ const AppRouter: React.FC = () => {
 
   const isTerminal = route === 'terminal';
   const isDashboardOrAdmin = route === 'dashboard' || route === 'admin';
+  const viewSectionKey =
+    route === 'terminal'
+      ? 'terminal'
+      : route === 'dashboard' && user
+      ? 'dashboard'
+      : route === 'admin' && user
+      ? 'admin'
+      : 'public';
 
   // Ensure page scroll resets cleanly on top-level route switches
   useEffect(() => {
@@ -182,43 +196,56 @@ const AppRouter: React.FC = () => {
   }, [route, isTerminal]);
 
   return (
-    <div
-      className={`min-h-screen flex flex-col bg-transparent text-[#FFFFFF] relative ${
-        isTerminal ? 'h-[100dvh] w-screen overflow-hidden' : 'overflow-x-hidden'
-      }`}
+    <MotionConfig
+      reducedMotion="never"
+      transition={{ type: 'tween', duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
     >
-      {/* Butter-Smooth Physics Momentum Scroll & Staggered Reveal Engine */}
-      {!isTerminal && <SmoothScrollManager />}
-
-      {/* Zero-Lag GPU 3D Aqua-Water Background Motion */}
-      {!isTerminal && <MoonlitLiquidWaterBackground />}
-
-      {!isTerminal && <MemoNavbar />}
-      <StripeCheckoutModal />
-
-      {/* Global 3-Second Animated Toast Notification Banner */}
-      <AnimatedToastPopup />
-
       <div
-        className={
-          isTerminal
-            ? 'flex-1 w-full h-full relative z-10 flex flex-col'
-            : 'flex-1 relative z-10 apex-layout-transition'
-        }
+        data-interactive-container
+        style={GPU_TRANSITION_STYLE}
+        className={`min-h-screen flex flex-col bg-transparent text-[#FFFFFF] relative ${
+          isTerminal ? 'h-[100dvh] w-screen overflow-hidden' : 'overflow-x-hidden'
+        }`}
       >
-        {route === 'terminal' ? (
-          <MemoTradingTerminalView />
-        ) : route === 'dashboard' && user ? (
-          <MemoDashboardView />
-        ) : route === 'admin' && user ? (
-          <MemoAdminPanelView />
-        ) : (
-          <MemoPublicPages />
-        )}
-      </div>
+        {/* Butter-Smooth Physics Momentum Scroll & Staggered Reveal Engine */}
+        {!isTerminal && <SmoothScrollManager />}
 
-      {!isTerminal && !isDashboardOrAdmin && <MemoFooter />}
-    </div>
+        {/* Zero-Lag GPU 3D Aqua-Water Background Motion */}
+        {!isTerminal && <MoonlitLiquidWaterBackground />}
+
+        {!isTerminal && <MemoNavbar />}
+        <StripeCheckoutModal />
+
+        {/* Global 3-Second Animated Toast Notification Banner */}
+        <AnimatedToastPopup />
+
+        <motion.div
+          key={viewSectionKey}
+          data-interactive-container
+          style={GPU_TRANSITION_STYLE}
+          initial={false}
+          animate={{ opacity: 1, y: 0, scale: 1 }}
+          transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
+          className={
+            isTerminal
+              ? 'flex-1 w-full h-full relative z-10 flex flex-col'
+              : 'flex-1 relative z-10 apex-layout-transition'
+          }
+        >
+          {route === 'terminal' ? (
+            <MemoTradingTerminalView />
+          ) : route === 'dashboard' && user ? (
+            <MemoDashboardView />
+          ) : route === 'admin' && user ? (
+            <MemoAdminPanelView />
+          ) : (
+            <MemoPublicPages />
+          )}
+        </motion.div>
+
+        {!isTerminal && !isDashboardOrAdmin && <MemoFooter />}
+      </div>
+    </MotionConfig>
   );
 };
 
