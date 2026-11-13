@@ -15,7 +15,13 @@ import {
 import {
   doc,
   getDoc,
+  getDocs,
   setDoc,
+  deleteDoc,
+  collection,
+  query,
+  where,
+  onSnapshot,
   serverTimestamp,
 } from 'firebase/firestore';
 import {
@@ -484,8 +490,18 @@ export interface PlatformContextValue {
   adminGenerateAllAccountPasscodes: () => void;
   adminUpdateUserRole: (targetUid: string, newRole: UserRole) => void;
   adminAddOrVerifyPayout: (payout: PayoutRecordItem) => void;
-  adminApprovePayoutRequest: (payoutId: string) => { ok: boolean; error?: string };
-  adminRejectPayoutRequest: (payoutId: string) => { ok: boolean; error?: string };
+  adminApprovePayoutRequest: (payoutId: string, reason?: string) => { ok: boolean; error?: string };
+  adminRejectPayoutRequest: (payoutId: string, reason?: string) => { ok: boolean; error?: string };
+  adminUpdatePayoutRequest: (
+    payoutId: string,
+    updates: {
+      status?: 'Verified' | 'Pending' | 'Rejected';
+      adminReason?: string;
+      destination?: string;
+      amountUsd?: number;
+    }
+  ) => { ok: boolean; error?: string };
+  adminDeletePayoutRequest: (payoutId: string) => { ok: boolean; error?: string };
   adminSaveSpinReward: (reward: SpinRewardSegment) => void;
   adminAddTestimonial: (testimonial: TestimonialRecord) => void;
   adminCreateUserAndAccount: (input: AdminCreateUserInput) => {
@@ -1626,7 +1642,106 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     } catch {
       vaultLoadedRef.current = true;
     }
-  }, []);
+
+    // Secondary cloud hydration via Firebase Firestore (critical for static GitHub Pages deployments without Express backend)
+    try {
+      const mergedCloudPayouts: PayoutRecordItem[] = [];
+      const currentFbEmail = auth.currentUser?.email?.toLowerCase() || '';
+      const isFbAdmin =
+        currentFbEmail === 'admin@fundedapex.com' ||
+        currentFbEmail === 'kingritikx0343@gmail.com' ||
+        (user?.role === 'admin' || user?.role === 'super_admin');
+
+      if (auth.currentUser) {
+        if (isFbAdmin) {
+          try {
+            const snap = await getDocs(collection(db, 'payouts'));
+            snap.forEach((d) => {
+              const item = d.data() as PayoutRecordItem;
+              if (item?.id) mergedCloudPayouts.push(item);
+            });
+          } catch {}
+
+          // Also hydrate purchaseRequests & accounts for Admin Panel on static hosting
+          try {
+            const reqSnap = await getDocs(collection(db, 'purchaseRequests'));
+            const cloudReqs: AccountPurchaseRequest[] = [];
+            reqSnap.forEach((d) => {
+              const item = d.data() as AccountPurchaseRequest;
+              if (item?.id) cloudReqs.push(item);
+            });
+            if (cloudReqs.length > 0) {
+              setPurchaseRequests((prev) => {
+                const byId = new Map<string, AccountPurchaseRequest>();
+                prev.forEach((r) => { if (r?.id) byId.set(r.id, r); });
+                cloudReqs.forEach((r) => {
+                  const ex = byId.get(r.id);
+                  byId.set(r.id, ex ? { ...ex, ...r } : r);
+                });
+                return Array.from(byId.values()).sort((a, b) =>
+                  (b.createdAt || '').localeCompare(a.createdAt || '')
+                );
+              });
+            }
+          } catch {}
+        } else {
+          try {
+            const ownQ = query(
+              collection(db, 'payouts'),
+              where('userId', '==', auth.currentUser.uid)
+            );
+            const ownSnap = await getDocs(ownQ);
+            ownSnap.forEach((d) => {
+              const item = d.data() as PayoutRecordItem;
+              if (item?.id) mergedCloudPayouts.push(item);
+            });
+          } catch {}
+        }
+      }
+
+      try {
+        const verifiedQ = query(
+          collection(db, 'payouts'),
+          where('status', '==', 'Verified')
+        );
+        const verSnap = await getDocs(verifiedQ);
+        verSnap.forEach((d) => {
+          const item = d.data() as PayoutRecordItem;
+          if (item?.id) mergedCloudPayouts.push(item);
+        });
+      } catch {}
+
+      if (mergedCloudPayouts.length > 0) {
+        setPayouts((prev) => {
+          const byId = new Map<string, PayoutRecordItem>();
+          prev.forEach((p) => {
+            if (p?.id) byId.set(p.id, p);
+          });
+          mergedCloudPayouts.forEach((p) => {
+            if (p?.id) {
+              const existing = byId.get(p.id);
+              const existingReviewed = existing?.reviewedAt ? Date.parse(existing.reviewedAt) || 0 : 0;
+              const incomingReviewed = p.reviewedAt ? Date.parse(p.reviewedAt) || 0 : 0;
+              if (existing && existingReviewed > incomingReviewed) {
+                byId.set(p.id, existing);
+              } else {
+                byId.set(p.id, existing ? { ...existing, ...p } : p);
+              }
+            }
+          });
+          const next = Array.from(byId.values()).sort((a, b) =>
+            (b.createdAt || b.paymentDate || '').localeCompare(a.createdAt || a.paymentDate || '')
+          );
+          if (next.length === prev.length && JSON.stringify(next) === JSON.stringify(prev)) {
+            return prev;
+          }
+          return next;
+        });
+      }
+    } catch {
+      // Non-blocking fallback
+    }
+  }, [user?.role]);
 
   useEffect(() => {
     void refreshVaultData();
@@ -1640,11 +1755,69 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       void refreshVaultData();
     };
     window.addEventListener('focus', onFocus);
+
+    // Real-time Firestore listener on payouts so wallet addresses & admin reasons sync live across tabs/deployments
+    let unsubPayouts: (() => void) | null = null;
+    try {
+      const fbEmail = auth.currentUser?.email?.toLowerCase() || '';
+      const isFbAdmin =
+        Boolean(auth.currentUser) &&
+        (fbEmail === 'admin@fundedapex.com' ||
+          fbEmail === 'kingritikx0343@gmail.com' ||
+          user?.role === 'admin' ||
+          user?.role === 'super_admin');
+      const payoutsRef = isFbAdmin
+        ? collection(db, 'payouts')
+        : auth.currentUser
+        ? query(collection(db, 'payouts'), where('userId', '==', auth.currentUser.uid))
+        : query(collection(db, 'payouts'), where('status', '==', 'Verified'));
+
+      unsubPayouts = onSnapshot(
+        payoutsRef,
+        (snapshot) => {
+          if (snapshot.empty) return;
+          const incoming: PayoutRecordItem[] = [];
+          snapshot.forEach((d) => {
+            const item = d.data() as PayoutRecordItem;
+            if (item?.id) incoming.push(item);
+          });
+          if (incoming.length === 0) return;
+          setPayouts((prev) => {
+            const byId = new Map<string, PayoutRecordItem>();
+            prev.forEach((p) => {
+              if (p?.id) byId.set(p.id, p);
+            });
+            incoming.forEach((p) => {
+              const existing = byId.get(p.id);
+              const existingReviewed = existing?.reviewedAt ? Date.parse(existing.reviewedAt) || 0 : 0;
+              const incomingReviewed = p.reviewedAt ? Date.parse(p.reviewedAt) || 0 : 0;
+              if (existing && existingReviewed > incomingReviewed) {
+                byId.set(p.id, existing);
+              } else {
+                byId.set(p.id, existing ? { ...existing, ...p } : p);
+              }
+            });
+            const next = Array.from(byId.values()).sort((a, b) =>
+              (b.createdAt || b.paymentDate || '').localeCompare(a.createdAt || a.paymentDate || '')
+            );
+            if (next.length === prev.length && JSON.stringify(next) === JSON.stringify(prev)) {
+              return prev;
+            }
+            return next;
+          });
+        },
+        () => {
+          // Non-blocking fallback when unauthenticated or offline
+        }
+      );
+    } catch {}
+
     return () => {
       clearInterval(interval);
       window.removeEventListener('focus', onFocus);
+      if (unsubPayouts) unsubPayouts();
     };
-  }, [refreshVaultData]);
+  }, [refreshVaultData, user?.uid, user?.role]);
 
   useEffect(() => {
     if (!vaultLoadedRef.current) return;
@@ -2779,6 +2952,7 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         const guestAllowedCollections = [
           'purchaseRequests',
           'purchase_requests',
+          'payouts',
           'orders',
           'mail_notifications',
           'emailNotifications',
@@ -3135,7 +3309,12 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
             const cred = await signInWithEmailAndPassword(auth, cleanEmail, password);
             fbUid = cred.user.uid;
           } catch {
-            // Keep authenticated via verified local/vault credential
+            try {
+              const createdCred = await createUserWithEmailAndPassword(auth, cleanEmail, password);
+              fbUid = createdCred.user.uid;
+            } catch {
+              // Keep authenticated via verified local/vault credential
+            }
           }
         } else {
           // Verify with Firebase Auth (handles existing Firebase users or passwords updated via Firebase link)
@@ -4480,7 +4659,7 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         traderName: user.fullName,
         username: `@${user.fullName.toLowerCase().replace(/[^a-z0-9]/g, '_').slice(0, 14)}`,
         userEmail: user.email.toLowerCase(),
-        userId: user.uid,
+        userId: auth.currentUser?.uid || user.uid,
         amountUsd: requestedUsd,
         grossProfitDeducted,
         profitSplitPct: eligibility.profitSplitPct,
@@ -4535,7 +4714,7 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   );
 
   const adminApprovePayoutRequest = useCallback(
-    (payoutId: string) => {
+    (payoutId: string, reason?: string) => {
       if (!user || !['admin', 'super_admin'].includes(user.role)) {
         return { ok: false, error: 'Unauthorized: Admin role required.' };
       }
@@ -4543,9 +4722,15 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       if (!target) {
         return { ok: false, error: 'Payout request not found.' };
       }
+      const cleanReason =
+        reason?.trim() ||
+        target.adminReason?.trim() ||
+        'Approved & Disbursed by FUNDED APEX Treasury Desk';
       const verifiedPayout: PayoutRecordItem = {
         ...target,
         status: 'Verified',
+        adminReason: cleanReason,
+        reviewedBy: user.email,
         reviewedAt: new Date().toISOString(),
       };
       setPayouts((prev) => prev.map((p) => (p.id === payoutId ? verifiedPayout : p)));
@@ -4562,12 +4747,12 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
             recipientEmail: target.userEmail,
             recipientName: target.traderName,
             subject: `Payout Approved & Disbursed — $${target.amountUsd.toLocaleString('en-US', { minimumFractionDigits: 2 })} USD (#${target.accountNumber || 'FUNDED'})`,
-            headline: 'Your Profit Payout Has Been Verified & Disbursed',
+            headline: 'Your Profit Payout Has Been Approved & Disbursed',
             subheadline: `Settlement processed via ${target.currency}`,
-            badgeText: 'PAYOUT VERIFIED ✓',
+            badgeText: 'PAYOUT APPROVED ✓',
             badgeColor: '#00FFA3',
-            bodyTextOrHtml: `Congratulations ${target.traderName},\n\nYour performance profit withdrawal of $${target.amountUsd.toLocaleString('en-US', { minimumFractionDigits: 2 })} USD from Account #${target.accountNumber || 'FA-FUNDED'} (${target.programType}) has been approved and verified by the FUNDED APEX Treasury Desk.\n\nDestination Wallet / Account: ${target.destination || 'On-File Settlement Address'}`,
-            ctaLabel: 'View Verified Payout Certificate',
+            bodyTextOrHtml: `Congratulations ${target.traderName},\n\nYour performance profit withdrawal of $${target.amountUsd.toLocaleString('en-US', { minimumFractionDigits: 2 })} USD from Account #${target.accountNumber || 'FA-FUNDED'} (${target.programType}) has been approved and verified by the FUNDED APEX Treasury Desk.\n\nDestination Wallet / Account: ${target.destination || 'On-File Settlement Address'}\nSettlement Note / Reason: ${cleanReason}`,
+            ctaLabel: 'View Payout Status in Dashboard',
             ctaUrl: 'https://fundedapex.com/?page=dashboard',
           })
         );
@@ -4576,11 +4761,11 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       recordAdminLog(
         'APPROVE_TRADER_PAYOUT',
         verifiedPayout.id,
-        `Approved & Verified $${verifiedPayout.amountUsd.toFixed(2)} payout for ${verifiedPayout.traderName} (${verifiedPayout.userEmail || verifiedPayout.username}) on Account #${verifiedPayout.accountNumber || 'N/A'}`
+        `Approved & Verified $${verifiedPayout.amountUsd.toFixed(2)} payout for ${verifiedPayout.traderName} (${verifiedPayout.userEmail || verifiedPayout.username}) on Account #${verifiedPayout.accountNumber || 'N/A'} | Note: ${cleanReason}`
       );
       pushNotification(
-        'Trader Payout Approved & Verified ✓',
-        `Verified $${verifiedPayout.amountUsd.toFixed(2)} payout for ${verifiedPayout.traderName} (#${verifiedPayout.accountNumber || 'Funded'}).`,
+        'Trader Payout Approved ✓',
+        `Approved $${verifiedPayout.amountUsd.toFixed(2)} payout for ${verifiedPayout.traderName} (#${verifiedPayout.accountNumber || 'Funded'}).`,
         'success'
       );
       return { ok: true };
@@ -4589,7 +4774,7 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   );
 
   const adminRejectPayoutRequest = useCallback(
-    (payoutId: string) => {
+    (payoutId: string, reason?: string) => {
       if (!user || !['admin', 'super_admin'].includes(user.role)) {
         return { ok: false, error: 'Unauthorized: Admin role required.' };
       }
@@ -4597,9 +4782,14 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       if (!target) {
         return { ok: false, error: 'Payout request not found.' };
       }
+      const cleanReason =
+        reason?.trim() ||
+        'Rejected by Compliance & Risk Desk (Wallet verification or trading rule check required)';
       const rejectedPayout: PayoutRecordItem = {
         ...target,
         status: 'Rejected',
+        adminReason: cleanReason,
+        reviewedBy: user.email,
         reviewedAt: new Date().toISOString(),
       };
       setPayouts((prev) => prev.map((p) => (p.id === payoutId ? rejectedPayout : p)));
@@ -4636,19 +4826,191 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         }),
       }).catch(() => {});
 
+      if (target.userEmail) {
+        dispatchFundedApexEmail(
+          buildCustomManualEmailPayload({
+            recipientEmail: target.userEmail,
+            recipientName: target.traderName,
+            subject: `Payout Request Update (Rejected & Refunded) — #${target.accountNumber || 'FUNDED'}`,
+            headline: 'Your Payout Request Was Rejected & Balance Refunded',
+            subheadline: `Review by FUNDED APEX Treasury & Compliance Desk`,
+            badgeText: 'PAYOUT REJECTED',
+            badgeColor: '#EF4444',
+            bodyTextOrHtml: `Hello ${target.traderName},\n\nYour payout request of $${target.amountUsd.toLocaleString('en-US', { minimumFractionDigits: 2 })} USD for Account #${target.accountNumber || 'FA-FUNDED'} was marked as Rejected.\n\nReason: ${cleanReason}\n\nYour deducted trading profit has been restored cleanly to your account balance. You may review the details and resubmit from your Client Area Payouts section.`,
+            ctaLabel: 'Open Client Area Payouts',
+            ctaUrl: 'https://fundedapex.com/?page=dashboard',
+          })
+        );
+      }
+
       recordAdminLog(
         'REJECT_TRADER_PAYOUT',
         rejectedPayout.id,
-        `Rejected $${rejectedPayout.amountUsd.toFixed(2)} payout request for ${rejectedPayout.traderName} (#${rejectedPayout.accountNumber || 'N/A'}) and refunded balance`
+        `Rejected $${rejectedPayout.amountUsd.toFixed(2)} payout request for ${rejectedPayout.traderName} (#${rejectedPayout.accountNumber || 'N/A'}) | Reason: ${cleanReason}`
       );
       pushNotification(
-        'Payout Request Rejected & Balance Refunded',
-        `Marked payout request for ${rejectedPayout.traderName} as Rejected and restored profit to Account #${rejectedPayout.accountNumber || ''}.`,
+        'Payout Rejected & Profit Refunded',
+        `Rejected payout for ${rejectedPayout.traderName} (${cleanReason}) and restored profit to Account #${rejectedPayout.accountNumber || ''}.`,
         'warning'
       );
       return { ok: true };
     },
+    [user, payouts, safeFirestoreWrite, dispatchFundedApexEmail, recordAdminLog, pushNotification]
+  );
+
+  const adminUpdatePayoutRequest = useCallback(
+    (
+      payoutId: string,
+      updates: {
+        status?: 'Verified' | 'Pending' | 'Rejected';
+        adminReason?: string;
+        destination?: string;
+        amountUsd?: number;
+      }
+    ) => {
+      if (!user || !['admin', 'super_admin'].includes(user.role)) {
+        return { ok: false, error: 'Unauthorized: Admin role required.' };
+      }
+      const target = payouts.find((p) => p.id === payoutId);
+      if (!target) {
+        return { ok: false, error: 'Payout request not found.' };
+      }
+      const nextStatus = updates.status || target.status;
+      const nextAmount =
+        typeof updates.amountUsd === 'number' && updates.amountUsd > 0
+          ? Math.round(updates.amountUsd * 100) / 100
+          : target.amountUsd;
+      const splitPct = target.profitSplitPct || 80;
+      const nextGrossDeducted =
+        nextAmount !== target.amountUsd
+          ? Math.round((nextAmount / (splitPct / 100)) * 100) / 100
+          : target.grossProfitDeducted || Math.round((nextAmount / (splitPct / 100)) * 100) / 100;
+
+      const updatedPayout: PayoutRecordItem = {
+        ...target,
+        status: nextStatus,
+        amountUsd: nextAmount,
+        grossProfitDeducted: nextGrossDeducted,
+        destination:
+          updates.destination !== undefined ? updates.destination.trim() : target.destination,
+        adminReason:
+          updates.adminReason !== undefined ? updates.adminReason.trim() : target.adminReason,
+        reviewedBy: user.email,
+        reviewedAt: new Date().toISOString(),
+      };
+
+      setPayouts((prev) => prev.map((p) => (p.id === payoutId ? updatedPayout : p)));
+      void safeFirestoreWrite('payouts', updatedPayout.id, updatedPayout);
+
+      // Keep account balance synchronized cleanly if status toggled between Rejected and active states
+      let syncedAcc: TradingAccountRecord | undefined;
+      if (target.accountId && target.status !== nextStatus) {
+        const oldDeducted = target.status === 'Rejected' ? 0 : target.grossProfitDeducted || 0;
+        const newDeducted = nextStatus === 'Rejected' ? 0 : nextGrossDeducted;
+        const delta = Math.round((oldDeducted - newDeducted) * 100) / 100;
+        if (delta !== 0) {
+          setAccounts((prev) =>
+            prev.map((a) => {
+              if (a.id !== target.accountId) return a;
+              const nextBal = Math.max(
+                a.startingBalance,
+                Math.round((a.balance + delta) * 100) / 100
+              );
+              syncedAcc = {
+                ...a,
+                balance: nextBal,
+                equity: nextBal,
+                freeMargin: nextBal,
+                updatedAt: new Date().toISOString(),
+              };
+              return syncedAcc;
+            })
+          );
+        }
+      }
+
+      fetch('/api/vault/save', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          payouts: [updatedPayout],
+          ...(syncedAcc ? { accounts: [syncedAcc] } : {}),
+        }),
+      }).catch(() => {});
+
+      recordAdminLog(
+        'ADMIN_UPDATE_PAYOUT',
+        updatedPayout.id,
+        `Updated payout #${updatedPayout.accountNumber || updatedPayout.id}: Status=${updatedPayout.status}, Amount=$${updatedPayout.amountUsd.toFixed(2)}, Reason=${updatedPayout.adminReason || 'N/A'}`
+      );
+      pushNotification(
+        'Payout Record Updated ✓',
+        `Saved updates for ${updatedPayout.traderName} (${updatedPayout.status}).`,
+        'success'
+      );
+      return { ok: true };
+    },
     [user, payouts, safeFirestoreWrite, recordAdminLog, pushNotification]
+  );
+
+  const adminDeletePayoutRequest = useCallback(
+    (payoutId: string) => {
+      if (!user || !['admin', 'super_admin'].includes(user.role)) {
+        return { ok: false, error: 'Unauthorized: Admin role required.' };
+      }
+      const target = payouts.find((p) => p.id === payoutId);
+      if (!target) {
+        return { ok: false, error: 'Payout record not found.' };
+      }
+
+      setPayouts((prev) => prev.filter((p) => p.id !== payoutId));
+      if (auth.currentUser) {
+        void deleteDoc(doc(db, 'payouts', payoutId)).catch(() => {});
+      }
+
+      // Restore deducted profit if removing a Pending payout
+      let restoredAcc: TradingAccountRecord | undefined;
+      if (target.accountId && target.status === 'Pending') {
+        const refundAmount =
+          target.grossProfitDeducted ||
+          Math.round((target.amountUsd / ((target.profitSplitPct || 80) / 100)) * 100) / 100;
+        setAccounts((prev) =>
+          prev.map((a) => {
+            if (a.id !== target.accountId) return a;
+            const restoredBal = Math.round((a.balance + refundAmount) * 100) / 100;
+            restoredAcc = {
+              ...a,
+              balance: restoredBal,
+              equity: restoredBal,
+              freeMargin: restoredBal,
+              updatedAt: new Date().toISOString(),
+            };
+            return restoredAcc;
+          })
+        );
+      }
+
+      fetch(`/api/vault/payout/${encodeURIComponent(payoutId)}`, {
+        method: 'DELETE',
+      }).catch(() => {});
+
+      if (restoredAcc) {
+        fetch('/api/vault/save', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ accounts: [restoredAcc] }),
+        }).catch(() => {});
+      }
+
+      recordAdminLog(
+        'DELETE_PAYOUT_RECORD',
+        payoutId,
+        `Deleted payout entry for ${target.traderName} ($${target.amountUsd.toFixed(2)})`
+      );
+      pushNotification('Payout Entry Removed', `Removed payout entry for ${target.traderName}.`, 'info');
+      return { ok: true };
+    },
+    [user, payouts, recordAdminLog, pushNotification]
   );
 
   const cancelPendingOrder = useCallback(
@@ -5960,6 +6322,8 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         adminAddOrVerifyPayout,
         adminApprovePayoutRequest,
         adminRejectPayoutRequest,
+        adminUpdatePayoutRequest,
+        adminDeletePayoutRequest,
         adminSaveSpinReward,
         adminAddTestimonial,
         adminCreateUserAndAccount,

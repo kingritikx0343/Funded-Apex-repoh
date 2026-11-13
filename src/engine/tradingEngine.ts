@@ -1455,6 +1455,8 @@ export interface PayoutRecordItem {
   accountNumber?: string;
   destination?: string;
   isTraderRequest?: boolean;
+  adminReason?: string;
+  reviewedBy?: string;
   createdAt?: string;
   reviewedAt?: string;
 }

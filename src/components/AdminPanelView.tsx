@@ -74,6 +74,8 @@ export const AdminPanelView: React.FC = () => {
     adminAddOrVerifyPayout,
     adminApprovePayoutRequest,
     adminRejectPayoutRequest,
+    adminUpdatePayoutRequest,
+    adminDeletePayoutRequest,
     adminCreateUserAndAccount,
     adminResetUserPassword,
     adminDeleteUser,
@@ -262,6 +264,16 @@ export const AdminPanelView: React.FC = () => {
   const [poCurrency, setPoCurrency] = useState('USD (USDC)');
   const [poSize, setPoSize] = useState<number>(100000);
   const [poProgram, setPoProgram] = useState('Two Step Challenge');
+
+  // Admin Payout Queue Filter, Reason Drafts & Full Control Editor State
+  const [payoutStatusFilter, setPayoutStatusFilter] = useState<'all' | 'Pending' | 'Verified' | 'Rejected'>('all');
+  const [payoutReasonDrafts, setPayoutReasonDrafts] = useState<Record<string, string>>({});
+  const [editingPayoutId, setEditingPayoutId] = useState<string | null>(null);
+  const [editPayoutStatus, setEditPayoutStatus] = useState<'Pending' | 'Verified' | 'Rejected'>('Pending');
+  const [editPayoutReason, setEditPayoutReason] = useState<string>('');
+  const [editPayoutDestination, setEditPayoutDestination] = useState<string>('');
+  const [editPayoutAmount, setEditPayoutAmount] = useState<number>(100);
+  const [copiedWalletId, setCopiedWalletId] = useState<string | null>(null);
 
   const generateRandomPassword = () => {
     const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789!@#$%';
@@ -2606,20 +2618,56 @@ export const AdminPanelView: React.FC = () => {
       )}
 
       {/* TAB 7: VERIFIED PAYOUTS & TRADER PAYOUT REQUESTS MANAGEMENT */}
-      {tab === 'payouts' && isFullAdmin && (
+      {tab === 'payouts' && isFullAdmin && (() => {
+        const traderQueueAll = payouts.filter(
+          (p) =>
+            p.isTraderRequest ||
+            p.status === 'Pending' ||
+            p.status === 'Rejected' ||
+            Boolean(p.accountNumber) ||
+            Boolean(p.destination) ||
+            Boolean(p.userEmail)
+        );
+        const traderQueueFiltered = traderQueueAll
+          .filter((p) => payoutStatusFilter === 'all' || p.status === payoutStatusFilter)
+          .sort((a, b) => {
+            if (a.status === 'Pending' && b.status !== 'Pending') return -1;
+            if (a.status !== 'Pending' && b.status === 'Pending') return 1;
+            return (b.createdAt || b.paymentDate || '').localeCompare(a.createdAt || a.paymentDate || '');
+          });
+
+        const approvedPayoutsCount = traderQueueAll.filter((p) => p.status === 'Verified').length;
+        const rejectedPayoutsCount = traderQueueAll.filter((p) => p.status === 'Rejected').length;
+
+        const openPayoutEditor = (p: (typeof payouts)[number]) => {
+          setEditingPayoutId(p.id);
+          setEditPayoutStatus(p.status);
+          setEditPayoutReason(payoutReasonDrafts[p.id] ?? p.adminReason ?? '');
+          setEditPayoutDestination(p.destination || '');
+          setEditPayoutAmount(p.amountUsd);
+        };
+
+        const quickReasonChips = [
+          'Approved & Disbursed to Destination Wallet',
+          'Invalid / Unverified Wallet Address',
+          'Consistency Rule (15%) Not Satisfied',
+          'Risk Compliance Review Required',
+        ];
+
+        return (
         <section className="space-y-6 apex-fade-up">
-          {/* Incoming Trader Payout Requests Bar & Quick Approvals */}
+          {/* Incoming Trader Payout Requests Bar & Full Admin Controls */}
           <div className="bg-[#06140E]/95 border border-emerald-500/30 rounded-3xl p-6 space-y-4">
             <div className="flex flex-wrap items-center justify-between gap-3 border-b border-emerald-500/20 pb-3">
               <div>
                 <h2 className="font-display text-lg font-extrabold text-white">
-                  Trader Payout Withdrawal Requests &amp; Settlement Queue
+                  Trader Payout Withdrawal Requests &amp; Full Admin Control Desk
                 </h2>
                 <p className="text-xs text-slate-400">
-                  Every payout submitted from a trader&apos;s Dashboard appears here in real time. Verify wallet details and click Approve &amp; Verify or Reject &amp; Refund.
+                  Every trader destination wallet address &amp; withdrawal request appears here in real time. Enter an Admin Reason, then Approve, Reject &amp; Refund, Edit, or Delete.
                 </p>
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 {pendingPayoutsCount > 0 && (
                   <span className="px-3 py-1 rounded-full bg-amber-400/20 border border-amber-400/40 text-xs font-mono font-bold text-amber-300">
                     {pendingPayoutsCount} Pending Approval
@@ -2641,105 +2689,294 @@ export const AdminPanelView: React.FC = () => {
               </div>
             </div>
 
-            {payouts.filter((p) => p.isTraderRequest || p.status === 'Pending' || Boolean(p.accountNumber)).length === 0 ? (
+            {/* Status Filter Controls */}
+            <div className="flex flex-wrap items-center gap-2">
+              {(
+                [
+                  { id: 'all', label: `All Requests (${traderQueueAll.length})` },
+                  { id: 'Pending', label: `Pending (${pendingPayoutsCount})` },
+                  { id: 'Verified', label: `Approved (${approvedPayoutsCount})` },
+                  { id: 'Rejected', label: `Rejected (${rejectedPayoutsCount})` },
+                ] as const
+              ).map((f) => (
+                <button
+                  key={f.id}
+                  type="button"
+                  onClick={() => setPayoutStatusFilter(f.id)}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-mono font-bold border cursor-pointer transition-colors ${
+                    payoutStatusFilter === f.id
+                      ? 'bg-[#00FFA3] text-[#02120A] border-[#00FFA3]'
+                      : 'bg-[#030A07] text-slate-300 border-emerald-500/25 hover:border-emerald-500/50'
+                  }`}
+                >
+                  {f.label}
+                </button>
+              ))}
+            </div>
+
+            {traderQueueFiltered.length === 0 ? (
               <div className="p-5 rounded-2xl bg-[#030A07] border border-dashed border-emerald-500/25 text-center text-xs text-slate-400">
-                No trader payout withdrawal requests submitted yet. Once a trader passes their challenge rules (or satisfies the Instant 15% Consistency Rule) and submits a payout request, it will appear here immediately.
+                No trader payout withdrawal requests in this filter view. Submitted trader wallet addresses and withdrawal requests appear here immediately.
               </div>
             ) : (
               <div className="space-y-3">
-                {payouts
-                  .filter((p) => p.isTraderRequest || p.status === 'Pending' || Boolean(p.accountNumber))
-                  .sort((a, b) => {
-                    if (a.status === 'Pending' && b.status !== 'Pending') return -1;
-                    if (a.status !== 'Pending' && b.status === 'Pending') return 1;
-                    return (b.createdAt || b.paymentDate || '').localeCompare(a.createdAt || a.paymentDate || '');
-                  })
-                  .map((p) => (
+                {traderQueueFiltered.map((p) => {
+                  const currentReasonDraft = payoutReasonDrafts[p.id] ?? p.adminReason ?? '';
+                  const isEditingThis = editingPayoutId === p.id;
+                  return (
                     <div
                       key={p.id}
-                      className={`p-4 rounded-2xl border flex flex-col lg:flex-row lg:items-center justify-between gap-4 ${
+                      data-testid={`admin-payout-card-${p.id}`}
+                      className={`p-4 rounded-2xl border space-y-3 ${
                         p.status === 'Pending'
                           ? 'bg-amber-500/10 border-amber-400/40'
                           : p.status === 'Verified'
                           ? 'bg-emerald-500/10 border-emerald-500/35'
-                          : 'bg-rose-500/10 border-rose-500/30 opacity-80'
+                          : 'bg-rose-500/10 border-rose-500/35'
                       }`}
                     >
-                      <div className="space-y-1">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <span className="font-mono text-xs font-extrabold text-[#00FFA3]">
-                            #{p.accountNumber || 'FUNDED'}
-                          </span>
-                          <span className="px-2 py-0.5 rounded-md bg-[#030A07] border border-emerald-500/30 text-[10px] font-mono font-bold text-white uppercase">
-                            {p.programType}
-                          </span>
-                          <span
-                            className={`px-2 py-0.5 rounded-full text-[10px] font-mono font-bold uppercase ${
-                              p.status === 'Pending'
-                                ? 'bg-amber-400/20 text-amber-300 border border-amber-400/40'
-                                : p.status === 'Verified'
-                                ? 'bg-emerald-500/20 text-[#00FFA3] border border-emerald-500/40'
-                                : 'bg-rose-500/20 text-rose-300 border border-rose-500/40'
-                            }`}
-                          >
-                            {p.status}
-                          </span>
-                        </div>
-                        <div className="font-display text-sm font-extrabold text-white">
-                          {p.traderName}{' '}
-                          <span className="text-xs font-mono text-slate-300">
-                            ({p.userEmail || p.username})
-                          </span>{' '}
-                          —{' '}
-                          <span className="text-[#00FFA3] font-mono">
-                            ${p.amountUsd.toLocaleString('en-US', { minimumFractionDigits: 2 })} USD
-                          </span>
-                          {p.profitSplitPct && (
-                            <span className="ml-2 text-[11px] font-mono text-emerald-300">
-                              ({p.profitSplitPct}% Split)
+                      <div className="flex flex-col lg:flex-row lg:items-start justify-between gap-4">
+                        <div className="space-y-1.5 min-w-0 flex-1">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="font-mono text-xs font-extrabold text-[#00FFA3]">
+                              #{p.accountNumber || 'FUNDED'}
                             </span>
+                            <span className="px-2 py-0.5 rounded-md bg-[#030A07] border border-emerald-500/30 text-[10px] font-mono font-bold text-white uppercase">
+                              {p.programType}
+                            </span>
+                            <span
+                              className={`px-2 py-0.5 rounded-full text-[10px] font-mono font-bold uppercase ${
+                                p.status === 'Pending'
+                                  ? 'bg-amber-400/20 text-amber-300 border border-amber-400/40'
+                                  : p.status === 'Verified'
+                                  ? 'bg-emerald-500/20 text-[#00FFA3] border border-emerald-500/40'
+                                  : 'bg-rose-500/20 text-rose-300 border border-rose-500/40'
+                              }`}
+                            >
+                              {p.status === 'Verified' ? 'Approved' : p.status}
+                            </span>
+                            <span className="text-[11px] font-mono text-slate-400">{p.paymentDate}</span>
+                          </div>
+
+                          <div className="font-display text-sm font-extrabold text-white">
+                            {p.traderName}{' '}
+                            <span className="text-xs font-mono text-slate-300">
+                              ({p.userEmail || p.username})
+                            </span>{' '}
+                            —{' '}
+                            <span className="text-[#00FFA3] font-mono">
+                              ${p.amountUsd.toLocaleString('en-US', { minimumFractionDigits: 2 })} USD
+                            </span>
+                            {p.profitSplitPct && (
+                              <span className="ml-2 text-[11px] font-mono text-emerald-300">
+                                ({p.profitSplitPct}% Split)
+                              </span>
+                            )}
+                          </div>
+
+                          <div className="text-xs text-slate-300 flex flex-wrap items-center gap-2">
+                            <span>
+                              Method: <strong className="text-white">{p.currency}</strong>
+                            </span>
+                            <span className="text-slate-500">·</span>
+                            <span className="flex flex-wrap items-center gap-1.5">
+                              Destination Wallet:
+                              <strong className="font-mono text-amber-300 bg-[#030A07] border border-amber-400/25 px-2 py-0.5 rounded break-all">
+                                {p.destination || 'On-file Settlement Address'}
+                              </strong>
+                              {p.destination && (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    navigator.clipboard?.writeText(p.destination || '').catch(() => {});
+                                    setCopiedWalletId(p.id);
+                                    setTimeout(() => setCopiedWalletId(null), 1500);
+                                  }}
+                                  className="px-2 py-0.5 rounded bg-[#030A07] border border-emerald-500/30 text-[10px] font-mono text-[#00FFA3] hover:bg-emerald-500/20 cursor-pointer inline-flex items-center gap-1"
+                                >
+                                  {copiedWalletId === p.id ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
+                                  <span>{copiedWalletId === p.id ? 'Copied' : 'Copy'}</span>
+                                </button>
+                              )}
+                            </span>
+                          </div>
+
+                          {p.adminReason && (
+                            <div className="p-2.5 rounded-xl bg-[#030A07] border border-white/10 text-xs text-slate-200">
+                              <span className="font-mono text-[10px] uppercase font-bold text-[#00FFA3] mr-2">
+                                Saved Reason:
+                              </span>
+                              <span>{p.adminReason}</span>
+                              {p.reviewedBy && (
+                                <span className="ml-2 text-[10px] font-mono text-slate-400">
+                                  ({p.reviewedBy})
+                                </span>
+                              )}
+                            </div>
                           )}
                         </div>
-                        <div className="text-xs text-slate-300 flex flex-wrap items-center gap-x-4 gap-y-1">
-                          <span>
-                            Method: <strong className="text-white">{p.currency}</strong>
-                          </span>
-                          <span>
-                            Destination Wallet:{' '}
-                            <strong className="font-mono text-amber-300 bg-[#030A07] px-2 py-0.5 rounded">
-                              {p.destination || 'On-file Settlement Address'}
-                            </strong>
-                          </span>
-                          <span className="font-mono text-slate-400">{p.paymentDate}</span>
+
+                        {/* Quick Action Buttons */}
+                        <div className="flex flex-wrap items-center gap-2 shrink-0">
+                          {p.status !== 'Verified' && (
+                            <button
+                              type="button"
+                              onClick={() => adminApprovePayoutRequest(p.id, currentReasonDraft)}
+                              className="px-3.5 py-2 rounded-xl bg-gradient-to-r from-[#00FFA3] to-[#10B981] text-[#02120A] font-display font-extrabold text-xs flex items-center gap-1.5 cursor-pointer shadow-md"
+                            >
+                              <CheckCircle2 className="w-4 h-4" />
+                              <span>Approve</span>
+                            </button>
+                          )}
+                          {p.status !== 'Rejected' && (
+                            <button
+                              type="button"
+                              onClick={() => adminRejectPayoutRequest(p.id, currentReasonDraft)}
+                              className="px-3 py-2 rounded-xl bg-rose-500/20 hover:bg-rose-500/35 border border-rose-500/40 text-rose-200 font-display font-bold text-xs flex items-center gap-1 cursor-pointer"
+                            >
+                              <XCircle className="w-4 h-4" />
+                              <span>Reject &amp; Refund</span>
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => (isEditingThis ? setEditingPayoutId(null) : openPayoutEditor(p))}
+                            className="px-3 py-2 rounded-xl bg-[#030A07] hover:bg-emerald-500/20 border border-emerald-500/35 text-xs font-mono font-bold text-white cursor-pointer"
+                          >
+                            {isEditingThis ? 'Close Edit' : 'Control / Edit'}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => adminDeletePayoutRequest(p.id)}
+                            title="Delete Payout Record"
+                            className="p-2 rounded-xl bg-[#030A07] hover:bg-rose-500/20 border border-rose-500/30 text-rose-300 cursor-pointer"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
                         </div>
                       </div>
 
-                      {p.status === 'Pending' ? (
-                        <div className="flex items-center gap-2 shrink-0">
+                      {/* Reason Input & Quick Presets Bar */}
+                      <div className="pt-2 border-t border-white/10 space-y-2">
+                        <div className="flex flex-col sm:flex-row gap-2">
+                          <input
+                            type="text"
+                            placeholder="Enter Admin Reason / Rejection Note / Tx Reference (shown to trader)..."
+                            value={currentReasonDraft}
+                            onChange={(e) =>
+                              setPayoutReasonDrafts((prev) => ({ ...prev, [p.id]: e.target.value }))
+                            }
+                            className="flex-1 px-3 py-2 rounded-xl bg-[#030A07] border border-emerald-500/30 text-xs text-white"
+                          />
                           <button
                             type="button"
-                            onClick={() => adminApprovePayoutRequest(p.id)}
-                            className="px-4 py-2 rounded-xl bg-gradient-to-r from-[#00FFA3] to-[#10B981] text-[#02120A] font-display font-extrabold text-xs flex items-center gap-1.5 cursor-pointer shadow-md"
+                            onClick={() =>
+                              adminUpdatePayoutRequest(p.id, {
+                                adminReason: currentReasonDraft,
+                              })
+                            }
+                            className="px-3.5 py-2 rounded-xl bg-[#030A07] hover:bg-emerald-500/20 border border-emerald-500/40 text-xs font-mono font-bold text-[#00FFA3] cursor-pointer shrink-0"
                           >
-                            <CheckCircle2 className="w-4 h-4" />
-                            <span>Approve &amp; Verify</span>
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => adminRejectPayoutRequest(p.id)}
-                            className="px-3 py-2 rounded-xl bg-rose-500/20 hover:bg-rose-500/35 border border-rose-500/40 text-rose-200 font-display font-bold text-xs flex items-center gap-1 cursor-pointer"
-                          >
-                            <XCircle className="w-4 h-4" />
-                            <span>Reject &amp; Refund</span>
+                            Save Reason
                           </button>
                         </div>
-                      ) : (
-                        <div className="text-right font-mono text-xs text-slate-300 shrink-0">
-                          {p.status === 'Verified' ? 'Verified & Paid ✓' : 'Rejected & Refunded'}
+                        <div className="flex flex-wrap gap-1.5">
+                          {quickReasonChips.map((chip) => (
+                            <button
+                              key={chip}
+                              type="button"
+                              onClick={() =>
+                                setPayoutReasonDrafts((prev) => ({ ...prev, [p.id]: chip }))
+                              }
+                              className="px-2 py-1 rounded-lg bg-[#030A07] hover:bg-emerald-500/15 border border-white/10 text-[10px] font-mono text-slate-300 hover:text-white cursor-pointer"
+                            >
+                              + {chip}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* Full Inline Control / Edit Panel */}
+                      {isEditingThis && (
+                        <div className="p-3.5 rounded-xl bg-[#030A07] border border-emerald-500/35 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                          <div>
+                            <label className="block text-[10px] font-mono text-slate-400 uppercase mb-1">
+                              Payout Status
+                            </label>
+                            <select
+                              value={editPayoutStatus}
+                              onChange={(e) =>
+                                setEditPayoutStatus(e.target.value as 'Pending' | 'Verified' | 'Rejected')
+                              }
+                              className="w-full px-3 py-2 rounded-lg bg-[#06140E] border border-emerald-500/35 text-xs font-bold text-white"
+                            >
+                              <option value="Pending">Pending Review</option>
+                              <option value="Verified">Approved (Verified)</option>
+                              <option value="Rejected">Rejected (&amp; Refund Profit)</option>
+                            </select>
+                          </div>
+                          <div>
+                            <label className="block text-[10px] font-mono text-slate-400 uppercase mb-1">
+                              Amount (USD)
+                            </label>
+                            <input
+                              type="number"
+                              step="0.01"
+                              min="1"
+                              value={editPayoutAmount}
+                              onChange={(e) => setEditPayoutAmount(Number(e.target.value))}
+                              className="w-full px-3 py-2 rounded-lg bg-[#06140E] border border-emerald-500/35 text-xs font-mono text-white"
+                            />
+                          </div>
+                          <div className="sm:col-span-2">
+                            <label className="block text-[10px] font-mono text-slate-400 uppercase mb-1">
+                              Destination Wallet / Settlement Details
+                            </label>
+                            <input
+                              type="text"
+                              value={editPayoutDestination}
+                              onChange={(e) => setEditPayoutDestination(e.target.value)}
+                              className="w-full px-3 py-2 rounded-lg bg-[#06140E] border border-emerald-500/35 text-xs font-mono text-amber-300"
+                            />
+                          </div>
+                          <div className="sm:col-span-2 lg:col-span-3">
+                            <label className="block text-[10px] font-mono text-slate-400 uppercase mb-1">
+                              Admin Reason / Audit Note
+                            </label>
+                            <input
+                              type="text"
+                              value={editPayoutReason}
+                              onChange={(e) => setEditPayoutReason(e.target.value)}
+                              placeholder="Reason shown to trader & stored in ledger..."
+                              className="w-full px-3 py-2 rounded-lg bg-[#06140E] border border-emerald-500/35 text-xs text-white"
+                            />
+                          </div>
+                          <div className="flex items-end">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                adminUpdatePayoutRequest(p.id, {
+                                  status: editPayoutStatus,
+                                  amountUsd: editPayoutAmount,
+                                  destination: editPayoutDestination,
+                                  adminReason: editPayoutReason,
+                                });
+                                setPayoutReasonDrafts((prev) => ({
+                                  ...prev,
+                                  [p.id]: editPayoutReason,
+                                }));
+                                setEditingPayoutId(null);
+                              }}
+                              className="w-full py-2 rounded-lg bg-gradient-to-r from-[#00FFA3] to-[#10B981] text-[#02120A] font-display font-extrabold text-xs cursor-pointer"
+                            >
+                              Save Payout Controls ✓
+                            </button>
+                          </div>
                         </div>
                       )}
                     </div>
-                  ))}
+                  );
+                })}
               </div>
             )}
           </div>
@@ -2813,8 +3050,8 @@ export const AdminPanelView: React.FC = () => {
                     <th className="py-3 px-4">Account / User</th>
                     <th className="py-3 px-4 text-right">Amount</th>
                     <th className="py-3 px-4">Method &amp; Wallet</th>
-                    <th className="py-3 px-4">Status</th>
-                    <th className="py-3 px-4 text-right">Actions / Date</th>
+                    <th className="py-3 px-4">Status &amp; Reason</th>
+                    <th className="py-3 px-4 text-right">Actions</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-emerald-500/15 text-xs">
@@ -2833,13 +3070,13 @@ export const AdminPanelView: React.FC = () => {
                       <td className="py-3 px-4 text-slate-300">
                         <div>{p.currency}</div>
                         {p.destination && (
-                          <div className="text-[10px] font-mono text-slate-400 truncate max-w-[160px]">
+                          <div className="text-[10px] font-mono text-amber-300 truncate max-w-[180px]" title={p.destination}>
                             {p.destination}
                           </div>
                         )}
                       </td>
                       <td className="py-3 px-4">
-                        <span
+                        <div
                           className={`font-bold ${
                             p.status === 'Verified'
                               ? 'text-[#00FFA3]'
@@ -2848,30 +3085,43 @@ export const AdminPanelView: React.FC = () => {
                               : 'text-rose-300'
                           }`}
                         >
-                          {p.status}
-                        </span>
+                          {p.status === 'Verified' ? 'Approved' : p.status}
+                        </div>
+                        {p.adminReason && (
+                          <div className="text-[10px] text-slate-400 max-w-[180px] truncate" title={p.adminReason}>
+                            {p.adminReason}
+                          </div>
+                        )}
                       </td>
                       <td className="py-3 px-4 font-mono text-right text-slate-400">
-                        {p.status === 'Pending' ? (
-                          <div className="inline-flex items-center gap-1.5">
+                        <div className="inline-flex items-center gap-1.5">
+                          {p.status !== 'Verified' && (
                             <button
                               type="button"
-                              onClick={() => adminApprovePayoutRequest(p.id)}
-                              className="px-2.5 py-1 rounded-lg bg-[#00FFA3] text-[#02120A] font-bold text-[10px] cursor-pointer"
+                              onClick={() => adminApprovePayoutRequest(p.id, payoutReasonDrafts[p.id])}
+                              className="px-2 py-1 rounded-lg bg-[#00FFA3] text-[#02120A] font-bold text-[10px] cursor-pointer"
                             >
                               Approve
                             </button>
+                          )}
+                          {p.status !== 'Rejected' && (
                             <button
                               type="button"
-                              onClick={() => adminRejectPayoutRequest(p.id)}
-                              className="px-2.5 py-1 rounded-lg bg-rose-500/20 text-rose-200 border border-rose-500/40 font-bold text-[10px] cursor-pointer"
+                              onClick={() => adminRejectPayoutRequest(p.id, payoutReasonDrafts[p.id])}
+                              className="px-2 py-1 rounded-lg bg-rose-500/20 text-rose-200 border border-rose-500/40 font-bold text-[10px] cursor-pointer"
                             >
                               Reject
                             </button>
-                          </div>
-                        ) : (
-                          p.paymentDate
-                        )}
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => adminDeletePayoutRequest(p.id)}
+                            className="p-1 rounded-lg bg-[#030A07] border border-rose-500/30 text-rose-300 hover:bg-rose-500/20 cursor-pointer"
+                            title="Delete"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   ))}
@@ -2880,7 +3130,8 @@ export const AdminPanelView: React.FC = () => {
             </div>
           </div>
         </section>
-      )}
+        );
+      })()}
 
       {/* TAB 8: AUDIT LOGS */}
       {tab === 'logs' && isFullAdmin && (

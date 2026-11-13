@@ -186,6 +186,33 @@ async function startServer() {
     });
   });
 
+  app.delete('/api/vault/payout/:id', (req, res) => {
+    const payoutId = String(req.params.id || '').trim();
+    if (!payoutId) {
+      res.status(400).json({ ok: false, error: 'Missing payout id.' });
+      return;
+    }
+    try {
+      if (!fs.existsSync(DATA_DIR)) {
+        fs.mkdirSync(DATA_DIR, { recursive: true });
+      }
+      const existing = readServerVault();
+      const nextPayouts = Array.isArray(existing.payouts)
+        ? existing.payouts.filter((p: any) => p?.id !== payoutId)
+        : [];
+      const updated = {
+        ...existing,
+        payouts: nextPayouts,
+        updatedAt: new Date().toISOString(),
+      };
+      memoryVaultCache = updated;
+      fs.writeFileSync(VAULT_FILE, JSON.stringify(updated), 'utf-8');
+      res.status(200).json({ ok: true, payouts: nextPayouts });
+    } catch {
+      res.status(500).json({ ok: false, error: 'Failed to delete payout.' });
+    }
+  });
+
   // Branded FUNDED APEX Email Notification Dispatch & Inbox Endpoints
   app.post('/api/email/dispatch', (req, res) => {
     const mail = req.body;

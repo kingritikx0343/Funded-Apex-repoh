@@ -299,6 +299,30 @@ async function startServer() {
       payouts: Array.isArray(data.payouts) ? data.payouts : []
     });
   });
+  app.delete("/api/vault/payout/:id", (req, res) => {
+    const payoutId = String(req.params.id || "").trim();
+    if (!payoutId) {
+      res.status(400).json({ ok: false, error: "Missing payout id." });
+      return;
+    }
+    try {
+      if (!import_node_fs.default.existsSync(DATA_DIR)) {
+        import_node_fs.default.mkdirSync(DATA_DIR, { recursive: true });
+      }
+      const existing = readServerVault();
+      const nextPayouts = Array.isArray(existing.payouts) ? existing.payouts.filter((p) => p?.id !== payoutId) : [];
+      const updated = {
+        ...existing,
+        payouts: nextPayouts,
+        updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+      };
+      memoryVaultCache = updated;
+      import_node_fs.default.writeFileSync(VAULT_FILE, JSON.stringify(updated), "utf-8");
+      res.status(200).json({ ok: true, payouts: nextPayouts });
+    } catch {
+      res.status(500).json({ ok: false, error: "Failed to delete payout." });
+    }
+  });
   app.post("/api/email/dispatch", (req, res) => {
     const mail = req.body;
     if (!mail || !mail.to || !mail.subject) {

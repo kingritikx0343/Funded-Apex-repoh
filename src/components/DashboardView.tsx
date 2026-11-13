@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { usePlatform } from '../context/PlatformContext';
 import {
   evaluateAccountRiskMetrics,
@@ -25,6 +25,7 @@ import {
   HelpCircle,
   LogOut,
   Menu,
+  RefreshCw,
   Send,
   Settings,
   Share2,
@@ -71,6 +72,7 @@ export const DashboardView: React.FC = () => {
     changeUserPassword,
     requestAccountPayout,
     pushNotification,
+    refreshVaultData,
   } = usePlatform();
 
   const [activeTab, setActiveTab] = useState<DashboardTabType>('overview');
@@ -205,6 +207,44 @@ export const DashboardView: React.FC = () => {
     if (!reconciledActiveAccount) return null;
     return evaluateAccountRiskMetrics(reconciledActiveAccount, activeAccOrders);
   }, [reconciledActiveAccount, activeAccOrders]);
+
+  // Auto-hide ONLY the Client Area red breach alert banner after 1 minute (60,000ms)
+  const isActiveAccountBreached = Boolean(
+    activeAccount && (activeAccount.status === 'failed' || riskMetrics?.nextStatus === 'failed')
+  );
+  const [isBreachBannerExpired, setIsBreachBannerExpired] = useState<boolean>(false);
+
+  useEffect(() => {
+    if (!activeAccount || !isActiveAccountBreached) {
+      setIsBreachBannerExpired(false);
+      return;
+    }
+    const storageKey = `funded_apex_breach_seen_at_${activeAccount.id}`;
+    let seenAt = Date.now();
+    try {
+      const stored = window.localStorage.getItem(storageKey);
+      if (stored && Number.isFinite(Number(stored))) {
+        seenAt = Number(stored);
+      } else {
+        window.localStorage.setItem(storageKey, String(seenAt));
+      }
+    } catch {
+      // ignore storage errors
+    }
+
+    const elapsed = Date.now() - seenAt;
+    const remaining = Math.max(0, 60_000 - elapsed);
+    if (remaining === 0) {
+      setIsBreachBannerExpired(true);
+      return;
+    }
+
+    setIsBreachBannerExpired(false);
+    const timer = window.setTimeout(() => {
+      setIsBreachBannerExpired(true);
+    }, remaining);
+    return () => window.clearTimeout(timer);
+  }, [activeAccount, isActiveAccountBreached]);
 
   const activeAccountsCount = accounts.filter((a) => a.status === 'active').length;
 
@@ -887,8 +927,8 @@ export const DashboardView: React.FC = () => {
                 </p>
               </div>
 
-              {/* REAL-TIME AUTOMATED BREACH SYSTEM ALERT BANNER */}
-              {activeAccount && (activeAccount.status === 'failed' || riskMetrics?.nextStatus === 'failed') && (
+              {/* REAL-TIME AUTOMATED BREACH SYSTEM ALERT BANNER (AUTO-HIDES AFTER 1 MINUTE) */}
+              {isActiveAccountBreached && !isBreachBannerExpired && activeAccount && (
                 <div
                   data-testid="dashboard-breach-alert-banner"
                   className="rounded-[18px] bg-gradient-to-r from-red-950/85 via-[#1C080B]/95 to-red-950/75 border border-red-500/50 p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4 shadow-[0_18px_48px_rgba(239,68,68,0.22)]"
@@ -2440,49 +2480,90 @@ export const DashboardView: React.FC = () => {
               <div className="space-y-6">
                 {/* My Payout Requests & Admin Verification Status */}
                 <div className="bg-[#090D0A] border border-[#00E676]/25 rounded-[14px] p-6 space-y-4">
-                  <div className="flex items-center justify-between gap-2">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
                     <h2 className="text-lg font-display font-bold text-white">
                       My Payout Requests ({userPayoutRequests.length})
                     </h2>
-                    <span className="px-2.5 py-0.5 rounded-[6px] bg-[#00E676]/15 border border-[#00E676]/30 text-[10px] font-mono font-bold text-[#00E676]">
-                      Synced to Admin Panel
-                    </span>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => void refreshVaultData()}
+                        className="px-2.5 py-1 rounded-[6px] bg-[#030504] hover:bg-[#0D130F] border border-white/15 text-[10px] font-mono font-bold text-[#A7B1AA] hover:text-white flex items-center gap-1 cursor-pointer transition-colors"
+                      >
+                        <RefreshCw className="w-3 h-3" />
+                        <span>Refresh</span>
+                      </button>
+                      <span className="px-2.5 py-0.5 rounded-[6px] bg-[#00E676]/15 border border-[#00E676]/30 text-[10px] font-mono font-bold text-[#00E676]">
+                        Synced to Admin Panel
+                      </span>
+                    </div>
                   </div>
                   {userPayoutRequests.length === 0 ? (
                     <div className="p-4 rounded-[10px] bg-[#030504] border border-white/10 text-xs text-[#A7B1AA]">
                       No payout withdrawals submitted yet from your accounts. Once your challenge rules are passed and profits are eligible, submitted requests appear here and in the Admin Panel.
                     </div>
                   ) : (
-                    <div className="space-y-2.5 max-h-[260px] overflow-y-auto pr-1 custom-scrollbar">
+                    <div className="space-y-2.5 max-h-[340px] overflow-y-auto pr-1 custom-scrollbar">
                       {userPayoutRequests.map((p) => (
                         <div
                           key={p.id}
-                          className="p-3.5 rounded-[10px] bg-[#030504] border border-white/10 flex items-center justify-between gap-3 text-xs"
+                          className={`p-3.5 rounded-[10px] border space-y-2 text-xs ${
+                            p.status === 'Rejected'
+                              ? 'bg-red-950/25 border-red-500/35'
+                              : p.status === 'Verified'
+                              ? 'bg-[#06130C] border-[#00E676]/30'
+                              : 'bg-[#030504] border-white/10'
+                          }`}
                         >
-                          <div className="space-y-0.5 min-w-0">
-                            <div className="flex items-center gap-2 flex-wrap">
-                              <span className="font-mono font-bold text-white">
-                                #{p.accountNumber || 'FUNDED'}
-                              </span>
-                              <span
-                                className={`px-2 py-0.5 rounded-[5px] text-[10px] font-mono font-bold uppercase ${
-                                  p.status === 'Verified'
-                                    ? 'bg-[#00E676]/20 text-[#00E676] border border-[#00E676]/40'
+                          <div className="flex items-center justify-between gap-3">
+                            <div className="space-y-0.5 min-w-0">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <span className="font-mono font-bold text-white">
+                                  #{p.accountNumber || 'FUNDED'}
+                                </span>
+                                <span
+                                  className={`px-2 py-0.5 rounded-[5px] text-[10px] font-mono font-bold uppercase ${
+                                    p.status === 'Verified'
+                                      ? 'bg-[#00E676]/20 text-[#00E676] border border-[#00E676]/40'
+                                      : p.status === 'Pending'
+                                      ? 'bg-amber-500/20 text-amber-300 border border-amber-400/40'
+                                      : 'bg-red-500/20 text-red-300 border border-red-400/40'
+                                  }`}
+                                >
+                                  {p.status === 'Verified'
+                                    ? 'Approved ✓'
                                     : p.status === 'Pending'
-                                    ? 'bg-amber-500/20 text-amber-300 border border-amber-400/40'
-                                    : 'bg-red-500/20 text-red-300 border border-red-400/40'
-                                }`}
-                              >
-                                {p.status}
-                              </span>
+                                    ? 'Pending Review'
+                                    : 'Rejected'}
+                                </span>
+                              </div>
+                              <div className="text-[11px] text-[#77837B] font-mono truncate">
+                                {p.currency} · {p.paymentDate}
+                              </div>
+                              <div className="text-[11px] text-[#A7B1AA] font-mono break-all">
+                                Wallet: <span className="text-amber-300">{p.destination || 'On-File'}</span>
+                              </div>
                             </div>
-                            <div className="text-[11px] text-[#77837B] font-mono truncate">
-                              {p.currency} · {p.destination || 'On-File'} · {p.paymentDate}
+                            <div className="font-mono text-[#00E676] font-extrabold text-sm tabular-nums shrink-0">
+                              ${p.amountUsd.toLocaleString('en-US', { minimumFractionDigits: 2 })}
                             </div>
                           </div>
-                          <div className="font-mono text-[#00E676] font-extrabold text-sm tabular-nums shrink-0">
-                            ${p.amountUsd.toLocaleString('en-US', { minimumFractionDigits: 2 })}
-                          </div>
+                          {p.adminReason && (
+                            <div
+                              className={`p-2.5 rounded-[8px] border text-[11px] leading-relaxed ${
+                                p.status === 'Rejected'
+                                  ? 'bg-red-500/10 border-red-500/30 text-red-200'
+                                  : p.status === 'Verified'
+                                  ? 'bg-[#00E676]/10 border-[#00E676]/30 text-[#00E676]'
+                                  : 'bg-amber-500/10 border-amber-400/30 text-amber-200'
+                              }`}
+                            >
+                              <strong className="font-mono uppercase text-[10px] mr-1.5">
+                                Admin Note:
+                              </strong>
+                              <span>{p.adminReason}</span>
+                            </div>
+                          )}
                         </div>
                       ))}
                     </div>

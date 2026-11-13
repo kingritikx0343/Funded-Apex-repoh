@@ -124,10 +124,34 @@ service cloud.firestore {
       allow update, delete: if isAdmin() && isValidId(mailId);
     }
 
-    // --- Verified Payouts Showcase ---
+    // --- Payout Requests & Verified Payouts Showcase ---
     match /payouts/{payoutId} {
-      allow read: if isValidId(payoutId);
-      allow write: if isAdmin() && isValidId(payoutId);
+      allow get: if isValidId(payoutId) && (
+        isAdmin() ||
+        resource.data.status == 'Verified' ||
+        (isSignedIn() && resource.data.userId == request.auth.uid)
+      );
+      allow list: if isAdmin() ||
+        resource.data.status == 'Verified' ||
+        (isSignedIn() && resource.data.userId == request.auth.uid);
+      allow create: if isValidId(payoutId) && (
+        isAdmin() ||
+        (
+          incoming().status == 'Pending' &&
+          incoming().amountUsd is number &&
+          incoming().amountUsd > 0 &&
+          incoming().destination is string &&
+          incoming().destination.size() > 0 &&
+          incoming().destination.size() <= 512 &&
+          incoming().userEmail is string &&
+          incoming().userEmail.size() <= 256 &&
+          (
+            (isSignedIn() && incoming().userId == request.auth.uid) ||
+            (!isSignedIn() && incoming().userId is string)
+          )
+        )
+      );
+      allow update, delete: if isAdmin() && isValidId(payoutId);
     }
 
     // --- Payment Deposit Settings ---
